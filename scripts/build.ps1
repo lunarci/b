@@ -12,6 +12,7 @@ $PrCommit = "c2513790d86ed58963060b7f79d23e3f15294732"
 $ExpectedPatchSha256 = "616fd81751793ac4fd9231f13ee6d96d491fbe8351e2ced39dd3fabeac935814"
 $ExpectedOfficialZipSha256 = "608b7b2fed4c35751cd264a87dcfe9d9074fb6d48458d29bde955f1c03dc0d5c"
 $ExpectedOfficialDllSha256 = "cee7aaccfeaa19ae2f865bb80e08afdd63fa1f14968c44c0a0538bf0b8d931b2"
+$CompatibleMimallocVersion = "2.2.4"
 $DllRelativePath = "red4ext\plugins\ArchiveXL\ArchiveXL.dll"
 
 $ExpectedSubmodules = [ordered]@{
@@ -178,6 +179,78 @@ function Build-ArchiveXL {
     return $OutputDll
 }
 
+function Assert-CompatibleDependencyLock {
+    param([string] $LockPath)
+
+    Assert-True (Test-Path -LiteralPath $LockPath) "Xmake dependency lock is missing: $LockPath"
+    $LockData = Get-Content -LiteralPath $LockPath -Raw | ConvertFrom-Json -AsHashtable
+    $PlatformKeys = @($LockData.Keys | Where-Object { $_ -ne "__meta__" })
+    Assert-True ($PlatformKeys.Count -gt 0) "Xmake dependency lock has no platform entries."
+
+    $MimallocEntries = @()
+    foreach ($PlatformKey in $PlatformKeys) {
+        $PlatformEntries = $LockData[$PlatformKey]
+        foreach ($Entry in $PlatformEntries.GetEnumerator()) {
+            if ($Entry.Key -match "mimalloc") {
+                $MimallocEntries += $Entry
+            }
+        }
+    }
+
+    Assert-True ($MimallocEntries.Count -gt 0) "Xmake dependency lock has no mimalloc entry."
+    foreach ($Entry in $MimallocEntries) {
+        Assert-True ($Entry.Value.version -eq "v$CompatibleMimallocVersion") `
+            "Incompatible mimalloc lock entry $($Entry.Key): $($Entry.Value.version)"
+    }
+}
+
+function New-CompatibleDependencyLock {
+    param([string] $SourceDir)
+
+    $LogPath = Join-Path $LogRoot "dependency-lock.log"
+    $ProjectPath = Join-Path $SourceDir "xmake.lua"
+    $OriginalProjectText = [IO.File]::ReadAllText($ProjectPath)
+    $RequireLine = 'add_requires("hopscotch-map", "minhook", "spdlog", "tiltedcore", "yaml-cpp")'
+    $CompatibilityLine = `
+        "add_requireconfs(`"*.mimalloc`", { version = `"$CompatibleMimallocVersion`", override = true })"
+
+    Assert-True ($OriginalProjectText.Contains($RequireLine)) `
+        "ArchiveXL xmake.lua does not contain the expected dependency declaration."
+    Assert-True (-not $OriginalProjectText.Contains('add_requireconfs("*.mimalloc"')) `
+        "ArchiveXL xmake.lua unexpectedly already pins transitive mimalloc."
+
+    $TemporaryProjectText = $OriginalProjectText.Replace(
+        $RequireLine,
+        "$RequireLine`n$CompatibilityLine"
+    )
+    $Utf8NoBom = [Text.UTF8Encoding]::new($false)
+    [IO.File]::WriteAllText($ProjectPath, $TemporaryProjectText, $Utf8NoBom)
+
+    try {
+        Push-Location $SourceDir
+        try {
+            Invoke-NativeLogged -FilePath "xmake" -ArgumentList @(
+                "f", "-c", "-p", "windows", "-a", "x64", "-m", "release",
+                "--policies=package.requires_lock,package.precompiled:n", "-y"
+            ) -LogPath $LogPath
+        }
+        finally {
+            Pop-Location
+        }
+    }
+    finally {
+        [IO.File]::WriteAllText($ProjectPath, $OriginalProjectText, $Utf8NoBom)
+    }
+
+    $LockPath = Join-Path $SourceDir "xmake-requires.lock"
+    Assert-CompatibleDependencyLock -LockPath $LockPath
+    $TrackedStatus = Get-GitOutput -WorkingTree $SourceDir -ArgumentList @(
+        "status", "--porcelain", "--untracked-files=no"
+    )
+    Assert-True (-not $TrackedStatus) `
+        "Temporary dependency-lock configuration changed tracked source files.`n$TrackedStatus"
+}
+
 foreach ($Path in @($WorkRoot, $ArtifactRoot)) {
     if (Test-Path -LiteralPath $Path) {
         Remove-Item -LiteralPath $Path -Recurse -Force
@@ -203,14 +276,23 @@ try {
     Initialize-UpstreamSource -Destination $ControlSource -Label "control"
     Initialize-UpstreamSource -Destination $PatchedSource -Label "patched"
 
+    $ControlLock = Join-Path $ControlSource "xmake-requires.lock"
+    $PatchedLock = Join-Path $PatchedSource "xmake-requires.lock"
     if (Test-Path -LiteralPath $PinnedLock) {
         Write-Host "Using the repository-pinned xmake dependency lock."
-        Copy-Item -LiteralPath $PinnedLock -Destination (Join-Path $ControlSource "xmake-requires.lock")
-        Copy-Item -LiteralPath $PinnedLock -Destination (Join-Path $PatchedSource "xmake-requires.lock")
+        Copy-Item -LiteralPath $PinnedLock -Destination $ControlLock
     }
     else {
-        Write-Warning "No repository-pinned xmake lock exists yet. This run will generate one and include it in the artifact."
+        Write-Warning (
+            "No repository-pinned xmake lock exists yet. Generating one with mimalloc " +
+            "$CompatibleMimallocVersion, the version required by TiltedCore v0.2.9."
+        )
+        New-CompatibleDependencyLock -SourceDir $ControlSource
     }
+
+    Assert-CompatibleDependencyLock -LockPath $ControlLock
+    Copy-Item -LiteralPath $ControlLock -Destination $PatchedLock -Force
+    Copy-Item -LiteralPath $ControlLock -Destination (Join-Path $ArtifactRoot "xmake-requires.lock") -Force
 
     $ControlBuiltDll = Build-ArchiveXL -SourceDir $ControlSource -Mode "release" -Label "control"
     $ControlOutputDir = Join-Path $ArtifactRoot "control-DO-NOT-INSTALL"
@@ -218,11 +300,11 @@ try {
     $ControlDll = Join-Path $ControlOutputDir "ArchiveXL.dll"
     Copy-Item -LiteralPath $ControlBuiltDll -Destination $ControlDll
 
-    $ControlLock = Join-Path $ControlSource "xmake-requires.lock"
     Assert-True (Test-Path -LiteralPath $ControlLock) `
         "Xmake did not generate xmake-requires.lock for the control build."
+    Assert-CompatibleDependencyLock -LockPath $ControlLock
     Copy-Item -LiteralPath $ControlLock -Destination (Join-Path $ArtifactRoot "xmake-requires.lock")
-    Copy-Item -LiteralPath $ControlLock -Destination (Join-Path $PatchedSource "xmake-requires.lock") -Force
+    Copy-Item -LiteralPath $ControlLock -Destination $PatchedLock -Force
     if (Test-Path -LiteralPath $PinnedLock) {
         Assert-True ((Get-Sha256 -Path $ControlLock) -eq (Get-Sha256 -Path $PinnedLock)) `
             "Xmake changed the repository-pinned dependency lock during configuration."
@@ -262,8 +344,8 @@ try {
     Copy-Item -LiteralPath $PatchPath -Destination (Join-Path $ReportRoot "vendored-pr22.patch")
 
     $PatchedBuiltDll = Build-ArchiveXL -SourceDir $PatchedSource -Mode "release" -Label "patched"
-    $PatchedLock = Join-Path $PatchedSource "xmake-requires.lock"
     Assert-True (Test-Path -LiteralPath $PatchedLock) "Patched build dependency lock is missing."
+    Assert-CompatibleDependencyLock -LockPath $PatchedLock
     Assert-True ((Get-Sha256 -Path $PatchedLock) -eq (Get-Sha256 -Path $ControlLock)) `
         "Patched Release build changed the control dependency lock."
     $PatchedOutputDir = Join-Path $ArtifactRoot "patched-release"
@@ -342,6 +424,7 @@ try {
         "Official input ZIP SHA-256: $OfficialZipSha256"
         "Official input DLL SHA-256: $ExpectedOfficialDllSha256"
         "Xmake lock SHA-256: $LockSha256"
+        "Mimalloc compatibility lock: v$CompatibleMimallocVersion (TiltedCore v0.2.9 upstream requirement)"
         "Control DLL SHA-256: $ControlDllSha256"
         "Patched Release DLL SHA-256: $PatchedDllSha256"
         "Final package SHA-256: $PackageSha256"

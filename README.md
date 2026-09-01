@@ -49,7 +49,7 @@ ReleaseDbg의 PDB는 Release ZIP의 DLL과 일치하지 않습니다. 진단이 
 
 ## 재현성과 안전 범위
 
-ArchiveXL의 `xmake.lua`는 `hopscotch-map`, `minhook`, `spdlog`, `tiltedcore`, `yaml-cpp` 버전을 지정하지 않습니다. 첫 실행은 lock을 생성하고 대조군·패치본 양쪽에 똑같이 사용합니다. 이후에도 같은 의존성을 쓰려면 첫 성공 산출물의 `xmake-requires.lock`을 `locks/xmake-requires.lock`으로 커밋하십시오.
+ArchiveXL의 `xmake.lua`는 `hopscotch-map`, `minhook`, `spdlog`, `tiltedcore`, `yaml-cpp` 버전을 지정하지 않습니다. 최신 해석 결과인 TiltedCore 0.2.9는 자체 빌드 정의에서 mimalloc 2.2.4를 요구하지만, 버전 없는 전이 의존성은 호환되지 않는 mimalloc 3.x로 올라갈 수 있습니다. 첫 실행은 원본 `xmake.lua`를 잠시만 보완해 mimalloc 2.2.4가 든 lock을 생성한 뒤 원본 파일을 복구하고, 그 lock을 대조군·패치본 양쪽에 똑같이 사용합니다. 이후에도 같은 의존성을 쓰려면 첫 성공 산출물의 `xmake-requires.lock`을 `locks/xmake-requires.lock`으로 커밋하십시오.
 
 DLL FileVersion에는 빌드 시각이 들어가며 GitHub의 MSVC/SDK 이미지도 갱신될 수 있습니다. 따라서 소스와 의존성 계보는 추적할 수 있지만, 실행할 때마다 DLL 바이트와 SHA-256이 완전히 같다고 보장하지는 않습니다.
 
@@ -63,5 +63,6 @@ Actions의 PASS는 컴파일·패키지·정적 검증 통과를 뜻합니다. C
 - [ArchiveXL PR #22](https://github.com/psiberx/cp2077-archive-xl/pull/22)
 - [PR #22 제안 커밋](https://github.com/psiberx/cp2077-archive-xl/commit/c2513790d86ed58963060b7f79d23e3f15294732)
 - [ArchiveXL 1.27.1 공식 릴리스](https://github.com/psiberx/cp2077-archive-xl/releases/tag/v1.27.1)
+- [TiltedCore 0.2.9의 mimalloc 2.2.4 요구 사항](https://github.com/tiltedphoques/TiltedCore/blob/v0.2.9/xmake.lua)
 
 공식 패키지의 ArchiveXL 라이선스와 제3자 고지는 최종 ZIP에 원본 그대로 유지됩니다. 감사 artifact에 들어가는 별도 DLL 사본에도 적용되도록 동일 고지를 artifact 최상위와 이 저장소의 `licenses/`에 함께 둡니다.
