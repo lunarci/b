@@ -1,0 +1,72 @@
+name: Build ArchiveXL 1.27.1 with PR 22 fix
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: archivexl-pr22-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and verify Windows x64 package
+    runs-on: windows-2022
+    timeout-minutes: 90
+
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Check out this builder
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install verified Xmake
+        run: ./scripts/install-xmake.ps1
+
+      - name: Build, patch, package, and verify
+        run: ./scripts/build.ps1
+
+      - name: Upload package and evidence
+        id: upload_success
+        if: success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ArchiveXL-1.27.1-PR22-${{ github.run_number }}-${{ github.run_attempt }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Upload failure diagnostics
+        id: upload_failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ArchiveXL-BUILD-FAILED-${{ github.run_number }}-${{ github.run_attempt }}
+          path: |
+            artifacts/logs/
+            artifacts/reports/
+            artifacts/BUILD_FAILED_DO_NOT_INSTALL.txt
+            artifacts/BUILD_MANIFEST.txt
+            artifacts/xmake-requires.lock
+            artifacts/SHA256SUMS.txt
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 0
+
+      - name: Record artifact digest
+        if: steps.upload_success.outcome == 'success'
+        env:
+          ARTIFACT_DIGEST: ${{ steps.upload_success.outputs.artifact-digest }}
+        run: |
+          "- Uploaded artifact SHA-256: ``$env:ARTIFACT_DIGEST``" |
+            Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append

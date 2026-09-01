@@ -1,0 +1,15 @@
+diff --git a/src/App/Extensions/ResourcePatch/Extension.cpp b/src/App/Extensions/ResourcePatch/Extension.cpp
+--- a/src/App/Extensions/ResourcePatch/Extension.cpp
++++ b/src/App/Extensions/ResourcePatch/Extension.cpp
+@@ -1496,6 +1496,10 @@ Red::Handle<Red::AppearanceDefinition> App::ResourcePatchExtension::PatchInstanc
+     auto appearanceIt = appearances.find(aName);
+     if (appearanceIt != appearances.end())
+         return appearanceIt.value();
+ 
+-    return appearances[{}];
++    auto defaultIt = appearances.find({});
++    if (defaultIt != appearances.end())
++        return defaultIt.value();
++
++    return {};
+ }
