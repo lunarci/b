@@ -183,24 +183,19 @@ function Assert-CompatibleDependencyLock {
     param([string] $LockPath)
 
     Assert-True (Test-Path -LiteralPath $LockPath) "Xmake dependency lock is missing: $LockPath"
-    $LockData = Get-Content -LiteralPath $LockPath -Raw | ConvertFrom-Json -AsHashtable
-    $PlatformKeys = @($LockData.Keys | Where-Object { $_ -ne "__meta__" })
-    Assert-True ($PlatformKeys.Count -gt 0) "Xmake dependency lock has no platform entries."
+    $LockText = Get-Content -LiteralPath $LockPath -Raw
+    Assert-True ($LockText -match '(?s)__meta__\s*=\s*\{.*?version\s*=\s*"1\.0"') `
+        "Xmake dependency lock has no supported metadata block."
 
-    $MimallocEntries = @()
-    foreach ($PlatformKey in $PlatformKeys) {
-        $PlatformEntries = $LockData[$PlatformKey]
-        foreach ($Entry in $PlatformEntries.GetEnumerator()) {
-            if ($Entry.Key -match "mimalloc") {
-                $MimallocEntries += $Entry
-            }
-        }
-    }
-
-    Assert-True ($MimallocEntries.Count -gt 0) "Xmake dependency lock has no mimalloc entry."
-    foreach ($Entry in $MimallocEntries) {
-        Assert-True ($Entry.Value.version -eq "v$CompatibleMimallocVersion") `
-            "Incompatible mimalloc lock entry $($Entry.Key): $($Entry.Value.version)"
+    $MimallocMatches = [regex]::Matches(
+        $LockText,
+        '(?s)\["[^"]*mimalloc[^"]*"\]\s*=\s*\{.*?version\s*=\s*"([^"]+)"'
+    )
+    Assert-True ($MimallocMatches.Count -gt 0) "Xmake dependency lock has no mimalloc entry."
+    foreach ($Match in $MimallocMatches) {
+        $LockedVersion = $Match.Groups[1].Value
+        Assert-True ($LockedVersion -eq "v$CompatibleMimallocVersion") `
+            "Incompatible mimalloc lock entry: $LockedVersion"
     }
 }
 
