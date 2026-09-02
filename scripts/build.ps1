@@ -296,7 +296,6 @@ try {
 
     Initialize-UpstreamSource -Destination $ControlSource -Label "control"
     Initialize-UpstreamSource -Destination $PatchedSource -Label "patched"
-    Enable-NDebugForRelease -SourceDir $ControlSource -Label "control"
 
     $ControlLock = Join-Path $ControlSource "xmake-requires.lock"
     $PatchedLock = Join-Path $PatchedSource "xmake-requires.lock"
@@ -316,6 +315,7 @@ try {
     Copy-Item -LiteralPath $ControlLock -Destination $PatchedLock -Force
     Copy-Item -LiteralPath $ControlLock -Destination (Join-Path $ArtifactRoot "xmake-requires.lock") -Force
 
+    Enable-NDebugForRelease -SourceDir $ControlSource -Label "control"
     $ControlBuiltDll = Build-ArchiveXL -SourceDir $ControlSource -Mode "release" -Label "control"
     $ControlOutputDir = Join-Path $ArtifactRoot "control-DO-NOT-INSTALL"
     New-Item -ItemType Directory -Force -Path $ControlOutputDir | Out-Null
