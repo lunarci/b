@@ -96,7 +96,7 @@ function Enable-NDebugForRelease {
     $XmakePath = Join-Path $SourceDir "xmake.lua"
     $Text = Get-Content -LiteralPath $XmakePath -Raw
     $Needle = '    add_cxxflags("/Ob2")'
-    $Insertion = "`n    add_defines("NDEBUG")"
+    $Insertion = "`n    " + 'add_defines("NDEBUG")'
 
     Assert-True ($Text.Contains($Needle)) `
         "$Label xmake.lua does not contain the expected Release flag block."
