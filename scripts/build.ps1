@@ -41,7 +41,7 @@ $VerifyWork = Join-Path $WorkRoot "verify"
 $PatchPath = Join-Path $RepoRoot "patches\pr22-appearance-readonly.patch"
 $OfficialZip = Join-Path $RepoRoot "input\ArchiveXL-1.27.1-official.zip"
 $PinnedLock = Join-Path $RepoRoot "locks\xmake-requires.lock"
-$OutputPackage = Join-Path $ArtifactRoot "ArchiveXL-1.27.1-PR22-Test.zip"
+$OutputPackage = Join-Path $ArtifactRoot "ArchiveXL-1.27.1-PR22-NDEBUG-Test.zip"
 
 function Assert-True {
     param(
@@ -85,6 +85,32 @@ function Get-GitOutput {
         throw "git $($ArgumentList -join ' ') failed in $WorkingTree.`n$($Output | Out-String)"
     }
     return ($Output | Out-String).Trim()
+}
+
+function Enable-NDebugForRelease {
+    param(
+        [string] $SourceDir,
+        [string] $Label
+    )
+
+    $XmakePath = Join-Path $SourceDir "xmake.lua"
+    $Text = Get-Content -LiteralPath $XmakePath -Raw
+    $Needle = '    add_cxxflags("/Ob2")'
+    $Insertion = "`n    add_defines("NDEBUG")"
+
+    Assert-True ($Text.Contains($Needle)) `
+        "$Label xmake.lua does not contain the expected Release flag block."
+    Assert-True (-not $Text.Contains('add_defines("NDEBUG")')) `
+        "$Label xmake.lua already defines NDEBUG unexpectedly."
+
+    $Updated = $Text.Replace($Needle, "$Needle$Insertion")
+    Assert-True (($Updated.Length - $Text.Length) -eq $Insertion.Length) `
+        "$Label xmake.lua NDEBUG edit was not the expected single insertion."
+    [IO.File]::WriteAllText($XmakePath, $Updated, [Text.UTF8Encoding]::new($false))
+
+    $Written = Get-Content -LiteralPath $XmakePath -Raw
+    Assert-True ($Written.Contains("$Needle$Insertion")) `
+        "$Label xmake.lua did not retain the Release-only NDEBUG definition."
 }
 
 function Initialize-UpstreamSource {
@@ -270,6 +296,7 @@ try {
 
     Initialize-UpstreamSource -Destination $ControlSource -Label "control"
     Initialize-UpstreamSource -Destination $PatchedSource -Label "patched"
+    Enable-NDebugForRelease -SourceDir $ControlSource -Label "control"
 
     $ControlLock = Join-Path $ControlSource "xmake-requires.lock"
     $PatchedLock = Join-Path $PatchedSource "xmake-requires.lock"
@@ -338,6 +365,7 @@ try {
     $AppliedDiff | Set-Content -LiteralPath (Join-Path $ReportRoot "applied-pr22.diff") -Encoding utf8
     Copy-Item -LiteralPath $PatchPath -Destination (Join-Path $ReportRoot "vendored-pr22.patch")
 
+    Enable-NDebugForRelease -SourceDir $PatchedSource -Label "patched"
     $PatchedBuiltDll = Build-ArchiveXL -SourceDir $PatchedSource -Mode "release" -Label "patched"
     Assert-True (Test-Path -LiteralPath $PatchedLock) "Patched build dependency lock is missing."
     Assert-CompatibleDependencyLock -LockPath $PatchedLock
@@ -414,6 +442,7 @@ try {
         "Pinned 1.27.1 source commit: $UpstreamCommit"
         "PR number: $PrNumber"
         "PR provenance commit: $PrCommit"
+        "Release assertion policy: NDEBUG explicitly defined for release mode"
         "Vendored patch SHA-256: $PatchSha256"
         "Xmake 3.0.9 archive SHA-256: 0f2c57a29f358e4f9f059cd823f40c3213750dcb13d5b6e9f6e5b29910992d65"
         "Official input ZIP SHA-256: $OfficialZipSha256"
@@ -451,7 +480,7 @@ try {
     $Manifest | Set-Content -LiteralPath (Join-Path $ArtifactRoot "BUILD_MANIFEST.txt") -Encoding utf8
 
     @(
-        "설치할 파일: ArchiveXL-1.27.1-PR22-Test.zip"
+        "설치할 파일: ArchiveXL-1.27.1-PR22-NDEBUG-Test.zip"
         ""
         "1. MO2에서 기존 ArchiveXL을 비활성화합니다."
         "2. 위 ZIP을 별도 모드로 설치하고 활성화합니다."
@@ -460,6 +489,7 @@ try {
         "5. 원래 ArchiveXL로 돌아가려면 시험 모드를 비활성화하고 기존 ArchiveXL을 다시 활성화합니다."
         ""
         "이 빌드는 55f48569(실제 1.27.1 소스)에 PR #22의 +5/-1 변경만 적용했습니다."
+        "Release DLL은 공식 배포 동작과 맞추기 위해 NDEBUG를 명시하며, _wassert import가 남으면 검증에서 실패합니다."
         "GitHub Actions의 PASS는 정적 검증 통과를 뜻하며 게임 내 안정성을 보증하지 않습니다."
     ) | Set-Content -LiteralPath (Join-Path $ArtifactRoot "INSTALL-KO.txt") -Encoding utf8
 
@@ -482,7 +512,7 @@ try {
             "- Base commit: ``$UpstreamCommit``"
             "- Patch provenance: ``$PrCommit``"
             "- Package SHA-256: ``$PackageSha256``"
-            "- Install: ``ArchiveXL-1.27.1-PR22-Test.zip``"
+            "- Install: ``ArchiveXL-1.27.1-PR22-NDEBUG-Test.zip``"
             ""
             "> This run compiled and statically verified the package; it did not perform an in-game test."
         ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append

@@ -93,6 +93,8 @@ function Get-PeFacts {
     Assert-True ($LASTEXITCODE -eq 0) "dumpbin /dependents failed for $Label."
     $Imports = (& $DumpbinPath /nologo /imports $DllPath 2>&1 | Out-String)
     Assert-True ($LASTEXITCODE -eq 0) "dumpbin /imports failed for $Label."
+    Assert-True (-not ($Imports -match "(?i)\\b_wassert\\b")) `
+        "$Label imports _wassert; Release assertions were not disabled."
 
     $Headers | Set-Content -LiteralPath (Join-Path $OutputDir "$Label-headers.txt") -Encoding utf8
     $Exports | Set-Content -LiteralPath (Join-Path $OutputDir "$Label-exports.txt") -Encoding utf8
