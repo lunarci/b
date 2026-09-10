@@ -1,0 +1,47 @@
+name: Verify OptiScaler Overwrite deployment tools
+
+on:
+  push:
+    branches: [codex/optiscaler-hudresource-rc1]
+    paths: [deployment-tools/**, .github/workflows/verify-optiscaler-deployment.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  windows-deployment:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Test backup, scope restrictions, failure rollback and restoration on PowerShell 5.1
+        shell: powershell
+        run: |
+          & .\deployment-tools\Test-OverwriteHelper.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Overwrite helper regression tests failed.' }
+      - name: Assemble the already-built DLL with the verified deployment tools
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python deployment-tools/assemble.py --download artifacts
+          if ($LASTEXITCODE -ne 0) { throw 'Package assembly or hash verification failed.' }
+      - name: Confirm the helper identifies the actual compiled OptiScaler image
+        shell: powershell
+        run: |
+          . .\deployment-tools\Manage-OptiScalerOverwrite.ps1 -LoadFunctionsOnly
+          if (-not (Test-OptiScalerIdentity (Resolve-Path .\artifacts\verified-dxgi.dll).Path '31d2d2b9149ecf169b62bc48be58ccae75e3497f1e869de80193c293db3e3020')) {
+            throw 'The real compiled DLL was not recognized as OptiScaler.'
+          }
+          Remove-Item -LiteralPath .\artifacts\verified-dxgi.dll
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: OptiScaler-HUDResource-RC1-MO2-Verified
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
