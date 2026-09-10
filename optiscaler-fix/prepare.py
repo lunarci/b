@@ -19,8 +19,10 @@ target.write_bytes(canonical)
 patch = str(kit / 'hudless-current-frame.patch')
 subprocess.run(['git', '-C', str(source), 'apply', '--check', patch], check=True)
 subprocess.run(['git', '-C', str(source), 'apply', patch], check=True)
-if hashlib.sha256(target.read_bytes()).hexdigest() != spec['patched_sha256']:
+patched = target.read_bytes().replace(b'\r\n', b'\n')
+if hashlib.sha256(patched).hexdigest() != spec['patched_sha256']:
     raise SystemExit('Patched source hash mismatch.')
+target.write_bytes(patched)
 version = source / 'OptiScaler/resource.h'
 data = version.read_text(encoding='utf-8')
 old = '#define VER_PRODUCT_NAME "OptiScaler v" VER_PRODUCT_VERSION_STR'
