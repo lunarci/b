@@ -1,0 +1,8 @@
+{
+  "repository": "https://github.com/optiscaler/OptiScaler",
+  "commit": "7daf5d042d32412da407838cd59e0869ecaaa55e",
+  "source_file": "OptiScaler/framegen/ffx/FSRFG_Dx12.cpp",
+  "upstream_git_blob": "cefed546895d9e19a5899914c39f78e50e143be8",
+  "base_sha256": "e08734a21aaa23e11d432d343c8c2e66ed49fde752d79fe38a178a04883a6c15",
+  "patched_sha256": "2d89d3872e3b0fabac63285ba5bb452f744252117c27c91dc24dde5a9de0983a"
+}

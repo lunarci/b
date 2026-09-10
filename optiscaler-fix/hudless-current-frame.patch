@@ -1,0 +1,42 @@
+--- a/OptiScaler/framegen/ffx/FSRFG_Dx12.cpp
++++ b/OptiScaler/framegen/ffx/FSRFG_Dx12.cpp
+@@ -1,4 +1,5 @@
+ #include "pch.h"
++#include <wrl/client.h>
+ 
+ #include "FSRFG_Dx12.h"
+ #include <State.h>
+@@ -694,19 +695,21 @@
+     if ((applyHudCutoff || State::Instance().fgHudlessCompare) && !lastFGDisableHudless)
+     {
+         auto presentWithHud = (ID3D12Resource*) params->presentColor.resource;
+-        auto hudlessResource = _resourceCopy[fIndex][FG_ResourceType::HudlessColor];
++        Microsoft::WRL::ComPtr<ID3D12Resource> hudlessSnapshot;
+         auto hudlessState = D3D12_RESOURCE_STATE_COPY_DEST;
+-
+-        if (hudlessResource == nullptr)
+-        {
+-            auto hudless = _frameResources[fIndex][FG_ResourceType::HudlessColor];
+-            if (hudless.validity == FG_ResourceValidity::UntilPresent)
+-                hudlessResource = hudless.GetResource();
+-
+-            // hudless.state only holds the state for the original resource, not the copy that we could get here
+-            if (hudlessResource && hudlessResource == hudless.resource)
+-                hudlessState = hudless.state;
+-        }
++        {
++            // The current frame record identifies both the selected resource and its state.
++            // The reusable copy cache may still contain a resource from an earlier frame.
++            auto hudless = GetResource(FG_ResourceType::HudlessColor, fIndex);
++            if (hudless && (hudless->copy != nullptr || hudless->validity == FG_ResourceValidity::UntilPresent))
++            {
++                hudlessSnapshot = hudless->GetResource();
++                hudlessState = hudless->state;
++            }
++        }
++        // Retain the snapshot, but release the registry lock before recording commands:
++        // command-list hooks may re-enter resource tracking.
++        auto hudlessResource = hudlessSnapshot.Get();
+ 
+         if (presentWithHud && hudlessResource)
+         {
