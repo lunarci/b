@@ -1,6 +1,12 @@
 # Matheus-style NR scaling adapter for the exact NR 0.3.0 C7 build
 
-**Experimental adapter, version 0.2.2 Complete. Install only a successfully built installation package. Actual AMD/Cyberpunk execution remains unverified.**
+**Experimental adapter, version 0.2.3 ImageStability. Install only a successfully built installation package. Actual AMD/Cyberpunk execution remains unverified.**
+
+0.2.3 guards each low-resolution residual tap before interpolation. The previous
+interpolate-then-clamp order let a finite HDR outlier with tiny spatial support
+saturate a neighbouring pixel's entire correction budget. Production shader
+regressions cover that counterexample and ordinary HDR preservation. No temporal
+history filter is added; actual user-reported arm/skin artifacts remain unverified.
 
 0.2.2 fixes a confirmed admission mismatch: the earlier user log contains
 RGBA16F motion vectors, while 0.2.1 only admitted RG16F. Both formats now use

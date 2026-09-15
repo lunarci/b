@@ -102,3 +102,10 @@ FFX and actual D3D12 formats. Default residual effect strength is 50 percent;
 this reduces the final correction amount and does not reduce inference work.
 The complete installer also applies the user-requested OptiScaler ratio 2.0,
 backs up changed settings and supports disabling both NR layers together.
+
+In 0.2.3 each low residual is clamped and checked against the current native RGB
+before bilinear interpolation. This prevents a small-support finite HDR outlier
+from saturating the full blended correction allowance. Depth weight applies once
+after interpolation. No motion-reprojected history or temporal filter is added.
+Compatible constant HDR fields retain the same effect strength; edge/detail
+balance can change and must be compared in game.

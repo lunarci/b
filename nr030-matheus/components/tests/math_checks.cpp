@@ -113,6 +113,93 @@ void area_partition_check(unsigned sw, unsigned sh, unsigned dw, unsigned dh) {
     for (double v : covered) near(v, 1.0, 1e-10, "source edge/cell lost or duplicated");
     near(output_integral, source_integral, 1e-7, "HDR/edge energy conservation");
 }
+
+using Rgb = std::array<double, 3>;
+using FourTaps = std::array<Rgb, 4>;
+
+// Test-only double reference. Explicit tensor-product weights keep this
+// independent of HLSL's nested lerps. Production correctness is separately
+// checked by the WARP HDR-outlier and area-baseline cancellation fixtures.
+Rgb residual_reference(const Rgb& native, const FourTaps& baseline,
+                       const FourTaps& edited, const std::array<double, 4>& weights) {
+    Rgb result{};
+    for (std::size_t tap = 0; tap < weights.size(); ++tap) {
+        double mismatch = 0;
+        for (std::size_t c = 0; c < native.size(); ++c) {
+            const double magnitude = std::max({std::abs(native[c]), std::abs(baseline[tap][c]), 1e-5});
+            mismatch = std::max(mismatch, std::abs(native[c] - baseline[tap][c]) / magnitude);
+        }
+        const double t = std::clamp((mismatch - 0.15) / 0.6, 0.0, 1.0);
+        const double confidence = 1 - t * t * (3 - 2 * t);
+        for (std::size_t c = 0; c < native.size(); ++c) {
+            const double limit = 0.5 * std::max(std::abs(native[c]), std::abs(baseline[tap][c]));
+            const double delta = std::clamp(edited[tap][c] - baseline[tap][c], -limit, limit);
+            result[c] += weights[tap] * confidence * delta;
+        }
+    }
+    return result;
+}
+
+void residual_support_checks() {
+    const double q = (6.0 + 0.5) * 34 / 40 - 0.5;
+    const double x = q - std::floor(q), y = 0.375;
+    const std::array<double, 4> weights{(1-x)*(1-y), x*(1-y), (1-x)*y, x*y};
+    near(x, 0.025, 1e-12, "85% outlier support fixture");
+    const Rgb native{1, 1, 1};
+    const FourTaps baseline{native, native, native, native};
+    for (const double outlier : {-65504.0, 0.0, 65504.0}) {
+        auto edited = baseline;
+        edited[1] = edited[3] = Rgb{outlier, outlier, outlier};
+        const auto delta = residual_reference(native, baseline, edited, weights);
+        for (const double component : delta)
+            near(component, (outlier > 1 ? 0.5 : -0.5) * x, 1e-12,
+                 "An isolated outlier must retain its interpolation support");
+    }
+    const Rgb black{0, 0, 0}, bright{40, 40, 40}, changed{60, 60, 60};
+    const FourTaps different{black, bright, black, bright};
+    const FourTaps edited{black, changed, black, changed};
+    near(40 * x, 1, 1e-12, "Dissimilar tap average matches native fixture");
+    for (const double component : residual_reference(native, different, edited, weights))
+        near(component, 0, 0, "Averaging rejected taps must not create confidence");
+
+    // HDR values remain in scene units. The reference applies no display-range
+    // clamp; production TransferColour owns its separate FP16 output bound.
+    for (const double level : {0.125, 1.0, 100.0, 40000.0}) {
+        const Rgb original{level, level / 2, level / 4};
+        const Rgb correction{1.5 * level, 0.75 * level, 0.375 * level};
+        const FourTaps flat{original, original, original, original};
+        const FourTaps changedFlat{correction, correction, correction, correction};
+        const auto delta = residual_reference(original, flat, changedFlat, weights);
+        for (std::size_t c = 0; c < original.size(); ++c)
+            near(delta[c], original[c] * 0.5, 1e-10, "Matched HDR correction must be homogeneous");
+    }
+    const Rgb signedNative{-2, 0.125, 8};
+    const FourTaps signedFlat{signedNative, signedNative, signedNative, signedNative};
+    for (const double component : residual_reference(signedNative, signedFlat, signedFlat, weights))
+        near(component, 0, 0, "Signed edited-equals-baseline identity");
+
+    // Independent convex-support bound across every phase of both fixed grids.
+    // No reconstructed component can spend more than the weighted tap budgets.
+    const Rgb scene{2, 4, 8};
+    const FourTaps varied{{{1, 2, 4}, {2, 4, 8}, {3, 6, 12}, {20, 40, 80}}};
+    const FourTaps extreme{{{65504, -65504, 65504}, {-65504, 65504, -65504},
+                           {65504, -65504, -65504}, {-65504, 65504, 65504}}};
+    for (const unsigned low : {60u, 68u}) for (unsigned pixel = 0; pixel < 80; ++pixel) {
+        const double position = (pixel + 0.5) * low / 80 - 0.5;
+        const double tx = position - std::floor(position), ty = 1 - tx;
+        const std::array<double, 4> support{(1-tx)*(1-ty), tx*(1-ty), (1-tx)*ty, tx*ty};
+        near(support[0] + support[1] + support[2] + support[3], 1, 1e-12,
+             "Reconstruction support partitions unity");
+        const auto delta = residual_reference(scene, varied, extreme, support);
+        for (std::size_t c = 0; c < scene.size(); ++c) {
+            double budget = 0;
+            for (std::size_t tap = 0; tap < support.size(); ++tap)
+                budget += support[tap] * 0.5 * std::max(std::abs(scene[c]), std::abs(varied[tap][c]));
+            require(std::isfinite(delta[c]) && std::abs(delta[c]) <= budget + 1e-12,
+                    "Reconstructed residual exceeds its convex support budget");
+        }
+    }
+}
 } // namespace
 
 int main() {
@@ -122,7 +209,9 @@ int main() {
         area_partition_check(9, 7, 7, 5);
         area_partition_check(17, 11, 13, 8);
         area_partition_check(9, 7, 9, 7);
-        std::cout << "PASS: fixed-scale geometry, motion units, fractional area conservation\n";
+        residual_support_checks();
+        std::cout << "PASS: fixed-scale geometry, motion units, fractional area conservation, "
+                     "per-tap residual support and HDR invariants\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';

@@ -65,6 +65,15 @@ bool LowTap(int2 p, out float3 b, out float3 d) {
     return all(isfinite(b)) && all(isfinite(e)) && all(isfinite(d));
 }
 
+float3 GuardTap(float3 original, float3 base, float3 delta) {
+    float3 magnitude = max(max(abs(original), abs(base)), 1e-5);
+    float3 relative = abs(original - base) / magnitude;
+    float mismatch = max(relative.r, max(relative.g, relative.b));
+    float confidence = 1.0 - smoothstep(0.15, 0.75, mismatch);
+    float3 limit = 0.5 * max(abs(base), abs(original));
+    return clamp(delta, -limit, limit) * confidence;
+}
+
 [numthreads(8, 8, 1)]
 void MainCS(uint3 p : SV_DispatchThreadID) {
     if (p.x >= w || p.y >= h) return;
@@ -87,20 +96,22 @@ void MainCS(uint3 p : SV_DispatchThreadID) {
         dst[p.xy] = c;
         return;
     }
+    // Limit each tap BEFORE reconstruction: a saturated HDR outlier with 2.5%
+    // interpolation support must not spend the whole output pixel's edit budget.
+    // Match each baseline separately too; averaging dissimilar taps can create
+    // a false match. This is spatial protection, not temporal NR stabilization.
+    d00 = GuardTap(c.rgb, b00, d00);
+    d10 = GuardTap(c.rgb, b10, d10);
+    d01 = GuardTap(c.rgb, b01, d01);
+    d11 = GuardTap(c.rgb, b11, d11);
     float3 d = lerp(lerp(d00, d10, t.x), lerp(d01, d11, t.x), t.y);
-    float3 b = lerp(lerp(b00, b10, t.x), lerp(b01, b11, t.x), t.y);
     // Identity is exact for finite inputs, including negative scene-linear RGB.
     // The upstream unconditional final clamp did not preserve that case.
     if (all(d == 0.0)) {
         dst[p.xy] = c;
         return;
     }
-    float3 magnitude = max(max(abs(c.rgb), abs(b)), 1e-5);
-    float3 relative = abs(c.rgb - b) / magnitude;
-    float mismatch = max(relative.r, max(relative.g, relative.b));
-    float confidence = 1.0 - smoothstep(0.15, 0.75, mismatch);
-    float3 limit = 0.5 * max(abs(b), abs(c.rgb));
-    d = clamp(d, -limit, limit) * confidence * DepthWeight(p.xy);
+    d *= DepthWeight(p.xy);
     if (all(d == 0.0)) {
         dst[p.xy] = c;
         return;

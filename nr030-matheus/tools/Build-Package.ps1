@@ -55,9 +55,18 @@ $warpResultPath=Join-Path $BuildRoot 'gpu_tests/warp_results.json'
 $warp=Get-Content -LiteralPath $warpResultPath -Raw | ConvertFrom-Json
 if ($warp.runner -cne 'D3D12 WARP' -or $warp.productionShaders -ne $true -or
     $warp.sharedProductionExecutor -ne $true -or $warp.neuralRuntimeExecuted -ne $false -or
-    $warp.failed -cne '' -or $warp.reason -cne '' -or $warp.passedCount -lt 33 -or
+    $warp.failed -cne '' -or $warp.reason -cne '' -or $warp.passedCount -lt 38 -or
     @($warp.passed).Count -ne $warp.passedCount) {
     throw 'Production shader WARP execution evidence is incomplete or failed.'
+}
+foreach ($required in @(
+    '85% HDR outlier keeps its 2.5% interpolation support',
+    '85% negative outlier keeps its 2.5% interpolation support',
+    'Residual rejects mismatched taps even when their baseline average matches',
+    'Tap guards retain matched uniform HDR correction and RGB ratios',
+    'Tap guards preserve signed FP16 identity on the 85% grid'
+)) {
+    if ($warp.passed -cnotcontains $required) { throw ('Missing image stability regression: '+$required) }
 }
 $lifetimeResultPath=Join-Path $BuildRoot 'addon/lifetime_results.json'
 $lifetime=Get-Content -LiteralPath $lifetimeResultPath -Raw | ConvertFrom-Json
@@ -71,7 +80,7 @@ if ($inputChecks.passedCount -lt 16 -or $inputChecks.failure -cne '' -or
     @($inputChecks.passed).Count -ne $inputChecks.passedCount -or $inputChecks.amdGpuGameTested -ne $false) {
     throw 'Production input admission validation is incomplete.'
 }
-$dist=Join-Path $BuildRoot 'deliverable/Matheus_NR030_0.2.2_Complete'
+$dist=Join-Path $BuildRoot 'deliverable/Matheus_NR030_0.2.3_ImageStability'
 if (Test-Path -LiteralPath $dist) { throw 'Refusing to overwrite an existing staged deliverable.' }
 New-Item -ItemType Directory -Path $dist | Out-Null
 foreach ($name in @('Setup.ps1','Complete-Setup.ps1','00_FIX_RATIO_AND_DISABLE_NR.cmd','01_INSTALL_ADDON.cmd','02_REMOVE_ADDON.cmd','03_CHECK_ADDON.cmd','04_RESTORE_FSR_XEFG.cmd','05_REMOVE_AND_RESTORE_BASE.cmd','README_KO.md','protected-files.json')) {
@@ -106,7 +115,7 @@ if (Test-Path -LiteralPath (Join-Path $sourceRoot 'package/test-results')) {
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'package/test-results') -Destination (Join-Path $dist 'evidence/package-tests') -Recurse
 }
 $manifest=Get-Content -LiteralPath (Join-Path $sourceRoot 'package/package-manifest.json') -Raw | ConvertFrom-Json
-$manifest.addon_version='0.2.2-complete-experimental'
+$manifest.addon_version='0.2.3-image-stability-experimental'
 $manifest.source_commit=$SourceCommit
 $manifest.build_run_id=$RunId
 $manifest.build_verified=$true
@@ -133,6 +142,9 @@ $provenance=[ordered]@{
     default_depth_protection=$true
     default_effect_percent=50
     requested_upscaler_ratio=2.0
+    residual_guard='Per-tap clamp and baseline confidence before bilinear interpolation'
+    temporal_filter_added=$false
+    user_reported_white_artifact_fix_verified=$false
     matias_reference_commit='333038704896d6e38f735b9ddb6e62210e509cb9'
     yuri_reference_commit='0c123fc4bb81bbcb343246e3c98a3bcb33a1009c'
     colour_integration='Same-encoding luminance transfer after AMD residual; no upstream codec or model replacement'
@@ -150,7 +162,7 @@ $provenance=[ordered]@{
     installer_windows_powershell51=$installerResults.WindowsPowerShell51
     complete_installer_checks_passed=$completeResults.Passed
     complete_installer_windows_powershell51=$completeResults.WindowsPowerShell51
-    installer_revision='complete-0.2.2'
+    installer_revision='complete-0.2.3'
     legacy_base_record_required=$false
     base_compatibility='Verified existing C7 ASI and model or pinned automatic downloads; required NR / OptiScaler / XeFG route keys and requested ratio 2.0 backed up before changes'
     amd_gpu_game_tested=$false
@@ -160,9 +172,13 @@ $provenance=[ordered]@{
 }
 $provenance | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $dist 'BUILD_PROVENANCE.json') -Encoding UTF8
 $status=@'
-# Matheus NR030 0.2.2 통합 설치 패키지
+# Matheus NR030 0.2.3 영상 합성 수정 설치본
 
-이전 로그에서는 85% 처리가 한 번도 실행되지 않았습니다. 기존 사용자 게임 로그에서 확인된 RGBA16F 4채널 모션벡터를 실제 형식으로 읽도록 지원을 추가했습니다. 75/85% 입력을 받을 수 없어 우회하는 호출은 기본 NR을 실행하지 않고 원래 FFX로 넘깁니다. 100% 비교 모드는 기존 NR을 그대로 실행합니다.
+NR 결과의 밝은 이상치가 주변으로 번질 수 있는 공간 합성 순서를 수정한 빌드입니다. 설치 및 실행 성공 여부와 실제 영상 품질은 별도로 확인해야 합니다.
+
+0.2.3은 NR 보정량의 제한과 원본 일치도 검사를 각 저해상도 픽셀에 먼저 적용한 뒤 주변 값을 섞습니다. 기존에는 먼저 섞고 나중에 제한해, 조금만 섞여야 하는 과도하게 밝은 NR 픽셀이 주변의 보정 한도를 모두 차지할 수 있었습니다. 이 특정 수치 문제를 재현한 생산용 셰이더 검사를 추가했습니다.
+
+픽셀 간 혼합 방식을 수정했으며 시간축 필터·이전 프레임 누적·추가 GPU 텍스처는 넣지 않았습니다. 정상 HDR 영역과 무보정 원본 보존도 검사합니다. 균일한 표면에서 기본 NR 자체가 프레임마다 다른 보정을 만드는 경우의 깜빡임은 별도 문제입니다. 사용자 게임에서 모든 흰색 깨짐과 피부 자글거림이 해결됐다는 판정은 하지 않았습니다.
 
 필요한 기본 NR C7과 모델 310.8.0을 기존 파일에서 검증·재사용하거나 지정 출처에서 다운로드합니다. 압축 파일과 추출 파일의 크기 및 SHA-256을 모두 확인한 뒤 설치합니다. 기본 NR·모델은 이 ZIP에 재배포하지 않습니다. 기존 OptiScaler·XeFG 실행 파일은 유지합니다.
 

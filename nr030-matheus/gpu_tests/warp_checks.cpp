@@ -623,6 +623,73 @@ int wmain(int argc, wchar_t** argv) {
             auto expected = Filled(9, 5, {10.5f, 10.5f, 10.5f, 0.625f});
             Equal(gpu.Run(Kernel::Residual, {native, baseline, edited}, 9, 5, {9, 5, 4, 3}, rgba), expected);
         });
+        for (const float outlier : {65504.0f, -65504.0f}) {
+            test(outlier > 0 ? "85% HDR outlier keeps its 2.5% interpolation support"
+                             : "85% negative outlier keeps its 2.5% interpolation support", [&] {
+                const auto half = DXGI_FORMAT_R16G16B16A16_FLOAT;
+                const auto plan = contract::make_scale_plan({40, 40}, contract::FixedScale::Percent85);
+                const UINT lw = plan.neural.width, lh = plan.neural.height;
+                Require(lw == 34 && lh == 34, "Fixture must use the actual 85% grid");
+                auto native = Filled(40, 40, {1, 1, 1, 0.3125f}, half);
+                auto low = gpu.Run(Kernel::Color, {native}, lw, lh, {lw, lh, 40, 40}, half);
+                auto edited = low;
+                for (UINT y = 0; y < lh; ++y) for (UINT c = 0; c < 3; ++c)
+                    edited.At(6, y, c) = outlier;
+                auto out = gpu.Run(Kernel::Residual, {native, low, edited}, 40, 40,
+                                   {40, 40, lw, lh}, half, 1.0f, true, 0.5f);
+                // x=6 maps to q=5.025. Only 2.5% of the guarded 0.5 residual
+                // reaches it; Effect50 gives +/-0.00625, before FP16 storage.
+                // Clamping after interpolation incorrectly produced 1.25/0.75.
+                const float expected = FromHalf(ToHalf(outlier > 0 ? 1.00625f : 0.99375f));
+                for (UINT y = 0; y < 40; ++y) {
+                    for (UINT c = 0; c < 3; ++c) {
+                        Require(out.At(6, y, c) == expected, "Outlier spent more than its tap support");
+                        Require(out.At(0, y, c) == 1.0f, "Outlier escaped its spatial support");
+                    }
+                    for (UINT x = 0; x < 40; ++x)
+                        Require(out.At(x, y, 3) == 0.3125f, "Native alpha changed");
+                }
+            });
+        }
+        test("Residual rejects mismatched taps even when their baseline average matches", [&] {
+            const auto half = DXGI_FORMAT_R16G16B16A16_FLOAT;
+            auto native = Filled(40, 40, {0, 0, 0, 0.3125f}, half);
+            // This is an actual area baseline from finite signed scene-linear
+            // input: low x=5 is 0 and x=6 is 40, but native x=6 is 1.
+            for (UINT y = 0; y < 40; ++y) for (UINT c = 0; c < 3; ++c) {
+                native.At(5, y, c) = -33.5f;
+                native.At(6, y, c) = 1.0f;
+                native.At(7, y, c) = 50.0f;
+            }
+            auto low = gpu.Run(Kernel::Color, {native}, 34, 34, {34, 34, 40, 40}, half);
+            auto edited = low;
+            for (UINT y = 0; y < 34; ++y) for (UINT c = 0; c < 3; ++c) {
+                Require(std::abs(low.At(5, y, c)) < 0.001f && low.At(6, y, c) == 40.0f,
+                        "Area baseline no longer constructs the cancellation fixture");
+                edited.At(6, y, c) = 60.0f;
+            }
+            auto out = gpu.Run(Kernel::Residual, {native, low, edited}, 40, 40,
+                               {40, 40, 34, 34}, half, 1.0f, true, 0.5f);
+            for (UINT y = 0; y < 40; ++y) for (UINT c = 0; c < 4; ++c)
+                Require(out.At(6, y, c) == native.At(6, y, c),
+                        "Dissimilar taps acquired confidence from their average");
+        });
+        test("Tap guards retain matched uniform HDR correction and RGB ratios", [&] {
+            const auto half = DXGI_FORMAT_R16G16B16A16_FLOAT;
+            auto native = Filled(40, 40, {100, 50, 25, 0.25f}, half);
+            auto low = Filled(34, 34, {100, 50, 25, 0}, half);
+            auto edited = Filled(34, 34, {150, 75, 37.5f, 0}, half);
+            Equal(gpu.Run(Kernel::Residual, {native, low, edited}, 40, 40,
+                          {40, 40, 34, 34}, half, 1.0f, true, 0.5f),
+                  Filled(40, 40, {125, 62.5f, 31.25f, 0.25f}, half), 0, 0, true);
+        });
+        test("Tap guards preserve signed FP16 identity on the 85% grid", [&] {
+            const auto half = DXGI_FORMAT_R16G16B16A16_FLOAT;
+            auto native = Filled(40, 40, {-2, 0.125f, 8, -0.5f}, half);
+            auto low = gpu.Run(Kernel::Color, {native}, 34, 34, {34, 34, 40, 40}, half);
+            Equal(gpu.Run(Kernel::Residual, {native, low, low}, 40, 40,
+                          {40, 40, 34, 34}, half, 1.0f, true, 0.5f), native, 0, 0, true);
+        });
         test("HDR correction bounded to finite FP16 range", [&] {
             auto native = Filled(9, 5, {60000, 8, 0.5f, 1});
             auto baseline = Filled(4, 3, {60000, 8, 0.5f, 0});

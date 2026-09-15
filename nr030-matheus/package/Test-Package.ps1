@@ -417,12 +417,12 @@ try {
         param($f)
         $text="event=session_start utc=2026-09-15T02:00:00Z runtime_validated=false`n"
         $text+="event=hook_active static_abi_verified=true runtime_validated=false scale_percent=85`n"
-        $text+="event=resolve_config version=0.2.1 colour_preservation_percent=100 depth_protection=1 effect_percent=100 applies_to_scaled_path_only=true`n"
+        $text+="event=resolve_config version=0.2.3 colour_preservation_percent=100 depth_protection=1 effect_percent=100 applies_to_scaled_path_only=true`n"
         $text+="event=pool_sample tick_ms=3000 allocated_bytes=80 allocated_slots=4 retained_uses=2 retired_uses=100 released_borrowed_refs=800 trimmed_slots=1 trimmed_bytes=20 local_valid=0 local_usage_bytes=110 local_budget_bytes=0 nonlocal_valid=0 nonlocal_usage_bytes=0 ffx_frame_time_ms=16.6 ffx_reset=0 addon_failed=0 last_fallback_ever=none`n"
         $s=Get-PoolSessionSummary $text
         Assert-True ($s.Samples -eq 1 -and $s.LocalSamples -eq 0 -and $s.OverBudgetSamples -eq 0) 'Unavailable budget treated as real usage evidence.'
         $a=Get-AddonSessionSummary $text '2026-09-15T01:00:00Z'
-        Assert-True ($a.CompositeSettingsFound -and -not $a.RuntimeValidated -and -not $a.CommandRecordingObserved) '0.2.1 settings were rejected or treated as gameplay proof.'
+        Assert-True ($a.CompositeSettingsFound -and -not $a.RuntimeValidated -and -not $a.CommandRecordingObserved) '0.2.3 settings were rejected or treated as gameplay proof.'
     }
 
     $failed=@($results | Where-Object { $_.Status -eq 'FAIL' })

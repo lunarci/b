@@ -420,7 +420,7 @@ function Get-AddonSessionSummary([string]$Text,[string]$InstalledUtc) {
     }
     $hooks=[regex]::Matches($session,'(?m)^event=hook_active static_abi_verified=true runtime_validated=false scale_percent=(75|85|100)\s*$')
     if ($hooks.Count) { $result.HookActive=$true;$result.ScalePercent=[int]$hooks[$hooks.Count-1].Groups[1].Value }
-    $config=[regex]::Matches($session,'(?m)^event=resolve_config version=0\.2\.[012] colour_preservation_percent=(100|[0-9]{1,2}) depth_protection=([01]) effect_percent=(100|[0-9]{1,2}) applies_to_scaled_path_only=true[ \t\r]*$')
+    $config=[regex]::Matches($session,'(?m)^event=resolve_config version=0\.2\.[0123] colour_preservation_percent=(100|[0-9]{1,2}) depth_protection=([01]) effect_percent=(100|[0-9]{1,2}) applies_to_scaled_path_only=true[ \t\r]*$')
     if ($config.Count) {
         $last=$config[$config.Count-1];$result.CompositeSettingsFound=$true
         $result.ColourPreservationPercent=[int]$last.Groups[1].Value
