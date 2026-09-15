@@ -1,6 +1,11 @@
 # Matheus-style NR scaling adapter for the exact NR 0.3.0 C7 build
 
-**Experimental adapter, version 0.2.0 Combined. Install only a successfully built installation package. Actual AMD/Cyberpunk execution remains unverified.**
+**Experimental adapter, version 0.2.1 MapRecovery. Install only a successfully built installation package. Actual AMD/Cyberpunk execution remains unverified.**
+
+0.2.1 sweeps all proven-complete recording uses before admission/fallback, trims
+extra scratch slots idle for two seconds (two retained), and records read-only
+DXGI process memory observations. See MAP_RECOVERY_KO.md. This corrects a retained
+resource path; it does not establish actual recovery of game FPS after the map.
 
 This revision adds original-colour luminance transfer adapted from matiasLombo
 and a spatial depth-edge guard adapted from Yuri in the existing Matheus resolve

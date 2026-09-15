@@ -83,6 +83,12 @@ ColourPreservationPercent, DepthProtection and EffectPercent are startup-only
 settings. At scale 100 the original helper bypass also bypasses these controls.
 The log records them in resolve_config; this alone is not execution evidence.
 
+In 0.2.1 Maintain sweeps ALL safe uses before eligibility/context fallbacks.
+Only Reusable's existing submitted/fence/Reset proof permits dropping a use.
+An unreferenced scratch slot idle for two seconds may be trimmed above a floor
+of two allocated slots. No timer retires a GPU recording. DXGI budget samples
+are process-wide observations; historical fallback labels are not current state.
+
 The log distinguishes command recording (`nr_recorded`, `resolved`) from
 observed fence-and-Reset retirement of resolved slots (`gpu_completed`). Those
 counters do not prove neural-model success, visual quality, performance gain,

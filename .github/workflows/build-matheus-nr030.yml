@@ -5,6 +5,7 @@ on:
     branches:
       - nr030-matheus-presr
       - nr030-combined-color
+      - nr030-map-recovery
     paths:
       - nr030-matheus/**
       - .github/workflows/build-matheus-nr030.yml
@@ -54,6 +55,7 @@ jobs:
             build/nr030/ctest-results.xml
             build/nr030/**/*.log
             build/nr030/gpu_tests/warp_results.json
+            build/nr030/addon/lifetime_results.json
             nr030-matheus/package/test-results/
           if-no-files-found: warn
           retention-days: 14
@@ -62,6 +64,6 @@ jobs:
         with:
           name: Matheus-NR030-install-package-${{ github.run_number }}
           path: |
-            build/nr030/deliverable/Matheus_NR030_Addon_0.2.0_Combined.zip
+            build/nr030/deliverable/Matheus_NR030_Addon_0.2.1_MapRecovery.zip
           if-no-files-found: error
           retention-days: 14

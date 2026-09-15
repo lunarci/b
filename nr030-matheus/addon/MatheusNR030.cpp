@@ -7,6 +7,7 @@
 #include <bcrypt.h>
 #include <MinHook.h>
 #include <d3d12.h>
+#include <dxgi1_4.h>
 #include <wrl/client.h>
 #include <array>
 #include <atomic>
@@ -23,6 +24,7 @@
 #include "lifetime.h"
 #include "../runtime_contract.h"
 #include "../components/component_contract.h"
+#include "../components/pool_maintenance.h"
 #include "../gpu_tests/shader_executor.h"
 
 #ifndef NR030_ENABLE_EXPERIMENTAL_RUNTIME
@@ -260,6 +262,7 @@ struct Slot {
     ComPtr<ID3D12DescriptorHeap> descriptors;
     std::shared_ptr<RecordingUse> use;
     bool resolved = false;
+    UINT64 bytes = 0, lastUsedMs = 0;
 };
 struct Frame {
     Slot* slot;
@@ -278,11 +281,13 @@ public:
     ffx::HelperFn helper = nullptr;
     cmp::FixedScale scale = cmp::FixedScale::Percent85;
     int colourPreservation = 100, depthProtection = 1, effectPercent = 100;
+    bool trimIdleScratch = true, diagnostics = true;
     std::atomic<bool> everScaled{false};
     std::atomic<bool> failed{false};
     std::mutex mutex;
     RecordingLifetime lifetime;
     ComPtr<ID3D12Device> device;
+    ComPtr<IDXGIAdapter3> memoryAdapter;
     gpu::ShaderExecutor shaders;
     std::array<Slot, SlotCount> slots{};
     void** admittedContext = nullptr;
@@ -292,6 +297,67 @@ public:
     std::atomic<unsigned> allocatedSlots{0};
     std::atomic<UINT64> seen{0}, scaled{0}, nrRecorded{0}, resolved{0}, fallback{0}, gpuCompleted{0};
     UINT64 admissionDeferred = 0;
+    UINT64 retiredUses = 0, releasedBorrowedRefs = 0, trimmedSlots = 0, trimmedBytes = 0;
+    UINT64 lastDiagnosticMs = 0;
+    UINT64 resetDispatches = 0;
+    std::atomic<const char*> lastFallbackReason{"none"};
+
+    // Called while holding the adapter mutex, BEFORE any eligibility fallback.
+    // Reclaim safe uses across the whole pool rather than only the chosen slot.
+    // GPU-complete but replayable/unobserved recordings remain pinned.
+    void Maintain(const ffx::UpscaleDispatch* desc) noexcept {
+        if (!device) return;
+        try {
+            const auto now = GetTickCount64();
+            const bool validDesc = desc && desc->header.type == ffx::UpscaleType;
+            if (validDesc && desc->reset) ++resetDispatches;
+            cmp::sweep_completed(slots,
+                [this](const auto& use) { return lifetime.Reusable(use); },
+                [this](auto& slot) {
+                    if (slot.resolved) ++gpuCompleted;
+                    ++retiredUses; releasedBorrowedRefs += slot.use->borrowed.size();
+                    slot.use.reset(); slot.resolved = false;
+                });
+            if (trimIdleScratch) for (auto it = slots.rbegin(); it != slots.rend(); ++it) {
+                auto& slot = *it;
+                if (!cmp::trim_idle_scratch(bool(slot.use), bool(slot.baseline), now,
+                                           slot.lastUsedMs, allocatedSlots.load())) continue;
+                const auto bytes = slot.bytes;
+                slot = Slot{};
+                allocatedBytes -= bytes; --allocatedSlots;
+                ++trimmedSlots; trimmedBytes += bytes;
+            }
+            if (!diagnostics || now - lastDiagnosticMs < 1000) return;
+            lastDiagnosticMs = now;
+            unsigned retained = 0;
+            for (const auto& slot : slots) if (slot.use) ++retained;
+            DXGI_QUERY_VIDEO_MEMORY_INFO local{}, nonlocal{};
+            const bool localOk = memoryAdapter && SUCCEEDED(memoryAdapter->QueryVideoMemoryInfo(
+                0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &local));
+            const bool nonlocalOk = memoryAdapter && SUCCEEDED(memoryAdapter->QueryVideoMemoryInfo(
+                0, DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL, &nonlocal));
+            Log("event=pool_sample tick_ms=" + std::to_string(now) +
+                " seen=" + std::to_string(seen.load()) + " scaled=" + std::to_string(scaled.load()) +
+                " resolved=" + std::to_string(resolved.load()) + " fallback=" + std::to_string(fallback.load()) +
+                " allocated_bytes=" + std::to_string(allocatedBytes.load()) +
+                " allocated_slots=" + std::to_string(allocatedSlots.load()) +
+                " retained_uses=" + std::to_string(retained) +
+                " retired_uses=" + std::to_string(retiredUses) +
+                " released_borrowed_refs=" + std::to_string(releasedBorrowedRefs) +
+                " trimmed_slots=" + std::to_string(trimmedSlots) +
+                " trimmed_bytes=" + std::to_string(trimmedBytes) +
+                " local_valid=" + std::to_string(localOk) +
+                " local_usage_bytes=" + std::to_string(local.CurrentUsage) +
+                " local_budget_bytes=" + std::to_string(local.Budget) +
+                " nonlocal_valid=" + std::to_string(nonlocalOk) +
+                " nonlocal_usage_bytes=" + std::to_string(nonlocal.CurrentUsage) +
+                " ffx_frame_time_ms=" + std::to_string(validDesc ? desc->frameTimeDelta : 0.0f) +
+                " ffx_reset=" + std::to_string(validDesc && desc->reset) +
+                " reset_dispatches=" + std::to_string(resetDispatches) +
+                " addon_failed=" + std::to_string(failed.load()) +
+                " last_fallback_ever=" + lastFallbackReason.load());
+        } catch (...) { /* Diagnostics must never prevent game dispatch. */ }
+    }
 
     bool LiveModeAllowed() const {
         const auto* base = reinterpret_cast<const std::uint8_t*>(runtime);
@@ -309,6 +375,7 @@ public:
     std::uint32_t Fallback(ffx::DispatchFn original, void** context, const ffx::UpscaleDispatch* desc,
                            const char* reason, bool direct = false) {
         const auto count = ++fallback;
+        lastFallbackReason.store(reason);
         if (count == 1 || count % 120 == 0) Log(std::string("event=fallback reason=") + reason);
         const auto value = direct || everScaled.load()
             ? original(context, desc ? &desc->header : nullptr) : helper(original, context, desc);
@@ -341,6 +408,10 @@ public:
     void Initialize(ID3D12GraphicsCommandList* commands, void** context, const cmp::ScalePlan& plan) {
         try {
         gpu::Check(commands->GetDevice(IID_PPV_ARGS(&device)), "Resolve command-list device");
+        // Optional read-only memory telemetry for this exact D3D12 adapter.
+        ComPtr<IDXGIFactory4> factory;
+        if (SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))))
+            factory->EnumAdapterByLuid(device->GetAdapterLuid(), IID_PPV_ARGS(&memoryAdapter));
         if (commands->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT)
             throw std::runtime_error("Only direct game command lists are supported");
         std::array<gpu::BytecodeView, 4> code{};
@@ -366,9 +437,7 @@ public:
     }
     Slot& Acquire(const cmp::ScalePlan& plan) {
         for (auto& slot : slots) {
-            if (slot.use && !lifetime.Reusable(slot.use)) continue;
-            if (slot.use && slot.resolved) ++gpuCompleted;
-            slot.use.reset(); slot.resolved = false;
+            if (slot.use) continue; // Maintain() has already swept every safe use.
             if (!slot.baseline) {
                 Slot complete;
                 const auto before = allocatedBytes.load();
@@ -400,9 +469,11 @@ public:
                 gpu::Check(device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&complete.descriptors)),
                            "Create private dispatch descriptor ranges");
                 } catch (...) { allocatedBytes = before; throw; }
+                complete.bytes = allocatedBytes.load() - before;
                 slot = std::move(complete);
                 ++allocatedSlots;
             }
+            slot.lastUsedMs = GetTickCount64();
             return slot;
         }
         throw std::runtime_error("All eight slots await observed queue completion and Reset");
@@ -503,6 +574,7 @@ std::uint32_t __fastcall HelperHook(ffx::DispatchFn original, void** context, co
     // A competing dispatch must never resize the NR runtime while low NR is being recorded.
     std::unique_lock guard(app->mutex, std::try_to_lock);
     if (!guard.owns_lock()) return app->Fallback(original, context, desc, "concurrent_dispatch", true);
+    app->Maintain(desc);
     if (app->failed.load() || !app->LiveModeAllowed() || !context || !*context || !Eligible(desc))
         return app->Fallback(original, context, desc, "unsupported_input_or_mode");
     auto* commands = static_cast<ID3D12GraphicsCommandList*>(desc->commandList);
@@ -511,14 +583,16 @@ std::uint32_t __fastcall HelperHook(ffx::DispatchFn original, void** context, co
     Slot* slot = nullptr;
     try {
         if (!app->device) app->Initialize(commands, context, plan);
-        if (context != app->admittedContext || *context != app->admittedContextValue ||
-            plan.input.width != app->admittedExtent.width || plan.input.height != app->admittedExtent.height ||
-            commands->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT || !app->lifetime.Covers(commands) ||
+        if (context != app->admittedContext || *context != app->admittedContextValue)
+            return app->Fallback(original, context, desc, "context_changed");
+        if (plan.input.width != app->admittedExtent.width || plan.input.height != app->admittedExtent.height)
+            return app->Fallback(original, context, desc, "render_extent_changed");
+        if (commands->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT || !app->lifetime.Covers(commands) ||
             !SameDevice(commands, app->device.Get()) ||
             !SameDevice(Resource(desc->color), app->device.Get()) ||
             !SameDevice(Resource(desc->depth), app->device.Get()) ||
             !SameDevice(Resource(desc->motionVectors), app->device.Get()))
-            return app->Fallback(original, context, desc, "context_device_extent_or_tracking_changed");
+            return app->Fallback(original, context, desc, "device_or_tracking_changed");
         slot = &app->Acquire(plan);
         slot->use = app->lifetime.Begin(commands);
         slot->use->borrowed.reserve(8);
@@ -589,7 +663,10 @@ DWORD WINAPI Worker(void*) {
         const auto colour = IniInteger(settings, L"MatheusNR030", L"ColourPreservationPercent", 100);
         const auto depthProtect = IniInteger(settings, L"MatheusNR030", L"DepthProtection", 1);
         const auto effect = IniInteger(settings, L"MatheusNR030", L"EffectPercent", 100);
-        if (colour < 0 || effect < 0 || depthProtect < 0 || depthProtect > 1) {
+        const auto trim = IniInteger(settings, L"MatheusNR030", L"TrimIdleScratch", 1);
+        const auto diagnostic = IniInteger(settings, L"MatheusNR030", L"Diagnostics", 1);
+        if (colour < 0 || effect < 0 || depthProtect < 0 || depthProtect > 1 ||
+            trim < 0 || trim > 1 || diagnostic < 0 || diagnostic > 1) {
             Log("event=disabled reason=invalid_composite_settings"); return 0;
         }
         HMODULE runtime = nullptr;
@@ -610,6 +687,7 @@ DWORD WINAPI Worker(void*) {
         app = new Adapter();
         app->runtime = runtime; app->scale = static_cast<cmp::FixedScale>(percent);
         app->colourPreservation = colour; app->depthProtection = depthProtect; app->effectPercent = effect;
+        app->trimIdleScratch = trim != 0; app->diagnostics = diagnostic != 0;
         const auto initialized = MH_Initialize();
         if (initialized != MH_OK && initialized != MH_ERROR_ALREADY_INITIALIZED)
             HookCheck(initialized, "Initialize hook engine");
@@ -618,9 +696,11 @@ DWORD WINAPI Worker(void*) {
             reinterpret_cast<void**>(&app->helper)), "Create fixed-C7 helper hook");
         HookCheck(MH_EnableHook(target), "Enable fixed-C7 helper hook");
         Log("event=hook_active static_abi_verified=true runtime_validated=false scale_percent=" + std::to_string(percent));
-        Log("event=resolve_config version=0.2.0 colour_preservation_percent=" + std::to_string(colour) +
+        Log("event=resolve_config version=0.2.1 colour_preservation_percent=" + std::to_string(colour) +
             " depth_protection=" + std::to_string(depthProtect) + " effect_percent=" + std::to_string(effect) +
             " applies_to_scaled_path_only=true");
+        Log("event=pool_policy version=0.2.1 sweep_all_completed=1 idle_trim=" + std::to_string(trim) +
+            " idle_ms=2000 warm_slots=2 diagnostics=" + std::to_string(diagnostic));
     } catch (const std::exception& error) { Log(std::string("event=disabled reason=") + error.what()); }
     return 0;
 }

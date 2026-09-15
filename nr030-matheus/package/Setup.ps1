@@ -360,6 +360,31 @@ function Get-BaseSessionSummary([string]$Text) {
         FinalStats=$(if ($stats.Count) { $stats[$stats.Count-1].Value } else { $null })
     }
 }
+function Get-PoolSessionSummary([string]$Text) {
+    $result=[pscustomobject]@{Samples=0;LocalSamples=0;OverBudgetSamples=0;PeakLocalUsageBytes=0L;PeakAddonBytes=0L;Latest=$null}
+    $starts=[regex]::Matches($Text,'(?m)^event=session_start [^\r\n]*')
+    if (-not $starts.Count) { return $result }
+    $session=$Text.Substring($starts[$starts.Count-1].Index)
+    foreach ($line in [regex]::Matches($session,'(?m)^event=pool_sample [^\r\n]*')) {
+        $fields=@{}
+        foreach ($pair in [regex]::Matches($line.Value,'([a-z_]+)=([^\s]+)')) { $fields[$pair.Groups[1].Value]=$pair.Groups[2].Value }
+        $valid=$true
+        foreach ($key in @('tick_ms','allocated_bytes','allocated_slots','retained_uses','retired_uses','released_borrowed_refs','trimmed_slots','trimmed_bytes','local_valid','local_usage_bytes','local_budget_bytes','nonlocal_valid','nonlocal_usage_bytes','ffx_reset','addon_failed')) {
+            $value=0L
+            if (-not $fields.ContainsKey($key) -or -not [long]::TryParse($fields[$key],[ref]$value) -or $value -lt 0) { $valid=$false;break }
+            $fields[$key]=$value
+        }
+        if (-not $valid) { continue }
+        $result.Samples++;$result.Latest=[pscustomobject]$fields
+        $result.PeakAddonBytes=[Math]::Max($result.PeakAddonBytes,$fields.allocated_bytes)
+        if ($fields.local_valid -eq 1 -and $fields.local_budget_bytes -gt 0) {
+            $result.LocalSamples++
+            $result.PeakLocalUsageBytes=[Math]::Max($result.PeakLocalUsageBytes,$fields.local_usage_bytes)
+            if ($fields.local_usage_bytes -gt $fields.local_budget_bytes) { $result.OverBudgetSamples++ }
+        }
+    }
+    return $result
+}
 function Get-AddonSessionSummary([string]$Text,[string]$InstalledUtc) {
     # All fields are observations, never a visual-quality, performance, or neural-inference verdict.
     $result=[pscustomobject]@{
@@ -384,7 +409,7 @@ function Get-AddonSessionSummary([string]$Text,[string]$InstalledUtc) {
     }
     $hooks=[regex]::Matches($session,'(?m)^event=hook_active static_abi_verified=true runtime_validated=false scale_percent=(75|85|100)\s*$')
     if ($hooks.Count) { $result.HookActive=$true;$result.ScalePercent=[int]$hooks[$hooks.Count-1].Groups[1].Value }
-    $config=[regex]::Matches($session,'(?m)^event=resolve_config version=0\.2\.0 colour_preservation_percent=(100|[0-9]{1,2}) depth_protection=([01]) effect_percent=(100|[0-9]{1,2}) applies_to_scaled_path_only=true[ \t\r]*$')
+    $config=[regex]::Matches($session,'(?m)^event=resolve_config version=0\.2\.[01] colour_preservation_percent=(100|[0-9]{1,2}) depth_protection=([01]) effect_percent=(100|[0-9]{1,2}) applies_to_scaled_path_only=true[ \t\r]*$')
     if ($config.Count) {
         $last=$config[$config.Count-1];$result.CompositeSettingsFound=$true
         $result.ColourPreservationPercent=[int]$last.Groups[1].Value
@@ -455,6 +480,15 @@ function Check-Addon($Paths) {
         $addonSummary=Get-AddonSessionSummary $addonText $installedUtc
         $lines.Add('ADD-ON LAST SESSION observations: '+($addonSummary | ConvertTo-Json -Compress))
         $lines.Add('Combined colour/depth settings recorded: '+$addonSummary.CompositeSettingsFound+'; composite command recording observed: '+$addonSummary.CompositeRecordingObserved)
+        $poolSummary=Get-PoolSessionSummary $addonText
+        $lines.Add('POOL / MEMORY LAST SESSION: '+($poolSummary | ConvertTo-Json -Compress -Depth 5))
+        $lines.Add('DXGI local_usage is process usage, not addon-only VRAM. Over-budget observations do not prove the map-drop cause; ffx_frame_time_ms is supplied dispatch data, not measured FPS.')
+        $lines.Add('Recent pool samples for map-before/map-after comparison:')
+        $lastStart=[regex]::Matches($addonText,'(?m)^event=session_start [^\r\n]*')
+        if ($lastStart.Count) {
+            $lastSession=$addonText.Substring($lastStart[$lastStart.Count-1].Index)
+            foreach ($sample in @([regex]::Matches($lastSession,'(?m)^event=pool_sample [^\r\n]*') | Select-Object -Last 90)) { $lines.Add($sample.Value) }
+        }
         $lines.Add('nr_recorded/resolved count recorded GPU commands; gpu_completed counts retired resource slots. They do not establish image correctness or speed gains.')
         $lines.Add('Add-on log tail:')
         foreach ($line in @([regex]::Split($addonText,'\r?\n') | Select-Object -Last 35)) { $lines.Add($line) }

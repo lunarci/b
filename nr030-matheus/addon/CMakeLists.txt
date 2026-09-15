@@ -53,3 +53,16 @@ add_test(NAME nr030_addon_smoke
   COMMAND nr030_addon_smoke "$<TARGET_FILE:MatheusNR030>" "${NR030_SHADER_BIN_DIR}"
                            "${CMAKE_CURRENT_BINARY_DIR}/smoke")
 set_tests_properties(nr030_addon_smoke PROPERTIES TIMEOUT 10)
+
+# Use the exact production lifetime implementation and real queue/Reset hooks.
+# Queue fences can be deliberately delayed; no game or NR engine is mocked.
+add_executable(nr030_lifetime_checks lifetime_checks.cpp lifetime.cpp)
+target_compile_features(nr030_lifetime_checks PRIVATE cxx_std_17)
+target_compile_definitions(nr030_lifetime_checks PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(nr030_lifetime_checks PRIVATE minhook d3d12 dxgi)
+if(MSVC)
+  target_compile_options(nr030_lifetime_checks PRIVATE /W4 /WX /permissive- /utf-8)
+endif()
+add_test(NAME nr030_lifetime_checks
+  COMMAND nr030_lifetime_checks "${CMAKE_CURRENT_BINARY_DIR}/lifetime_results.json")
+set_tests_properties(nr030_lifetime_checks PROPERTIES TIMEOUT 40)
