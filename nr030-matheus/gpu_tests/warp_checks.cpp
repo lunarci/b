@@ -701,9 +701,30 @@ int wmain(int argc, wchar_t** argv) {
             auto native = Filled(40, 40, {100, 50, 25, 0.25f}, half);
             auto low = Filled(34, 34, {100, 50, 25, 0}, half);
             auto edited = Filled(34, 34, {150, 75, 37.5f, 0}, half);
-            Equal(gpu.Run(Kernel::Residual, {native, low, edited}, 40, 40,
-                          {40, 40, 34, 34}, half, 1.0f, true, 0.5f),
-                  Filled(40, 40, {125, 62.5f, 31.25f, 0.25f}, half), 0, 0, true);
+            const auto out = gpu.Run(Kernel::Residual, {native, low, edited}, 40, 40,
+                                     {40, 40, 34, 34}, half, 1.0f, true, 0.5f);
+            std::cout << "Uniform HDR measured RGB: " << out.At(0, 0, 0) << ", "
+                      << out.At(0, 0, 1) << ", " << out.At(0, 0, 2) << '\n';
+            const float expected[]{125, 62.5f, 31.25f};
+            for (UINT y = 0; y < 40; ++y) for (UINT x = 0; x < 40; ++x) {
+                for (UINT c = 0; c < 3; ++c) {
+                    // This is an edited HDR result, not an identity copy.
+                    // Luminance division is FP32 before typed FP16 storage;
+                    // allow only the immediately adjacent half values.
+                    const auto center = ToHalf(expected[c]);
+                    const float value = out.At(x, y, c);
+                    Require(std::isfinite(value) &&
+                            value >= FromHalf(static_cast<std::uint16_t>(center - 1)) &&
+                            value <= FromHalf(static_cast<std::uint16_t>(center + 1)),
+                            "Uniform HDR amplitude differs by more than one FP16 step: " +
+                            std::to_string(value));
+                    Require(value == out.At(0, 0, c), "Uniform HDR field acquired spatial noise");
+                }
+                Require(out.At(x, y, 0) == 2 * out.At(x, y, 1) &&
+                        out.At(x, y, 0) == 4 * out.At(x, y, 2),
+                        "Uniform HDR RGB ratios changed");
+                Require(out.At(x, y, 3) == 0.25f, "Native alpha changed");
+            }
         });
         test("Tap guards preserve signed FP16 identity on the 85% grid", [&] {
             const auto half = DXGI_FORMAT_R16G16B16A16_FLOAT;
