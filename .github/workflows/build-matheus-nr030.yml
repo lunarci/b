@@ -29,7 +29,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Configure Windows x64 Release
-        run: cmake -S nr030-matheus -B build/nr030 -A x64 -DNR030_ENABLE_EXPERIMENTAL_RUNTIME=OFF -DNR030_SOURCE_COMMIT="$env:GITHUB_SHA"
+        run: cmake -S nr030-matheus -B build/nr030 -A x64 -DNR030_ENABLE_EXPERIMENTAL_RUNTIME=ON "-DNR030_SOURCE_COMMIT=$env:GITHUB_SHA"
       - name: Build component tests and available adapter
         run: cmake --build build/nr030 --config Release --parallel 4
       - name: Run native component and WARP tests
@@ -40,6 +40,9 @@ jobs:
             & powershell.exe -NoProfile -ExecutionPolicy Bypass -File nr030-matheus/package/Test-Package.ps1
             if ($LASTEXITCODE -ne 0) { throw "Package fixture tests failed: $LASTEXITCODE" }
           }
+      - name: Assemble experimental installation package
+        run: |
+          ./nr030-matheus/tools/Build-Package.ps1 -BuildRoot "$env:GITHUB_WORKSPACE/build/nr030" -SourceCommit $env:GITHUB_SHA -RunId $env:GITHUB_RUN_ID -ExperimentalReviewed
       - name: Upload build and test evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -53,12 +56,11 @@ jobs:
             nr030-matheus/package/test-results/
           if-no-files-found: warn
           retention-days: 14
-      - name: Upload disabled adapter for development inspection
+      - name: Upload verified experimental installation package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: Matheus-NR030-DISABLED-DEVELOPMENT-ONLY-${{ github.run_number }}
+          name: Matheus-NR030-install-package-${{ github.run_number }}
           path: |
-            build/nr030/addon/Release/MatheusNR030.asi
-            build/nr030/addon/Release/MatheusNR030.pdb
+            build/nr030/deliverable/Matheus_NR030_Addon_0.1.0_experimental.zip
           if-no-files-found: error
           retention-days: 14

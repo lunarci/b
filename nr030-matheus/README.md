@@ -1,20 +1,21 @@
 # Matheus-style NR scaling adapter for the exact NR 0.3.0 C7 build
 
-**Source review kit, version 0.1.0. Not an installable or game-validated release.**
+**Experimental adapter, version 0.1.0. Install only a successfully built installation package. Actual AMD/Cyberpunk execution remains unverified.**
 
 This additive adapter is intended for an existing AMD NR 0.3.0 + OptiScaler FSR + Intel XeFG 4X configuration. It derives area downsampling and matched residual reconstruction from MatheusGViana's AMD PreSR source. Existing engine, model and frame-generation binaries/settings are preserved by the installer.
 
 The prototype uses a hash-locked internal FFX helper in the exact C7 NR binary. It downsamples color/depth/motion inputs for NR, reconstructs NR's change at the original game input size, and calls the existing FFX upscaler. It does not introduce NVIDIA DLSS 5 support or replace the AMD inference backend. See `runtime_static_evidence.md` and `runtime_contract.h` for the limited static ABI evidence.
 
-The Windows runtime integration defaults to `NR030_ENABLE_EXPERIMENTAL_RUNTIME=OFF`. Enabling the INI cannot override that compile-time setting. Four production DXBC shaders must be compiled on Windows and embedded as RCDATA resources 101–104. The shader test target and addon use the same generated files.
+The CMake option defaults to `NR030_ENABLE_EXPERIMENTAL_RUNTIME=OFF`; the experimental packaging workflow explicitly builds it ON. Enabling the INI cannot override that compile-time setting. Four production DXBC shaders must be compiled on Windows and embedded as RCDATA resources 101–104. The shader test target and addon use the same generated files.
 
 ## Current validation
 
 - Portable C++ component/math tests pass.
 - Windows x64 cross-compilation and link checks are possible locally; see the distributed kit's exact evidence for the checked source snapshot.
-- Installer synthetic tests: 21 pass on PowerShell 7.6.6/Linux. This is not Windows PowerShell 5.1 validation.
-- No Windows MSVC build, Microsoft shader compilation, Windows WARP execution, AMD GPU inference, Cyberpunk gameplay, image quality or FPS validation has completed.
-- Public GitHub publication/Actions is blocked pending explicit destination/publication approval. The existing ArchiveXL main branch is unchanged.
+- The initial 21 installer fixtures passed on Windows PowerShell 5.1; subsequent metadata checks are included in the same gate for final packaging. Exact counts are in package evidence.
+- Initial Windows CI run 34928657594 passed MSVC build, Microsoft shader compilation, shared-production WARP tests and Windows PowerShell 5.1 fixtures. The enabled installation package adds an actual-ASl loader/resource smoke gate; its immutable build evidence is included with the package.
+- No AMD GPU inference, Cyberpunk gameplay, image quality or FPS validation has completed.
+- Public GitHub publication and Actions were explicitly approved by the user. The separate branch is `nr030-matheus-presr`; the existing ArchiveXL main branch is unchanged.
 
 ## Build
 

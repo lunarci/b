@@ -39,3 +39,17 @@ endif()
 add_custom_command(TARGET MatheusNR030 POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${CMAKE_CURRENT_SOURCE_DIR}/MatheusNR030.ini" "$<TARGET_FILE_DIR:MatheusNR030>/MatheusNR030.ini")
+
+# Exercise the final Windows binary without activating a runtime or game hook.
+# Its four resources must match the same CSOs supplied to the WARP test.
+add_executable(nr030_addon_smoke smoke_checks.cpp)
+target_compile_features(nr030_addon_smoke PRIVATE cxx_std_17)
+target_compile_definitions(nr030_addon_smoke PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+add_dependencies(nr030_addon_smoke MatheusNR030 nr030_shader_blobs)
+if(MSVC)
+  target_compile_options(nr030_addon_smoke PRIVATE /W4 /WX /permissive- /utf-8)
+endif()
+add_test(NAME nr030_addon_smoke
+  COMMAND nr030_addon_smoke "$<TARGET_FILE:MatheusNR030>" "${NR030_SHADER_BIN_DIR}"
+                           "${CMAKE_CURRENT_BINARY_DIR}/smoke")
+set_tests_properties(nr030_addon_smoke PROPERTIES TIMEOUT 10)

@@ -74,9 +74,9 @@ UpscaleRatioOverrideValue=2.0
     Write-Text (Join-Path $payload 'MatheusNR030.ini') "[SyntheticTestOnly]`r`nEnabled=0`r`n"
     $manifest=[pscustomobject]@{
         schema_version=1; addon_name='MatheusNR030'; addon_version='synthetic-fixture'
-        base_nr_sha256=$script:ExpectedNrHash; source_commit=('a'*40); build_run_id='fixture-only'
-        build_verified=$true; abi_verified=$true; build_evidence='synthetic fixture; no runtime claim'
-        abi_evidence='synthetic fixture; no ABI claim'; game_runtime_verified=$false; runtime_log_schema=$null
+        base_nr_sha256=$script:ExpectedNrHash; source_commit=('a'*40); build_run_id='1234567890'
+        build_verified=$true; abi_verified=$true; build_evidence='https://github.com/lunarci/b/actions/runs/1234567890'
+        abi_evidence='synthetic fixture; no ABI claim'; game_runtime_verified=$false; runtime_log_schema='matheusnr030-events-v1'
         files=@([pscustomobject]@{name='MatheusNR030.asi';sha256='';size=0},[pscustomobject]@{name='MatheusNR030.ini';sha256='';size=0})
     }
     Write-Json (Join-Path $package 'package-manifest.json') $manifest
@@ -142,6 +142,20 @@ try {
         $manifest.abi_verified='true'; Write-Json $path $manifest
         Assert-Throws { Install-Addon $f.Paths } 'abi_verified is not verified'
         Assert-True (-not (Test-Path -LiteralPath $f.Paths.Backup)) 'Unverified ABI mutated installation.'
+    }
+    Run-Case 'experimental-package-cannot-claim-game-validation' {
+        param($f)
+        $path=Join-Path $f.Package 'package-manifest.json'; $manifest=Read-Json $path
+        $manifest.game_runtime_verified=$true; Write-Json $path $manifest
+        Assert-Throws { Install-Addon $f.Paths } 'game_runtime_verified=false'
+        Assert-True (-not (Test-Path -LiteralPath $f.Paths.Backup)) 'Incorrect game-validation metadata allowed installation.'
+    }
+    Run-Case 'mismatched-build-run-evidence-blocked' {
+        param($f)
+        $path=Join-Path $f.Package 'package-manifest.json'; $manifest=Read-Json $path
+        $manifest.build_evidence='https://github.com/lunarci/b/actions/runs/9876543210'; Write-Json $path $manifest
+        Assert-Throws { Install-Addon $f.Paths } 'Build evidence does not match'
+        Assert-True (-not (Test-Path -LiteralPath $f.Paths.Backup)) 'Mismatched build provenance allowed installation.'
     }
     Run-Case 'payload-hash-mismatch-no-write' {
         param($f)

@@ -92,6 +92,13 @@ function Get-VerifiedManifest {
     foreach ($field in @('addon_version','build_run_id','build_evidence','abi_evidence')) {
         if ([string]::IsNullOrWhiteSpace([string](Get-Value $manifest $field))) { throw ('Missing evidence: '+$field) }
     }
+    $runtimeVerified=Get-Value $manifest 'game_runtime_verified'
+    if ($runtimeVerified -isnot [bool] -or $runtimeVerified) { throw 'This experimental package must explicitly retain game_runtime_verified=false.' }
+    if ((Get-Value $manifest 'runtime_log_schema') -cne 'matheusnr030-events-v1') { throw 'Unsupported runtime observation schema.' }
+    $runId=[string](Get-Value $manifest 'build_run_id')
+    if ($runId -notmatch '^[0-9]+$' -or (Get-Value $manifest 'build_evidence') -cne ('https://github.com/lunarci/b/actions/runs/'+$runId)) {
+        throw 'Build evidence does not match the recorded GitHub Actions run.'
+    }
     $files=@(Get-Value $manifest 'files')
     if ($files.Count -ne 2) { throw 'Manifest must contain exactly the two add-on payload files.' }
     foreach ($name in $script:AddonNames) {
