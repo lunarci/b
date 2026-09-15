@@ -2,8 +2,12 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)][string]$PackageZip,
-    [string]$OutputPath=(Join-Path $PSScriptRoot 'test-results/xefg-guard-package-tests.json')
+    [string]$OutputPath
 )
+# Windows PowerShell 5.1 does not populate PSScriptRoot during default binding.
+if ([string]::IsNullOrWhiteSpace($OutputPath)) {
+    $OutputPath=Join-Path $PSScriptRoot 'test-results/xefg-guard-package-tests.json'
+}
 $testZip=[IO.Path]::GetFullPath($PackageZip)
 $testOutput=[IO.Path]::GetFullPath($OutputPath)
 $fixtureRoot=Join-Path ([IO.Path]::GetTempPath()) ('XeFGGuardPackageTests-'+[guid]::NewGuid().ToString('N'))
