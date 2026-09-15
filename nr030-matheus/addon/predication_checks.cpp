@@ -292,19 +292,19 @@ void KnownDisabledProof(Warp& warp, nr030::PredicationTracker& tracker, bool thr
 void MutatedSnapshotProof(Warp& warp, nr030::PredicationTracker& tracker, bool initiallyPass) {
     warp.Reset();
     const auto source = warp.Upload(std::array<UINT64, 1>{Replacement});
-    const auto initialValue = warp.Upload(std::array<UINT64, 1>{initiallyPass ? 1ull : 0ull});
+    const auto initialValue = warp.Upload(std::array<UINT64, 1>{1});
     const auto initial = warp.Upload(std::array<UINT64, 3>{Sentinel, Sentinel, Sentinel});
     const auto predicate = warp.Buffer(D3D12_HEAP_TYPE_DEFAULT, sizeof(UINT64), D3D12_RESOURCE_STATE_COPY_DEST);
     const auto destination = warp.Buffer(D3D12_HEAP_TYPE_DEFAULT, 3 * sizeof(UINT64),
         D3D12_RESOURCE_STATE_COPY_DEST);
     D3D12_QUERY_HEAP_DESC queryDescription{};
-    queryDescription.Type = initiallyPass ? D3D12_QUERY_HEAP_TYPE_OCCLUSION : D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+    queryDescription.Type = D3D12_QUERY_HEAP_TYPE_OCCLUSION;
     queryDescription.Count = 1;
     ComPtr<ID3D12QueryHeap> queries;
     Check(warp.device->CreateQueryHeap(&queryDescription, IID_PPV_ARGS(&queries)), "Create predicate mutation query");
-    const auto queryType = initiallyPass ? D3D12_QUERY_TYPE_BINARY_OCCLUSION : D3D12_QUERY_TYPE_TIMESTAMP;
+    constexpr auto queryType = D3D12_QUERY_TYPE_BINARY_OCCLUSION;
     auto* commands = warp.commands.Get();
-    if (initiallyPass) commands->BeginQuery(queries.Get(), queryType, 0);
+    commands->BeginQuery(queries.Get(), queryType, 0);
     commands->EndQuery(queries.Get(), queryType, 0);
     commands->CopyBufferRegion(predicate.Get(), 0, initialValue.Get(), 0, sizeof(UINT64));
     commands->CopyBufferRegion(destination.Get(), 0, initial.Get(), 0, 3 * sizeof(UINT64));
@@ -315,13 +315,16 @@ void MutatedSnapshotProof(Warp& warp, nr030::PredicationTracker& tracker, bool i
     barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PREDICATION;
     commands->ResourceBarrier(1, &barrier);
-    commands->SetPredication(predicate.Get(), 0, D3D12_PREDICATION_OP_EQUAL_ZERO);
+    commands->SetPredication(predicate.Get(), 0, initiallyPass
+        ? D3D12_PREDICATION_OP_EQUAL_ZERO : D3D12_PREDICATION_OP_NOT_EQUAL_ZERO);
     commands->CopyBufferRegion(destination.Get(), 0, source.Get(), 0, sizeof(UINT64));
 
     // ResolveQueryData and barriers are unpredicated. The query changes the
-    // source AFTER SetPredication has latched it: 0 -> nonzero timestamp (skip),
-    // or 1 -> empty occlusion result 0 (pass). Keep it in COPY_SOURCE to also
-    // prove no invalid attempt is made to rebind this buffer for predication.
+    // source AFTER SetPredication has latched the initial 1: an empty occlusion
+    // query deterministically yields 0 for BOTH cases. NOT_EQUAL_ZERO initially
+    // skips, EQUAL_ZERO initially passes; rebinding either after this mutation
+    // would reverse its result. No timestamp value is assumed to be nonzero.
+    // Keep the buffer in COPY_SOURCE to also detect an invalid tuple rebind.
     barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PREDICATION;
     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
     commands->ResourceBarrier(1, &barrier);
@@ -338,9 +341,13 @@ void MutatedSnapshotProof(Warp& warp, nr030::PredicationTracker& tracker, bool i
     commands->CopyBufferRegion(destination.Get(), 2 * sizeof(UINT64), predicate.Get(), 0, sizeof(UINT64));
     const auto actual = ReadCompleted<3>(warp, destination.Get());
     const auto expected = initiallyPass ? Replacement : Sentinel;
+    std::cout << "GPU snapshot evidence: initiallyPass=" << initiallyPass
+              << " initialPredicate=1 expected=" << expected
+              << " baseline=" << actual[0] << " guarded=" << actual[1]
+              << " mutatedPredicate=" << actual[2] << '\n';
     Require(actual[0] == expected && actual[1] == expected,
         "Guard changed a latched predicate after its source buffer mutated");
-    Require(initiallyPass ? actual[2] == 0 : actual[2] != 0,
+    Require(actual[2] == 0,
         "GPU query did not actually mutate the predicate source as intended");
 }
 } // namespace
