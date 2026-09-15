@@ -229,7 +229,9 @@ double stability_from_moments(double center_b, double center_d,
     const double excess = std::max(0.0, std::abs(new_detail) - std::abs(old_detail)) /
                           std::max({std::abs(center_b), std::abs(average_b), 1e-5});
     const double t = std::clamp((excess - 0.02) / 0.08, 0.0, 1.0);
-    return 1 - std::min(percent / 100.0, 1.0) * t * t * (3 - 2 * t);
+    const double support = std::min(total_weight, 1.0);
+    const double guide_confidence = support * support * (3 - 2 * support);
+    return 1 - std::min(percent / 100.0, 1.0) * guide_confidence * t * t * (3 - 2 * t);
 }
 
 void luma_stability_checks() {
@@ -290,6 +292,60 @@ void luma_stability_checks() {
         }
     }
 }
+
+void luma_guide_support_checks() {
+    const std::array<double, 4> flat{1, 1, 1, 1};
+    const std::array<double, 4> negative_noise{-0.1, -0.1, -0.1, -0.1};
+    const auto factor_at = [&](double support, unsigned percent) {
+        return stability_from_moments(1, 0.1, flat, negative_noise,
+                                      {support / 4, support / 4, support / 4, support / 4}, percent);
+    };
+
+    // An arbitrarily weak neighborhood must not switch straight from no
+    // suppression to full suppression just because its normalized mean exists.
+    // The cubic support ramp has a maximum slope of 1.5 on [0,1].
+    double previous = factor_at(0, 100);
+    near(previous, 1, 0, "No guide support leaves the guarded edit unchanged");
+    for (unsigned i = 1; i <= 1000; ++i) {
+        const double support = i / 1000.0;
+        const double factor = factor_at(support, 100);
+        require(factor <= previous + 1e-12 && factor >= 0 && factor <= 1,
+                "Increasing guide support must strengthen bounded rejection monotonically");
+        require(previous - factor <= 0.0015 + 1e-12,
+                "A small guide change must not switch the full rejection budget");
+        previous = factor;
+    }
+    near(factor_at(0.99e-5, 100), factor_at(1.01e-5, 100), 4e-10,
+         "The no-support threshold must have negligible rejection discontinuity");
+    require(static_cast<float>(factor_at(1.01e-5, 100)) == 1.0f,
+            "Negligible cutoff rejection must round to identity in float precision");
+    for (const double support : {1.0, 1.25, 2.0, 4.0})
+        near(factor_at(support, 70), 0.3, 1e-12,
+             "At least one aggregate guide unit retains the previous rejection strength");
+
+    // Do not replace the contrast test with raw sign rejection: at Effect50 a
+    // mirrored NR detail can cancel the baseline texture rather than add noise.
+    const std::array<double, 4> textured{0.96, 0.96, 0.96, 0.96};
+    const std::array<double, 4> mirrored{0.08, 0.08, 0.08, 0.08};
+    for (const double support : {0.0, 1.01e-5, 0.1, 0.5, 1.0, 4.0}) {
+        const std::array<double, 4> weights{support / 4, support / 4, support / 4, support / 4};
+        const double factor = stability_from_moments(1.04, -0.08, textured, mirrored, weights, 100);
+        near(factor, 1, 0, "Guide confidence must retain beneficial mirrored-detail correction");
+        near(1.04 - 0.5 * 0.08 * factor, 1, 1e-12,
+             "Default Effect50 must retain baseline texture cancellation");
+        near(stability_from_moments(1, 0.1, flat, {0.1, 0.1, 0.1, 0.1}, weights, 100), 1, 0,
+             "Guide confidence must preserve spatially uniform corrections");
+        for (const unsigned percent : {0u, 20u, 70u, 100u}) {
+            const double contraction = factor_at(support, percent);
+            for (const double edit : {-0.5, 0.0, 0.5}) {
+                const double result = edit * contraction;
+                require(std::isfinite(result) && std::abs(result) <= std::abs(edit) && result * edit >= 0,
+                        "Weak guide support must preserve each guarded tap's magnitude and sign bounds");
+                if (edit == 0) near(result, 0, 0, "Weak guides cannot populate a zero residual tap");
+            }
+        }
+    }
+}
 } // namespace
 
 int main() {
@@ -301,8 +357,9 @@ int main() {
         area_partition_check(9, 7, 9, 7);
         residual_support_checks();
         luma_stability_checks();
+        luma_guide_support_checks();
         std::cout << "PASS: fixed-scale geometry, motion units, fractional area conservation, "
-                     "per-tap residual support, HDR and added-luma-contrast invariants\n";
+                     "per-tap residual support, HDR, added-luma-contrast and guide-support continuity invariants\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';

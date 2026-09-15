@@ -119,3 +119,13 @@ guarded residual. Zero taps cannot gain a neighbour's correction. This is not
 a temporal filter or a material/lighting classifier; valid detail can weaken.
 Opposite-sign taps can be attenuated differently, reducing their cancellation:
 the per-tap budget is preserved, but final per-pixel correction need not shrink.
+
+
+0.2.5 multiplies the existing contrast rejection by smoothstep(0,1,sumWeight).
+The normalized moments are unchanged; the multiplier makes unreliable
+neighbourhoods fade to the existing no-neighbour fallback. Values at or above
+one aggregate unit retain 0.2.4 behaviour. This preserves the raw magnitude
+criterion: rejecting every raw contrast polarity reversal would undo valid
+noise cancellation at the default 50 percent effect strength.
+Each tap remains bounded by GuardTap. Less rejection may admit more NR editing
+than 0.2.4 at uncertain boundaries; this is not a guarantee of less final noise.

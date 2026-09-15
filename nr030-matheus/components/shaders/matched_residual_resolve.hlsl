@@ -136,7 +136,14 @@ float LumaStabilityWeight(int2 pixel, float3 base, float3 delta) {
     // This same-frame test cannot stabilize coherent temporal flicker.
     float excess = max(0.0, abs(editedDetail) - abs(baselineDetail)) /
         max(max(abs(centerB), abs(meanB)), 1e-5);
-    return 1.0 - saturate(float(lumaStabilityPercent) * 0.01) * smoothstep(0.02, 0.10, excess);
+    // Normalized moments alone can give almost-rejected neighbors full power,
+    // then abruptly remove that power at the no-support fallback above. Fade
+    // rejection with aggregate guide support; one full unit retains the old
+    // behavior. This only weakens rejection; the final factor still stays in
+    // [0,1] relative to each existing unfiltered guarded edit.
+    float guideConfidence = smoothstep(0.0, 1.0, sumWeight);
+    return 1.0 - saturate(float(lumaStabilityPercent) * 0.01) *
+        guideConfidence * smoothstep(0.02, 0.10, excess);
 }
 
 float3 StableGuardTap(int2 pixel, float3 original, float3 base, float3 delta) {

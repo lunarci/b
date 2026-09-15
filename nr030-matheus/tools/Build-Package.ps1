@@ -55,7 +55,7 @@ $warpResultPath=Join-Path $BuildRoot 'gpu_tests/warp_results.json'
 $warp=Get-Content -LiteralPath $warpResultPath -Raw | ConvertFrom-Json
 if ($warp.runner -cne 'D3D12 WARP' -or $warp.productionShaders -ne $true -or
     $warp.sharedProductionExecutor -ne $true -or $warp.neuralRuntimeExecuted -ne $false -or
-    $warp.failed -cne '' -or $warp.reason -cne '' -or $warp.passedCount -lt 47 -or
+    $warp.failed -cne '' -or $warp.reason -cne '' -or $warp.passedCount -lt 50 -or
     @($warp.passed).Count -ne $warp.passedCount) {
     throw 'Production shader WARP execution evidence is incomplete or failed.'
 }
@@ -73,7 +73,10 @@ foreach ($required in @(
     'Luma stability retains per-tap rejection of falsely matching averages',
     'Luma stability rejects same-colour neighbours across a depth edge',
     'Luma stability rejects neighbours across a baseline colour edge',
-    'Luma stability ignores malformed extra neighbours without enlarging fallback'
+    'Luma stability ignores malformed extra neighbours without enlarging fallback',
+    'Luma stability retains beneficial contrast reversal at effect 50',
+    'Luma stability fades weak RGB guidance on the actual 85 percent grid',
+    'Luma stability fades weak depth guidance without a correction jump'
 )) {
     if ($warp.passed -cnotcontains $required) { throw ('Missing image stability regression: '+$required) }
 }
@@ -89,7 +92,7 @@ if ($inputChecks.passedCount -lt 16 -or $inputChecks.failure -cne '' -or
     @($inputChecks.passed).Count -ne $inputChecks.passedCount -or $inputChecks.amdGpuGameTested -ne $false) {
     throw 'Production input admission validation is incomplete.'
 }
-$dist=Join-Path $BuildRoot 'deliverable/Matheus_NR030_0.2.4_LumaStability'
+$dist=Join-Path $BuildRoot 'deliverable/Matheus_NR030_0.2.5_ShadowStability'
 if (Test-Path -LiteralPath $dist) { throw 'Refusing to overwrite an existing staged deliverable.' }
 New-Item -ItemType Directory -Path $dist | Out-Null
 foreach ($name in @('Setup.ps1','Complete-Setup.ps1','00_FIX_RATIO_AND_DISABLE_NR.cmd','01_INSTALL_ADDON.cmd','02_REMOVE_ADDON.cmd','03_CHECK_ADDON.cmd','04_RESTORE_FSR_XEFG.cmd','05_REMOVE_AND_RESTORE_BASE.cmd','README_KO.md','protected-files.json')) {
@@ -124,7 +127,7 @@ if (Test-Path -LiteralPath (Join-Path $sourceRoot 'package/test-results')) {
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'package/test-results') -Destination (Join-Path $dist 'evidence/package-tests') -Recurse
 }
 $manifest=Get-Content -LiteralPath (Join-Path $sourceRoot 'package/package-manifest.json') -Raw | ConvertFrom-Json
-$manifest.addon_version='0.2.4-luma-stability-experimental'
+$manifest.addon_version='0.2.5-shadow-stability-experimental'
 $manifest.source_commit=$SourceCommit
 $manifest.build_run_id=$RunId
 $manifest.build_verified=$true
@@ -153,6 +156,11 @@ $provenance=[ordered]@{
     default_luma_stability_percent=100
     luma_stability_policy='Attenuate existing guarded taps when same-frame guided cross statistics detect added luminance contrast'
     luma_stability_game_verified=$false
+    neighbor_confidence_policy='smoothstep(0,1,sumWeight) multiplies contrast rejection'
+    shadow_game_fix_verified=$false
+    weak_guide_regression_baseline_commit='a8d00d9c37770a74bd97ce7294647b6e9b76549e'
+    weak_guide_regression_baseline_run='34965939475'
+    weak_guide_regression_baseline_shader_sha256='8fee66361ae70a1c1a0592e58b85ceebeb7d4c4327bb8057f03d2670d11d9890'
     requested_upscaler_ratio=2.0
     residual_guard='Per-tap clamp and baseline confidence before bilinear interpolation'
     temporal_filter_added=$false
@@ -174,7 +182,7 @@ $provenance=[ordered]@{
     installer_windows_powershell51=$installerResults.WindowsPowerShell51
     complete_installer_checks_passed=$completeResults.Passed
     complete_installer_windows_powershell51=$completeResults.WindowsPowerShell51
-    installer_revision='complete-0.2.4'
+    installer_revision='complete-0.2.5'
     legacy_base_record_required=$false
     base_compatibility='Verified existing C7 ASI and model or pinned automatic downloads; required NR / OptiScaler / XeFG route keys and requested ratio 2.0 backed up before changes'
     amd_gpu_game_tested=$false
@@ -184,15 +192,15 @@ $provenance=[ordered]@{
 }
 $provenance | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $dist 'BUILD_PROVENANCE.json') -Encoding UTF8
 $status=@'
-# Matheus NR030 0.2.4 휘도 보정 안정화 설치본
+# Matheus NR030 0.2.5 그림자 경계 안정화 설치본
 
-0.2.4는 원본보다 NR 결과에서 증가한 국소적인 밝기 대비를 검사합니다. 같은 프레임의 고정된 주변 픽셀을 참고해 기존 NR 보정량을 약화합니다. 원본 영상 자체를 흐리거나 주변 보정값으로 덮어쓰지 않습니다.
+0.2.5는 이웃 가중치가 거의 0인 명암·깊이 경계에서 밝기 억제 강도가 급변할 수 있는 전환을 완화합니다. 정규화된 밝기 대비 검사에 유효 이웃의 신뢰도를 곱해 부드럽게 전환합니다. 원본 영상 자체를 흐리거나 주변 보정값으로 덮어쓰지 않습니다. 신뢰도가 낮은 경계에서는 NR 보정이 0.2.4보다 더 남을 수 있습니다.
 
 0.2.3의 픽셀별 제한 후 보간 순서를 유지합니다. 잔차가 0인 픽셀에 주변의 보정값을 추가하지 않으며, 원본 색과 깊이가 다른 이웃의 영향을 제한합니다. 전체적으로 일정한 HDR 입력과 보정, 원래 입력 노이즈를 줄이는 NR 보정, 기존 외곽 보호를 검증합니다.
 
 LumaStabilityPercent=100이 기본입니다. 0은 이번 억제만 끄며 기존 0.2.3 합성 방식으로 비교합니다. NR 전체를 끄는 설정이 아닙니다. 공간적으로 거친 보정에 섞여 있는 유효한 밝기 변화나 작은 세부 대비도 약해질 수 있습니다. 피부나 흰색 조명을 판별하는 기능이 아니며, 균일한 넓은 영역의 시간적 깜빡임과 원본 자체의 자글거림을 해결한다고 검증하지 않았습니다.
 
-새 GPU 텍스처·이전 프레임 누적·추가 dispatch는 없지만 이웃을 읽는 셰이더 연산은 증가합니다. 실제 Radeon 게임의 처리 시간과 화질 개선은 확인 전입니다.
+0.2.4 대비 새 GPU 텍스처·이웃 읽기·이전 프레임 누적·추가 dispatch는 없습니다. 실제 Radeon 게임의 처리 시간과 화질 개선은 확인 전입니다.
 
 필요한 기본 NR C7과 모델 310.8.0을 기존 파일에서 검증·재사용하거나 지정 출처에서 다운로드합니다. 압축 파일과 추출 파일의 크기 및 SHA-256을 모두 확인한 뒤 설치합니다. 기본 NR·모델은 이 ZIP에 재배포하지 않습니다. 기존 OptiScaler·XeFG 실행 파일은 유지합니다.
 
@@ -201,6 +209,8 @@ LumaStabilityPercent=100이 기본입니다. 0은 이번 억제만 끄며 기존
 새 추가 모드 INI는 85% 입력·색상 보존 100%·깊이 보호 켬·합성 강도 50%·휘도 안정화 100%가 기본입니다. 기존에 조정한 INI는 유지될 수 있습니다. 50% 합성 강도는 과한 보정을 줄여 비교하기 위한 값이며 NR 추론 시간을 절반으로 줄이는 값이 아닙니다.
 
 ## 완료한 검증
+
+수정 전 생산용 셰이더의 급변은 Windows 실행 34965939475에서 실제 40×40→34×34 입력으로 재현했습니다. 원본 변화 0.000106811523에 대해 출력 변화가 0.00546264648로 확대되어 새 검사가 실패했습니다. 해당 실행은 수정 전 실패를 확인하는 기록이며 설치본 통과 기록은 BUILD_PROVENANCE.json의 workflow입니다.
 
 - Windows MSVC x64 빌드와 생산용 HLSL 4개 컴파일
 - 같은 생산용 셰이더를 D3D12 WARP에서 실행: RG16F 및 RGBA16F 모션 입력 포함
@@ -214,6 +224,7 @@ RX 9070 XT에서 피부 모자이크·움직임 잔상·입력지연·맵 복귀
 
 설치: 게임·MO2 종료 → 01_INSTALL_ADDON.cmd → 평소처럼 MO2에서 게임 실행
 검사: 새 게임 실행 뒤 03_CHECK_ADDON.cmd → Results/MATHEUS_CHECK.txt
+적용값: LumaStabilityVersion 0.2.5 / LumaStabilityPercent 100 (설정 관측이며 화질 판정은 아님)
 화면·지연 비교 복구: 게임·MO2 종료 → 04_RESTORE_FSR_XEFG.cmd → NR 두 모드를 끄고 기존 FSR·XeFG 유지
 추가 모드만 제거: 02_REMOVE_ADDON.cmd
 추가 모드 제거 및 기본 NR·설정 변경 복원: 05_REMOVE_AND_RESTORE_BASE.cmd

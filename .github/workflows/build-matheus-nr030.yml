@@ -74,6 +74,6 @@ jobs:
         with:
           name: Matheus-NR030-install-package-${{ github.run_number }}
           path: |
-            build/nr030/deliverable/Matheus_NR030_0.2.4_LumaStability.zip
+            build/nr030/deliverable/Matheus_NR030_0.2.5_ShadowStability.zip
           if-no-files-found: error
           retention-days: 14

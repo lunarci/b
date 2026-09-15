@@ -404,7 +404,7 @@ function Get-AddonSessionSummary([string]$Text,[string]$InstalledUtc) {
         StatsFound=$false;CommandRecordingObserved=$false;GpuRetirementObserved=$false
         SourceCommit=$null;InputWidth=$null;InputHeight=$null;NrWidth=$null;NrHeight=$null
         ColourPreservationPercent=$null;DepthProtection=$null;EffectPercent=$null
-        LumaStabilityPercent=$null;LumaStabilitySettingsFound=$false
+        LumaStabilityPercent=$null;LumaStabilityVersion=$null;LumaStabilitySettingsFound=$false
         CompositeSettingsFound=$false;CompositeRecordingObserved=$false
         RuntimeValidated=$false;Result='UNVERIFIED'
     }
@@ -421,17 +421,18 @@ function Get-AddonSessionSummary([string]$Text,[string]$InstalledUtc) {
     }
     $hooks=[regex]::Matches($session,'(?m)^event=hook_active static_abi_verified=true runtime_validated=false scale_percent=(75|85|100)\s*$')
     if ($hooks.Count) { $result.HookActive=$true;$result.ScalePercent=[int]$hooks[$hooks.Count-1].Groups[1].Value }
-    $config=[regex]::Matches($session,'(?m)^event=resolve_config version=0\.2\.[01234] colour_preservation_percent=(100|[0-9]{1,2}) depth_protection=([01]) effect_percent=(100|[0-9]{1,2}) applies_to_scaled_path_only=true[ \t\r]*$')
+    $config=[regex]::Matches($session,'(?m)^event=resolve_config version=0\.2\.[012345] colour_preservation_percent=(100|[0-9]{1,2}) depth_protection=([01]) effect_percent=(100|[0-9]{1,2}) applies_to_scaled_path_only=true[ \t\r]*$')
     if ($config.Count) {
         $last=$config[$config.Count-1];$result.CompositeSettingsFound=$true
         $result.ColourPreservationPercent=[int]$last.Groups[1].Value
         $result.DepthProtection=([int]$last.Groups[2].Value -eq 1)
         $result.EffectPercent=[int]$last.Groups[3].Value
     }
-    $stability=[regex]::Matches($session,'(?m)^event=luma_stability_config version=0\.2\.4 strength_percent=(100|[0-9]{1,2}) applies_to_scaled_path_only=true temporal_filter=0[ \t\r]*$')
+    $stability=[regex]::Matches($session,'(?m)^event=luma_stability_config version=(0\.2\.[45]) strength_percent=(100|[0-9]{1,2}) applies_to_scaled_path_only=true temporal_filter=0[ \t\r]*$')
     if ($stability.Count) {
         $result.LumaStabilitySettingsFound=$true
-        $result.LumaStabilityPercent=[int]$stability[$stability.Count-1].Groups[1].Value
+        $result.LumaStabilityVersion=$stability[$stability.Count-1].Groups[1].Value
+        $result.LumaStabilityPercent=[int]$stability[$stability.Count-1].Groups[2].Value
     }
     $ready=[regex]::Matches($session,'(?m)^event=adapter_ready input_width=(\d{1,5}) input_height=(\d{1,5}) nr_width=(\d{1,5}) nr_height=(\d{1,5})[ \t\r]*$')
     if ($ready.Count) {

@@ -719,15 +719,15 @@ DWORD WINAPI Worker(void*) {
             reinterpret_cast<void**>(&app->helper)), "Create fixed-C7 helper hook");
         HookCheck(MH_EnableHook(target), "Enable fixed-C7 helper hook");
         Log("event=hook_active static_abi_verified=true runtime_validated=false scale_percent=" + std::to_string(percent));
-        Log("event=resolve_config version=0.2.4 colour_preservation_percent=" + std::to_string(colour) +
+        Log("event=resolve_config version=0.2.5 colour_preservation_percent=" + std::to_string(colour) +
             " depth_protection=" + std::to_string(depthProtect) + " effect_percent=" + std::to_string(effect) +
             " applies_to_scaled_path_only=true");
-        Log("event=pool_policy version=0.2.4 sweep_all_completed=1 idle_trim=" + std::to_string(trim) +
+        Log("event=pool_policy version=0.2.5 sweep_all_completed=1 idle_trim=" + std::to_string(trim) +
             " idle_ms=2000 warm_slots=2 diagnostics=" + std::to_string(diagnostic));
-        Log("event=resolve_policy version=0.2.4 per_tap_guard_before_interpolation=1 temporal_filter=0");
-        Log("event=luma_stability_config version=0.2.4 strength_percent=" + std::to_string(stability) +
+        Log("event=resolve_policy version=0.2.5 per_tap_guard_before_interpolation=1 temporal_filter=0");
+        Log("event=luma_stability_config version=0.2.5 strength_percent=" + std::to_string(stability) +
             " applies_to_scaled_path_only=true temporal_filter=0");
-        Log("event=fallback_policy version=0.2.4 rejected_scaled_path=fsr_without_nr explicit_scale100=original_nr");
+        Log("event=fallback_policy version=0.2.5 rejected_scaled_path=fsr_without_nr explicit_scale100=original_nr");
     } catch (const std::exception& error) { Log(std::string("event=disabled reason=") + error.what()); }
     return 0;
 }

@@ -1,6 +1,14 @@
 # Matheus-style NR scaling adapter for the exact NR 0.3.0 C7 build
 
-**Experimental adapter, version 0.2.4 LumaStability. Install only a successfully built installation package. Actual AMD/Cyberpunk execution remains unverified.**
+**Experimental adapter, version 0.2.5 ShadowStability. Install only a successfully built installation package. Actual AMD/Cyberpunk execution remains unverified.**
+
+0.2.5 fades local-contrast rejection with the sum of valid neighbour weights.
+This avoids a nearly rejected neighbourhood producing full rejection immediately
+before the zero-support fallback. The fade changes only support below one
+aggregate unit; reliable-neighbour correction and the original per-tap guards
+are retained. It does not add texture reads, history, buffers or dispatches.
+Weaker rejection can expose more NR correction at uncertain edges. Actual
+Radeon shadow quality remains unverified.
 
 0.2.4 attenuates an existing guarded residual only when a fixed, same-frame
 cross neighbourhood indicates increased local luminance contrast relative to
