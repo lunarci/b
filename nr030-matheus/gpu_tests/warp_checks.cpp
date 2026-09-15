@@ -11,8 +11,10 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iomanip>
 #include <iostream>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -654,18 +656,38 @@ int wmain(int argc, wchar_t** argv) {
         test("Residual rejects mismatched taps even when their baseline average matches", [&] {
             const auto half = DXGI_FORMAT_R16G16B16A16_FLOAT;
             auto native = Filled(40, 40, {0, 0, 0, 0.3125f}, half);
-            // This is an actual area baseline from finite signed scene-linear
-            // input: low x=5 is 0 and x=6 is 40, but native x=6 is 1.
+            // Exact area geometry gives low x=5 -> 0 and x=6 -> 40, while
+            // native x=6 is 1. FP32 accumulation and FP16 storage need not
+            // produce those literal values; validate the rejection/acceptance
+            // premises against the measured taps before testing the resolve.
             for (UINT y = 0; y < 40; ++y) for (UINT c = 0; c < 3; ++c) {
                 native.At(5, y, c) = -33.5f;
                 native.At(6, y, c) = 1.0f;
                 native.At(7, y, c) = 50.0f;
             }
             auto low = gpu.Run(Kernel::Color, {native}, 34, 34, {34, 34, 40, 40}, half);
+            std::cout << std::setprecision(9) << "Cancellation fixture measured area taps: low(5,0,0)="
+                      << low.At(5, 0, 0) << ", low(6,0,0)=" << low.At(6, 0, 0) << '\n';
             auto edited = low;
             for (UINT y = 0; y < 34; ++y) for (UINT c = 0; c < 3; ++c) {
-                Require(std::abs(low.At(5, y, c)) < 0.001f && low.At(6, y, c) == 40.0f,
-                        "Area baseline no longer constructs the cancellation fixture");
+                const double left = low.At(5, y, c), right = low.At(6, y, c);
+                // Independent integer geometry: (6+1/2)*34/40-1/2 = 5+1/40.
+                // Each tap must be fully rejected, while their weighted mean
+                // must be fully accepted by the old post-interpolation guard.
+                const double blended = (39 * left + right) / 40;
+                const auto mismatch = [](double value) {
+                    return std::abs(1 - value) / std::max(1.0, std::abs(value));
+                };
+                const double leftMismatch = mismatch(left), rightMismatch = mismatch(right);
+                const double blendedMismatch = mismatch(blended);
+                std::ostringstream detail;
+                detail << std::setprecision(9) << "Area cancellation premise failed at row=" << y
+                       << " channel=" << c << ": low5=" << left << " low6=" << right
+                       << " geometric_blend=" << blended << " left_mismatch=" << leftMismatch
+                       << " right_mismatch=" << rightMismatch << " blend_mismatch=" << blendedMismatch;
+                Require(std::isfinite(left) && std::isfinite(right) &&
+                        leftMismatch >= 0.75 && rightMismatch >= 0.75 && blendedMismatch <= 0.15,
+                        detail.str());
                 edited.At(6, y, c) = 60.0f;
             }
             auto out = gpu.Run(Kernel::Residual, {native, low, edited}, 40, 40,
