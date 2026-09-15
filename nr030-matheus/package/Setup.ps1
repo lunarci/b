@@ -148,7 +148,7 @@ function Assert-SnapshotUnchanged($Paths,$Before) {
         }
     }
 }
-function Assert-Base($Paths) {
+function Assert-Base($Paths,[switch]$AllowPreservedXeFgCount) {
     Assert-NoReparse $Paths.Root; Assert-NoReparse $Paths.Bin; Assert-NoReparse $Paths.Backup
     if (-not (Test-Path -LiteralPath $Paths.Plugins -PathType Container)) { throw ('The fixed ARK plugins folder is missing: '+$Paths.Plugins) }
     # Legacy base-installer metadata is optional: compatibility is established
@@ -178,7 +178,9 @@ function Assert-Base($Paths) {
         $pluginPath=Read-IniValue $text 'Plugins' 'Path'
         if ($pluginPath -and $pluginPath -notin @('auto','plugins','.\plugins','./plugins')) { throw 'A custom ASI plugin path is unsupported by this fixed-path add-on.' }
         $interpolation=Read-IniValue $text 'XeFG' 'InterpolationCount'
-        if ($interpolation -ne '3') { throw 'The existing XeFG 4X setting (InterpolationCount=3) is not explicit. No setting is changed.' }
+        if ($AllowPreservedXeFgCount) {
+            if ($interpolation -notin @('3','4')) { throw 'The existing XeFG interpolation count is not an explicit 4X/5X configuration. No setting is changed.' }
+        } elseif ($interpolation -ne '3') { throw 'The existing XeFG 4X setting (InterpolationCount=3) is not explicit. No setting is changed.' }
         if ((Read-IniValue $text 'DlssNr' 'Enabled') -in @('true','1')) { throw 'A second built-in NR pipeline is enabled; add-on installation is blocked.' }
     }
     $nrPaths=@(Join-Path $Paths.Plugins 'dlssnr_on_amd.ini')
@@ -396,23 +398,29 @@ function Get-PoolSessionSummary([string]$Text) {
     }
     return $result
 }
-function Get-AddonSessionSummary([string]$Text,[string]$InstalledUtc) {
+function Get-AddonSessionSummary([string]$Text,[string]$InstalledUtc,[string]$ExpectedSourceCommit='') {
     # All fields are observations, never a visual-quality, performance, or neural-inference verdict.
     $result=[pscustomobject]@{
         HeaderFound=$false;SessionUtc=$null;StartedAfterInstall=$false;HookActive=$false
         ScalePercent=$null;Seen=0L;Scaled=0L;NrRecorded=0L;Resolved=0L;Fallback=0L;GpuCompleted=0L
         StatsFound=$false;CommandRecordingObserved=$false;GpuRetirementObserved=$false
-        SourceCommit=$null;InputWidth=$null;InputHeight=$null;NrWidth=$null;NrHeight=$null
+        SourceCommit=$null;SourceMatchesInstalled=$false;InputWidth=$null;InputHeight=$null;NrWidth=$null;NrHeight=$null
         ColourPreservationPercent=$null;DepthProtection=$null;EffectPercent=$null
         LumaStabilityPercent=$null;LumaStabilitySettingsFound=$false
         CompositeSettingsFound=$false;CompositeRecordingObserved=$false
+        OriginalColourMode=$false;OriginalColourPassthrough=0L;OriginalColourRecordingObserved=$false
+        PredicationModeFound=$false;PredicationStats=$null;PredicationAssessment='NOT_CONFIRMED'
         RuntimeValidated=$false;Result='UNVERIFIED'
     }
-    $starts=[regex]::Matches($Text,'(?m)^event=session_start utc=([^\s]+) runtime_validated=false(?: source_commit=([0-9a-f]{40}|unrecorded))?[ \t\r]*$')
+    # A malformed/new-format final header must not expose a previous session's success.
+    $starts=[regex]::Matches($Text,'(?m)^event=session_start\b[^\r\n]*')
     if (-not $starts.Count) { return $result }
-    $start=$starts[$starts.Count-1];$session=$Text.Substring($start.Index)
+    $lastStart=$starts[$starts.Count-1];$session=$Text.Substring($lastStart.Index)
+    $start=[regex]::Match($lastStart.Value,'^event=session_start utc=([^\s]+) runtime_validated=false(?: source_commit=([0-9a-f]{40}|unrecorded))?[ \t\r]*$')
+    if (-not $start.Success) { $result.Result='INVALID_LATEST_SESSION_HEADER';return $result }
     $result.HeaderFound=$true;$result.SessionUtc=$start.Groups[1].Value
     if ($start.Groups[2].Success) { $result.SourceCommit=$start.Groups[2].Value }
+    $result.SourceMatchesInstalled=($ExpectedSourceCommit -cmatch '^[0-9a-f]{40}$' -and $result.SourceCommit -ceq $ExpectedSourceCommit)
     $sessionTime=[DateTimeOffset]::MinValue;$installTime=[DateTimeOffset]::MinValue
     $style=[Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal
     if ([DateTimeOffset]::TryParse($result.SessionUtc,[Globalization.CultureInfo]::InvariantCulture,$style,[ref]$sessionTime) -and
@@ -453,9 +461,43 @@ function Get-AddonSessionSummary([string]$Text,[string]$InstalledUtc) {
             $result.Resolved=$values[3];$result.Fallback=$values[4];$result.GpuCompleted=$values[5]
         }
     }
+    $result.OriginalColourMode=($session -match '(?m)^event=effect_zero_handoff diagnostic_build=true mode=original_color_passthrough nr_execution_unchanged=true applies_to_scaled_path_only=true visual_verified=false[ \t\r]*$')
+    $original=[regex]::Matches($session,'(?m)^event=original_color_stats passthrough=(\d+) seen=(\d+) nr_recorded=(\d+)[ \t\r]*$')
+    if ($original.Count -and $result.StatsFound) {
+        $last=$original[$original.Count-1];$pass=0L;$seen=0L;$nr=0L
+        if ([long]::TryParse($last.Groups[1].Value,[ref]$pass) -and [long]::TryParse($last.Groups[2].Value,[ref]$seen) -and
+            [long]::TryParse($last.Groups[3].Value,[ref]$nr) -and $seen -eq $result.Seen -and $nr -eq $result.NrRecorded -and $pass -le $nr) {
+            $result.OriginalColourPassthrough=$pass
+        }
+    }
+    $result.PredicationModeFound=($session -match '(?m)^event=predication_mode admission=observed_disabled_only active_or_unknown=skip_nr preserve_before_ffx=true scale100_covered=false[ \t\r]*$')
+    $predication=[regex]::Matches($session,'(?m)^event=predication_stats admitted=(\d+) bypass_unknown=(\d+) bypass_active=(\d+) bypass_untracked=(\d+) observed_sets=(\d+) observed_resets=(\d+) observed_clears=(\d+) private_sets=(\d+) private_restores=(\d+) tracked_lists=(\d+) capacity_bypass=(\d+)[ \t\r]*$')
+    if ($predication.Count) {
+        $last=$predication[$predication.Count-1];$fields=[ordered]@{};$valid=$true
+        $names=@('Admitted','BypassUnknown','BypassActive','BypassUntracked','ObservedSets','ObservedResets','ObservedClears','PrivateSets','PrivateRestores','TrackedLists','CapacityBypass')
+        for ($i=0;$i -lt $names.Count;$i++) {
+            $value=0L
+            if (-not [long]::TryParse($last.Groups[$i+1].Value,[ref]$value)) { $valid=$false;break }
+            $fields[$names[$i]]=$value
+        }
+        if ($valid -and $fields.TrackedLists -le 64) { $result.PredicationStats=[pscustomobject]$fields }
+    }
     if (-not $result.StartedAfterInstall) { $result.Result='STALE_OR_NO_INSTALL_TIME';return $result }
+    if ($ExpectedSourceCommit -and -not $result.SourceMatchesInstalled) { $result.Result='SOURCE_COMMIT_NOT_CONFIRMED';return $result }
     if (-not $result.HookActive) { $result.Result='NO_ACTIVE_HOOK_OBSERVED';return $result }
     if ($result.ScalePercent -eq 100) { $result.Result='BASELINE_100_PERCENT';return $result }
+    if ($result.PredicationModeFound -and $null -ne $result.PredicationStats) {
+        if ($result.PredicationStats.BypassActive -gt 0) { $result.PredicationAssessment='ACTIVE_CALLER_NR_BYPASS_OBSERVED' }
+        elseif ($result.PredicationStats.Admitted -gt 0) { $result.PredicationAssessment='NO_ACTIVE_CALLER_PREDICATION_OBSERVED' }
+        else { $result.PredicationAssessment='NO_ADMITTED_NR_OBSERVED' }
+    }
+    if ($result.OriginalColourMode -and $result.CompositeSettingsFound -and $result.EffectPercent -eq 0 -and
+        $result.OriginalColourPassthrough -gt 0 -and $result.Resolved -eq 0) {
+        $result.CommandRecordingObserved=$true;$result.OriginalColourRecordingObserved=$true
+        $result.GpuRetirementObserved=($result.GpuCompleted -gt 0)
+        $result.Result='ORIGINAL_COLOR_PASSTHROUGH_RECORDING_OBSERVED'
+        return $result
+    }
     if (-not $result.StatsFound -or $result.NrRecorded -eq 0 -or $result.Resolved -eq 0) { $result.Result='NO_NR_RESOLVE_RECORDING_OBSERVED';return $result }
     $result.CommandRecordingObserved=$true
     $result.CompositeRecordingObserved=($result.CompositeSettingsFound -and $result.EffectPercent -gt 0)
@@ -463,12 +505,47 @@ function Get-AddonSessionSummary([string]$Text,[string]$InstalledUtc) {
     $result.Result='NR_RESOLVE_COMMAND_RECORDING_OBSERVED'
     return $result
 }
+function Get-OptiLogFreshness($Paths,[string]$SessionUtc) {
+    # Timestamps can exclude stale logs; even a newer file cannot prove runtime settings.
+    $sessionTime=[DateTimeOffset]::MinValue
+    $style=[Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal
+    $hasTime=[DateTimeOffset]::TryParse($SessionUtc,[Globalization.CultureInfo]::InvariantCulture,$style,[ref]$sessionTime)
+    foreach ($side in @(@('ark',$Paths.Bin),@('overwrite',$Paths.OldBin))) {
+        $candidates=@([pscustomobject]@{Kind='default';Path=(Join-Path $side[1] 'OptiScaler.log')})
+        $ini=Join-Path $side[1] 'OptiScaler.ini'
+        if (Test-Path -LiteralPath $ini -PathType Leaf) {
+            Assert-NoReparse $ini
+            $configured=Read-IniValue ([IO.File]::ReadAllText($ini)) 'Log' 'LogFileName'
+            if ($configured -and $configured -ine 'auto') {
+                $prefix=(Full-Path $Paths.Root).TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar
+                if ([IO.Path]::IsPathRooted($configured) -and (Full-Path $configured).StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase) -and [IO.Path]::GetExtension($configured) -ieq '.log') {
+                    $candidates += [pscustomobject]@{Kind='configured';Path=(Full-Path $configured)}
+                } else {
+                    [pscustomobject]@{Side=$side[0];Kind='configured';Path=$configured;ModifiedUtc=$null;Result='CONFIGURED_PATH_NOT_INSPECTED';RuntimeValidated=$false}
+                }
+            }
+        }
+        foreach ($candidate in $candidates) {
+            Assert-NoReparse $candidate.Path
+            $modified=$null;$result='LOG_MISSING'
+            if (Test-Path -LiteralPath $candidate.Path -PathType Leaf) {
+                $file=Get-Item -LiteralPath $candidate.Path;$modified=$file.LastWriteTimeUtc.ToString('o')
+                $result='NO_SESSION_TIME_FOR_COMPARISON'
+                if ($hasTime) {
+                    $result='TIMESTAMP_COMPATIBLE_ONLY'
+                    if ($file.LastWriteTimeUtc -lt $sessionTime.UtcDateTime) { $result='STALE_BEFORE_ADDON_SESSION' }
+                }
+            } elseif ($candidate.Kind -eq 'configured') { $result='CONFIGURED_LOG_MISSING' }
+            [pscustomobject]@{Side=$side[0];Kind=$candidate.Kind;Path=$candidate.Path;ModifiedUtc=$modified;Result=$result;RuntimeValidated=$false}
+        }
+    }
+}
 function Check-Addon($Paths) {
     $lines=New-Object 'System.Collections.Generic.List[string]'
     $lines.Add('MatheusNR030 read-only check '+[DateTime]::UtcNow.ToString('o'))
     $lines.Add('Install path: '+$Paths.Plugins)
     try { $null=Get-VerifiedManifest; $lines.Add('Package build/ABI/hash gates: PASS') } catch { $lines.Add('Package installation gate: BLOCKED - '+$_.Exception.Message) }
-    try { $snapshot=Assert-Base $Paths; $lines.Add('Base NR hash and preserved settings: PASS'); foreach ($path in @($snapshot.Keys | Sort-Object)) { $lines.Add('Protected '+$snapshot[$path]+' '+$path) } } catch { $lines.Add('Base check: NOT CONFIRMED - '+$_.Exception.Message) }
+    try { $snapshot=Assert-Base $Paths -AllowPreservedXeFgCount; $lines.Add('Base NR hash and preserved settings: PASS'); foreach ($path in @($snapshot.Keys | Sort-Object)) { $lines.Add('Protected '+$snapshot[$path]+' '+$path) } } catch { $lines.Add('Base check: NOT CONFIRMED - '+$_.Exception.Message) }
     $state=$null
     $filesConfirmed=$false
     try {
@@ -501,8 +578,16 @@ function Check-Addon($Paths) {
         $addonText=[IO.File]::ReadAllText($addonLog.FullName)
         $installedUtc=''
         if ($filesConfirmed) { $installedUtc=[string](Get-Value $state 'InstalledUtc') }
-        $addonSummary=Get-AddonSessionSummary $addonText $installedUtc
+        $expectedSource=''
+        if ($filesConfirmed) { $expectedSource=[string](Get-Value $state 'SourceCommit') }
+        $addonSummary=Get-AddonSessionSummary $addonText $installedUtc $expectedSource
         $lines.Add('ADD-ON LAST SESSION observations: '+($addonSummary | ConvertTo-Json -Compress))
+        if ($addonSummary.OriginalColourRecordingObserved) { $lines.Add('Original-colour handoff recorded: resolved=0 is expected in this diagnostic mode. NR command recording remains enabled; image quality, GPU correctness and performance remain unverified.') }
+        if ($addonSummary.PredicationAssessment -ceq 'ACTIVE_CALLER_NR_BYPASS_OBSERVED') { $lines.Add('Active caller predication was intercepted and NR bypassed for those calls. This observation does not prove predication caused the reported artifacts or that they are fixed.') }
+        elseif ($addonSummary.PredicationAssessment -ceq 'NO_ACTIVE_CALLER_PREDICATION_OBSERVED') { $lines.Add('No active caller predication was observed in this session. The identified predication defect is not evidenced as the cause of the reported artifacts in this run.') }
+        try {
+            foreach ($opti in @(Get-OptiLogFreshness $Paths $addonSummary.SessionUtc)) { $lines.Add('OPTISCALER LOG FRESHNESS: '+($opti | ConvertTo-Json -Compress)) }
+        } catch { $lines.Add('OPTISCALER LOG FRESHNESS: NOT CONFIRMED - '+$_.Exception.Message) }
         $lines.Add('Combined colour/depth settings recorded: '+$addonSummary.CompositeSettingsFound+'; composite command recording observed: '+$addonSummary.CompositeRecordingObserved)
         if ($addonSummary.StartedAfterInstall -and $addonSummary.StatsFound -and $addonSummary.Seen -gt 0 -and $addonSummary.Scaled -eq 0) {
             $lines.Add('NOT APPLIED: no NR input downscaling was recorded. A configured ScalePercent=85 alone is not successful application.')
@@ -520,7 +605,7 @@ function Check-Addon($Paths) {
         $lines.Add('Add-on log tail:')
         foreach ($line in @([regex]::Split($addonText,'\r?\n') | Select-Object -Last 35)) { $lines.Add($line) }
     } else { $lines.Add('MatheusNR030.log not found.') }
-    $lines.Add('GAMEPLAY / IMAGE QUALITY / PERFORMANCE: UNVERIFIED. DLL load/build and GPU command recording do not prove inference quality. XeFG Active/4X requires its own runtime check.')
+    $lines.Add('GAMEPLAY / IMAGE QUALITY / PERFORMANCE: UNVERIFIED. DLL load/build and GPU command recording do not prove inference quality. XeFG Active and interpolation count require their own current-session runtime evidence.')
     $text=$lines -join "`r`n"
     foreach ($line in $lines) { Write-Host $line }
     return $text

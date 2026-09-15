@@ -11,6 +11,7 @@ on:
       - nr030-image-stability
       - nr030-luma-stability
       - nr030-fg-artifact-investigation
+      - nr030-motion-artifact-rootfix
     paths:
       - nr030-matheus/**
       - .github/workflows/build-matheus-nr030.yml
@@ -55,15 +56,19 @@ jobs:
         run: |
           & powershell.exe -NoProfile -ExecutionPolicy Bypass -File nr030-matheus/package/Test-Original-Color-Control.ps1
           if ($LASTEXITCODE -ne 0) { throw "Original-color diagnostic tests failed: $LASTEXITCODE" }
+      - name: Validate current-session evidence and stale-log classification
+        run: |
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File nr030-matheus/package/Test-Session-Evidence.ps1
+          if ($LASTEXITCODE -ne 0) { throw "Session evidence tests failed: $LASTEXITCODE" }
       - name: Assemble experimental installation package
         # This complete package is an intermediate build input only. The
         # artifact below exposes just the reversible ASI comparison package.
         run: |
           ./nr030-matheus/tools/Build-Package.ps1 -BuildRoot "$env:GITHUB_WORKSPACE/build/nr030" -SourceCommit $env:GITHUB_SHA -RunId $env:GITHUB_RUN_ID -ExperimentalReviewed
-      - name: Assemble binary-only original-color diagnostic
+      - name: Assemble reversible predication repair
         run: |
-          python nr030-matheus/tools/Build-OriginalColor-Package.py --base-zip build/nr030/deliverable/Matheus_NR030_0.2.4_LumaStability.zip --source-root nr030-matheus --output build/nr030/deliverable/Matheus_NR030_OriginalColor_Test.zip --source-commit $env:GITHUB_SHA --run-id $env:GITHUB_RUN_ID --handoff-results build/nr030/addon/handoff_results.json --control-results nr030-matheus/package/test-results/original-color-control-tests.json
-          if ($LASTEXITCODE -ne 0) { throw "Original-color packaging failed: $LASTEXITCODE" }
+          python nr030-matheus/tools/Build-PredicationFix-Package.py --base-zip build/nr030/deliverable/Matheus_NR030_0.2.4_LumaStability.zip --source-root nr030-matheus --output build/nr030/deliverable/Matheus_NR030_PredicationFix.zip --source-commit $env:GITHUB_SHA --run-id $env:GITHUB_RUN_ID --handoff-results build/nr030/addon/handoff_results.json --control-results nr030-matheus/package/test-results/original-color-control-tests.json --predication-results build/nr030/addon/predication_results.json --session-results nr030-matheus/package/test-results/session-evidence-tests.json
+          if ($LASTEXITCODE -ne 0) { throw "Predication repair packaging failed: $LASTEXITCODE" }
       - name: Upload build and test evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -77,14 +82,15 @@ jobs:
             build/nr030/addon/lifetime_results.json
             build/nr030/addon/input_results.json
             build/nr030/addon/handoff_results.json
+            build/nr030/addon/predication_results.json
             nr030-matheus/package/test-results/
           if-no-files-found: warn
           retention-days: 14
-      - name: Upload reversible original-color diagnostic
+      - name: Upload reversible predication repair
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: Matheus-NR030-original-color-test-${{ github.run_number }}
+          name: Matheus-NR030-predication-fix-${{ github.run_number }}
           path: |
-            build/nr030/deliverable/Matheus_NR030_OriginalColor_Test.zip
+            build/nr030/deliverable/Matheus_NR030_PredicationFix.zip
           if-no-files-found: error
           retention-days: 14

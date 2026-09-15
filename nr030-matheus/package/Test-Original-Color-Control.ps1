@@ -3,7 +3,7 @@
 param()
 $componentRoot=$PSScriptRoot
 . (Join-Path $componentRoot 'Original-Color-Control.ps1') -Action Status
-$productionBaseline=$script:OriginalColorBaselineHash;$productionNr=$script:ExpectedNrHash
+$productionBaseline=$script:OriginalColorBaselineHash;$productionNr=$script:ExpectedNrHash;$productionPrevious=$script:OriginalColorPreviousDiagnosticHash
 $originalStopped=(Get-Item Function:\Assert-Stopped).ScriptBlock
 $script:OriginalColorTestRunning=$false
 function Assert-Stopped { if ($script:OriginalColorTestRunning) { throw 'Close Cyberpunk 2077 and Mod Organizer.' } }
@@ -58,6 +58,8 @@ function New-TrialFixture([string]$Name) {
     Write-Json $paths.State ([pscustomobject]@{SchemaVersion=1;AddonName='MatheusNR030';PluginFolder=$paths.Plugins;AddonVersion='0.2.4';Files=@([pscustomobject]@{Name='MatheusNR030.asi';InstalledHash=$script:OriginalColorBaselineHash},[pscustomobject]@{Name='MatheusNR030.ini';InstalledHash=(Get-Hash (Join-Path $paths.Plugins 'MatheusNR030.ini'))});RuntimeVerified=$false})
     $package=Join-Path $paths.Root 'test-package';New-Item -ItemType Directory -Path (Join-Path $package 'payload') -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $componentRoot 'protected-files.json') -Destination $package
+    Write-TrialPe (Join-Path $package 'previous-diagnostic.asi') 4
+    $script:OriginalColorPreviousDiagnosticHash=Get-Hash (Join-Path $package 'previous-diagnostic.asi')
     Write-TrialPe (Join-Path $package 'payload/MatheusNR030.asi') 3
     Write-Text (Join-Path $package 'payload/MatheusNR030.ini') 'PACKAGED DEFAULT MUST NEVER BE INSTALLED'
     $entries=@();foreach ($name in @('MatheusNR030.asi','MatheusNR030.ini')) {
@@ -66,6 +68,13 @@ function New-TrialFixture([string]$Name) {
     Write-Json (Join-Path $package 'package-manifest.json') ([pscustomobject]@{schema_version=1;addon_name='MatheusNR030';build_verified=$true;abi_verified=$true;base_nr_sha256=$script:ExpectedNrHash;source_commit=('a'*40);addon_version='0.2.4-original-color-trial';build_run_id='123456';build_evidence='https://github.com/lunarci/b/actions/runs/123456';abi_evidence='SYNTHETIC TEST ONLY';game_runtime_verified=$false;runtime_log_schema='matheusnr030-events-v1';files=$entries})
     $script:PackageRoot=$package
     [pscustomobject]@{Paths=$paths;Package=$package;Primary=(Join-Path $paths.Plugins 'MatheusNR030.asi');Secondary=(Join-Path $paths.OldPlugins 'MatheusNR030.asi');Payload=(Join-Path $package 'payload/MatheusNR030.asi')}
+}
+function Set-TrialPayload($Fixture,[byte]$Marker) {
+    Write-TrialPe $Fixture.Payload $Marker
+    $manifestPath=Join-Path $Fixture.Package 'package-manifest.json';$manifest=Read-Json $manifestPath
+    $entry=@($manifest.files | Where-Object { $_.name -ceq 'MatheusNR030.asi' })[0]
+    $entry.sha256=Get-Hash $Fixture.Payload;$entry.size=(Get-Item -LiteralPath $Fixture.Payload).Length
+    Write-Json $manifestPath $manifest
 }
 function Assert-TrialUnrelated($Paths,$Before) {
     $after=Get-OriginalColorSnapshot $Paths
@@ -380,6 +389,131 @@ try {
         }
         if ($env:OS -ceq 'Windows_NT') { $script:NativeEffectApiVerified=$true }
     }
+    Run-TrialCase 'known-diagnostic-without-state-adopts-and-restores-own-bytes' {
+        param($f)
+        foreach ($path in @($f.Primary,$f.Secondary)) { Write-TrialPe $path 4 }
+        foreach ($folder in @($f.Paths.Plugins,$f.Paths.OldPlugins)) {
+            $ini=Join-Path $folder 'MatheusNR030.ini';Write-Text $ini ([IO.File]::ReadAllText($ini).Replace('EffectPercent=0','EffectPercent=50'))
+        }
+        Remove-Item -LiteralPath $f.Paths.State;$before=Get-OriginalColorSnapshot $f.Paths
+        Invoke-OriginalColorControl $f.Paths Apply
+        $trial=(Read-AddonState $f.Paths).OriginalColorTrial
+        Assert-TrialTest ($trial.BaselineHash -ceq $script:OriginalColorPreviousDiagnosticHash -and -not $trial.OriginalStateExisted) 'Known diagnostic baseline was not recorded correctly.'
+        Invoke-OriginalColorControl $f.Paths Restore;Assert-OriginalColorSnapshot $f.Paths $before
+    }
+    Run-TrialCase 'known-diagnostic-active-trial-upgrade-preserves-first-backups' {
+        param($f)
+        foreach ($folder in @($f.Paths.Plugins,$f.Paths.OldPlugins)) {
+            $ini=Join-Path $folder 'MatheusNR030.ini';Write-Text $ini ([IO.File]::ReadAllText($ini).Replace('EffectPercent=0','EffectPercent=50'))
+        }
+        $before=Get-OriginalColorSnapshot $f.Paths
+        Set-TrialPayload $f 4;Invoke-OriginalColorControl $f.Paths Apply
+        $originalTrial=Copy-OriginalColorObject (Read-AddonState $f.Paths).OriginalColorTrial
+        foreach ($folder in @($f.Paths.Plugins,$f.Paths.OldPlugins)) {
+            $ini=Join-Path $folder 'MatheusNR030.ini'
+            Write-Text $ini ([IO.File]::ReadAllText($ini).Replace('LumaStabilityPercent=100','LumaStabilityPercent=42'))
+        }
+        Set-TrialPayload $f 3;Invoke-OriginalColorControl $f.Paths Apply
+        $trial=(Read-AddonState $f.Paths).OriginalColorTrial
+        Assert-TrialTest ($trial.BackupFolder -ceq $originalTrial.BackupFolder -and $trial.OriginalStateHash -ceq $originalTrial.OriginalStateHash) 'Upgrade replaced the first original ASI/state backup.'
+        Assert-TrialTest ($trial.EffectFiles[0].BeforeHash -ceq $originalTrial.EffectFiles[0].BeforeHash -and $trial.EffectFiles[0].EffectValue -ceq '50') 'Upgrade replaced the first original Effect backup.'
+        foreach ($path in @($f.Primary,$f.Secondary)) { Assert-TrialTest ((Get-Hash $path) -ceq (Get-Hash $f.Payload)) 'New ASI did not replace the known previous diagnostic.' }
+        Invoke-OriginalColorControl $f.Paths Restore
+        foreach ($folder in @($f.Paths.Plugins,$f.Paths.OldPlugins)) {
+            $ini=Join-Path $folder 'MatheusNR030.ini';$text=[IO.File]::ReadAllText($ini)
+            Assert-TrialTest ((Read-IniValue $text 'MatheusNR030' 'LumaStabilityPercent') -ceq '42' -and (Read-IniValue $text 'MatheusNR030' 'EffectPercent') -ceq '50') 'Upgrade restore lost unrelated edits made after the first trial.'
+            $before[$ini]=Get-Hash $ini
+        }
+        Assert-OriginalColorSnapshot $f.Paths $before
+    }
+    Run-TrialCase 'known-diagnostic-upgrade-failure-rolls-back-active-trial' {
+        param($f)
+        $before=Get-OriginalColorSnapshot $f.Paths
+        Set-TrialPayload $f 4;Invoke-OriginalColorControl $f.Paths Apply
+        $active=Get-OriginalColorSnapshot $f.Paths
+        Set-TrialPayload $f 3
+        $inject={ param($index) if ($index -eq 1) { throw 'injected diagnostic upgrade failure' } }
+        Assert-TrialThrows { Invoke-OriginalColorControl $f.Paths Apply $inject } 'injected diagnostic upgrade failure'
+        Assert-OriginalColorSnapshot $f.Paths $active
+        Invoke-OriginalColorControl $f.Paths Restore;Assert-OriginalColorSnapshot $f.Paths $before
+    }
+    Run-TrialCase 'legacy-active-trial-without-effect-metadata-upgrades-and-restores' {
+        param($f)
+        $before=Get-OriginalColorSnapshot $f.Paths
+        Set-TrialPayload $f 4;Invoke-OriginalColorControl $f.Paths Apply
+        $state=Read-AddonState $f.Paths;$oldFolder=$state.OriginalColorTrial.BackupFolder
+        $state.OriginalColorTrial.PSObject.Properties.Remove('EffectFiles');$state.OriginalColorTrial.PSObject.Properties.Remove('EffectBackupFolder');Write-Json $f.Paths.State $state
+        foreach ($folder in @($f.Paths.Plugins,$f.Paths.OldPlugins)) {
+            $ini=Join-Path $folder 'MatheusNR030.ini';Write-Text $ini ([IO.File]::ReadAllText($ini).Replace('EffectPercent=0','EffectPercent=50'))
+            $before[$ini]=Get-Hash $ini
+        }
+        Set-TrialPayload $f 3;Invoke-OriginalColorControl $f.Paths Apply
+        $trial=(Read-AddonState $f.Paths).OriginalColorTrial
+        Assert-TrialTest ($trial.BackupFolder -ceq $oldFolder -and $trial.EffectBackupFolder -cne $oldFolder) 'Legacy ASI backup was replaced or new Effect backup scope was wrong.'
+        Invoke-OriginalColorControl $f.Paths Restore;Assert-OriginalColorSnapshot $f.Paths $before
+    }
+    Run-TrialCase 'preserve-effect-current-values-and-known-binaries-without-state' {
+        param($f)
+        foreach ($marker in @(1,4)) { foreach ($value in @('0','50')) {
+            foreach ($path in @($f.Primary,$f.Secondary)) { Write-TrialPe $path $marker }
+            foreach ($folder in @($f.Paths.Plugins,$f.Paths.OldPlugins)) {
+                $ini=Join-Path $folder 'MatheusNR030.ini'
+                Write-Text $ini (Set-OriginalColorEffectText ([IO.File]::ReadAllText($ini)) $true $value)
+            }
+            Remove-Item -LiteralPath $f.Paths.State -ErrorAction SilentlyContinue
+            $before=Get-OriginalColorSnapshot $f.Paths
+            Invoke-OriginalColorControl $f.Paths Apply -PreserveEffect
+            Assert-TrialUnrelated $f.Paths $before
+            $trial=(Read-AddonState $f.Paths).OriginalColorTrial
+            Assert-TrialTest ($trial.PreserveEffectApplied -eq $true -and $null -eq (Get-Value $trial 'EffectFiles')) 'Preserve mode fabricated Effect ownership.'
+            $active=Get-OriginalColorSnapshot $f.Paths
+            Invoke-OriginalColorControl $f.Paths Apply -PreserveEffect;Assert-OriginalColorSnapshot $f.Paths $active
+            Invoke-OriginalColorControl $f.Paths Restore;Assert-OriginalColorSnapshot $f.Paths $before
+        } }
+    }
+    Run-TrialCase 'preserve-effect-upgrade-keeps-prior-effect-restore-chain' {
+        param($f)
+        foreach ($folder in @($f.Paths.Plugins,$f.Paths.OldPlugins)) {
+            $ini=Join-Path $folder 'MatheusNR030.ini';Write-Text $ini ([IO.File]::ReadAllText($ini).Replace('EffectPercent=0','EffectPercent=50'))
+        }
+        $before=Get-OriginalColorSnapshot $f.Paths
+        Set-TrialPayload $f 4;Invoke-OriginalColorControl $f.Paths Apply
+        $oldTrial=Copy-OriginalColorObject (Read-AddonState $f.Paths).OriginalColorTrial
+        foreach ($folder in @($f.Paths.Plugins,$f.Paths.OldPlugins)) {
+            $ini=Join-Path $folder 'MatheusNR030.ini'
+            Write-Text $ini ([IO.File]::ReadAllText($ini).Replace('EffectPercent=0','EffectPercent=25').Replace('LumaStabilityPercent=100','LumaStabilityPercent=42'))
+        }
+        $atUpgrade=Get-OriginalColorSnapshot $f.Paths
+        Set-TrialPayload $f 3;Invoke-OriginalColorControl $f.Paths Apply -PreserveEffect
+        Assert-TrialUnrelated $f.Paths $atUpgrade
+        $trial=(Read-AddonState $f.Paths).OriginalColorTrial
+        Assert-TrialTest ($trial.EffectFiles[0].Backup -ceq $oldTrial.EffectFiles[0].Backup -and $trial.EffectFiles[0].BeforeHash -ceq $oldTrial.EffectFiles[0].BeforeHash) 'Preserve upgrade discarded prior Effect backup.'
+        Invoke-OriginalColorControl $f.Paths Restore
+        foreach ($folder in @($f.Paths.Plugins,$f.Paths.OldPlugins)) {
+            $ini=Join-Path $folder 'MatheusNR030.ini';$text=[IO.File]::ReadAllText($ini)
+            Assert-TrialTest ((Read-IniValue $text 'MatheusNR030' 'EffectPercent') -ceq '50' -and (Read-IniValue $text 'MatheusNR030' 'LumaStabilityPercent') -ceq '42') 'Prior Effect chain or unrelated edits were lost.'
+            $before[$ini]=Get-Hash $ini
+        }
+        Assert-OriginalColorSnapshot $f.Paths $before
+    }
+    Run-TrialCase 'preserve-effect-upgrade-without-effect-ownership-retains-later-values' {
+        param($f)
+        foreach ($folder in @($f.Paths.Plugins,$f.Paths.OldPlugins)) {
+            $ini=Join-Path $folder 'MatheusNR030.ini';Write-Text $ini ([IO.File]::ReadAllText($ini).Replace('EffectPercent=0','EffectPercent=50'))
+        }
+        $before=Get-OriginalColorSnapshot $f.Paths
+        Set-TrialPayload $f 4;Invoke-OriginalColorControl $f.Paths Apply -PreserveEffect
+        foreach ($folder in @($f.Paths.Plugins,$f.Paths.OldPlugins)) {
+            $ini=Join-Path $folder 'MatheusNR030.ini'
+            Write-Text $ini ([IO.File]::ReadAllText($ini).Replace('EffectPercent=50','EffectPercent=0').Replace('LumaStabilityPercent=100','LumaStabilityPercent=37'))
+            $before[$ini]=Get-Hash $ini
+        }
+        $atUpgrade=Get-OriginalColorSnapshot $f.Paths
+        Set-TrialPayload $f 3;Invoke-OriginalColorControl $f.Paths Apply -PreserveEffect
+        Assert-TrialUnrelated $f.Paths $atUpgrade
+        Assert-TrialTest ($null -eq (Get-Value (Read-AddonState $f.Paths).OriginalColorTrial 'EffectFiles')) 'Preserve-only chain invented Effect restoration.'
+        Invoke-OriginalColorControl $f.Paths Restore;Assert-OriginalColorSnapshot $f.Paths $before
+    }
     Run-TrialCase 'running-game-and-corrupt-payload-block-and-status-is-read-only' {
         param($f)
         $before=Get-OriginalColorSnapshot $f.Paths;$script:OriginalColorTestRunning=$true
@@ -391,7 +525,7 @@ try {
         Assert-TrialThrows { Invoke-OriginalColorControl $f.Paths Restore } 'No active original-color trial';Assert-OriginalColorSnapshot $f.Paths $before
     }
 } finally {
-    $script:OriginalColorBaselineHash=$productionBaseline;$script:ExpectedNrHash=$productionNr;$script:PackageRoot=$componentRoot
+    $script:OriginalColorBaselineHash=$productionBaseline;$script:ExpectedNrHash=$productionNr;$script:OriginalColorPreviousDiagnosticHash=$productionPrevious;$script:PackageRoot=$componentRoot
     Set-Item Function:\Assert-Stopped $originalStopped
     Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

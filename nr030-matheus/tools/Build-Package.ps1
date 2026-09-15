@@ -44,7 +44,7 @@ if ($suite.LocalName -cne 'testsuite' -or [int]$suite.GetAttribute('failures') -
     [int]$suite.GetAttribute('skipped') -ne 0 -or [int]$suite.GetAttribute('disabled') -ne 0) {
     throw 'Native CTest suite has failures, skipped or disabled tests.'
 }
-foreach ($name in @('nr_component_math_checks','nr_pool_checks','nr030_warp_checks','nr030_addon_smoke','nr030_lifetime_checks','nr030_input_checks')) {
+foreach ($name in @('nr_component_math_checks','nr_pool_checks','nr030_warp_checks','nr030_addon_smoke','nr030_lifetime_checks','nr030_input_checks','nr030_predication_checks')) {
     $cases=@($suite.SelectNodes('testcase') | Where-Object { $_.GetAttribute('name') -ceq $name })
     if ($cases.Count -ne 1 -or $cases[0].GetAttribute('status') -cne 'run' -or
         $null -ne $cases[0].SelectSingleNode('failure|error|skipped')) {
@@ -104,6 +104,7 @@ Copy-Item -LiteralPath $nativeResultPath -Destination (Join-Path $dist 'evidence
 Copy-Item -LiteralPath $warpResultPath -Destination (Join-Path $dist 'evidence/warp_results.json')
 Copy-Item -LiteralPath $lifetimeResultPath -Destination (Join-Path $dist 'evidence/lifetime_results.json')
 Copy-Item -LiteralPath $inputResultPath -Destination (Join-Path $dist 'evidence/input_results.json')
+Copy-Item -LiteralPath (Join-Path $BuildRoot 'addon/predication_results.json') -Destination (Join-Path $dist 'evidence/predication_results.json')
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'components/LICENSE') -Destination (Join-Path $dist 'LICENSE')
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'components/NOTICE') -Destination (Join-Path $dist 'NOTICE')
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'third_party') -Destination (Join-Path $dist 'third_party') -Recurse

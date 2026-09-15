@@ -25,7 +25,7 @@ foreach(_shader IN LISTS _shader_names)
   file(APPEND "${_resources}" "${_resource_id} RCDATA \"${NR030_SHADER_BIN_DIR}/${_shader}.cso\"\n")
   math(EXPR _resource_id "${_resource_id} + 1")
 endforeach()
-add_library(MatheusNR030 SHARED MatheusNR030.cpp lifetime.cpp "${_resources}")
+add_library(MatheusNR030 SHARED MatheusNR030.cpp lifetime.cpp predication.cpp "${_resources}")
 set_target_properties(MatheusNR030 PROPERTIES PREFIX "" SUFFIX ".asi")
 target_compile_features(MatheusNR030 PRIVATE cxx_std_17)
 target_link_libraries(MatheusNR030 PRIVATE minhook nr030_shader_executor bcrypt)
@@ -82,7 +82,7 @@ set_tests_properties(nr030_input_checks PROPERTIES TIMEOUT 30)
 
 # Include the production adapter in the test translation unit. This reaches the
 # actual private After() without exporting a test API or enabling any game hook.
-add_executable(nr030_handoff_checks handoff_checks.cpp lifetime.cpp)
+add_executable(nr030_handoff_checks handoff_checks.cpp lifetime.cpp predication.cpp)
 target_compile_features(nr030_handoff_checks PRIVATE cxx_std_17)
 target_compile_definitions(nr030_handoff_checks PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN
   NR030_ENABLE_EXPERIMENTAL_RUNTIME=0)
@@ -93,3 +93,16 @@ endif()
 add_test(NAME nr030_handoff_checks
   COMMAND nr030_handoff_checks "${CMAKE_CURRENT_BINARY_DIR}/handoff_results.json")
 set_tests_properties(nr030_handoff_checks PROPERTIES TIMEOUT 30)
+
+# Reproduce private NR predication state changes on real WARP buffers. The
+# production tracker and guard must preserve the original conditional result.
+add_executable(nr030_predication_checks predication_checks.cpp predication.cpp lifetime.cpp)
+target_compile_features(nr030_predication_checks PRIVATE cxx_std_17)
+target_compile_definitions(nr030_predication_checks PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(nr030_predication_checks PRIVATE minhook d3d12 dxgi)
+if(MSVC)
+  target_compile_options(nr030_predication_checks PRIVATE /W4 /WX /permissive- /utf-8)
+endif()
+add_test(NAME nr030_predication_checks
+  COMMAND nr030_predication_checks "${CMAKE_CURRENT_BINARY_DIR}/predication_results.json")
+set_tests_properties(nr030_predication_checks PROPERTIES TIMEOUT 60)

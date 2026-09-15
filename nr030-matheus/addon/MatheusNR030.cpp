@@ -23,6 +23,7 @@
 #include "ffx_contract.h"
 #include "input_contract.h"
 #include "lifetime.h"
+#include "predication.h"
 #include "../runtime_contract.h"
 #include "../components/component_contract.h"
 #include "../components/pool_maintenance.h"
@@ -265,6 +266,7 @@ struct Frame {
     cmp::ScalePlan plan;
     bool called = false;
     std::uint32_t result = 0;
+    PredicationScope* predication = nullptr;
 };
 thread_local Frame* activeFrame = nullptr;
 
@@ -278,6 +280,7 @@ public:
     std::atomic<bool> failed{false};
     std::mutex mutex;
     RecordingLifetime lifetime;
+    PredicationTracker predication;
     ComPtr<ID3D12Device> device;
     ComPtr<IDXGIAdapter3> memoryAdapter;
     gpu::ShaderExecutor shaders;
@@ -289,6 +292,7 @@ public:
     std::atomic<unsigned> allocatedSlots{0};
     std::atomic<UINT64> seen{0}, scaled{0}, nrRecorded{0}, resolved{0}, originalColorPassthrough{0}, fallback{0}, gpuCompleted{0};
     UINT64 admissionDeferred = 0;
+    UINT64 predicateAdmitted = 0, predicateUnknown = 0, predicateActive = 0, predicateUntracked = 0;
     UINT64 retiredUses = 0, releasedBorrowedRefs = 0, trimmedSlots = 0, trimmedBytes = 0;
     UINT64 lastDiagnosticMs = 0;
     UINT64 resetDispatches = 0;
@@ -380,6 +384,18 @@ public:
             " allocated_bytes=" + std::to_string(allocatedBytes.load()) + " allocated_slots=" + std::to_string(allocatedSlots.load()));
         Log("event=original_color_stats passthrough=" + std::to_string(originalColorPassthrough.load()) +
             " seen=" + std::to_string(count) + " nr_recorded=" + std::to_string(nrRecorded.load()));
+        const auto predicate = predication.Counters();
+        Log("event=predication_stats admitted=" + std::to_string(predicateAdmitted) +
+            " bypass_unknown=" + std::to_string(predicateUnknown) +
+            " bypass_active=" + std::to_string(predicateActive) +
+            " bypass_untracked=" + std::to_string(predicateUntracked) +
+            " observed_sets=" + std::to_string(predicate.observedSets) +
+            " observed_resets=" + std::to_string(predicate.observedResets) +
+            " observed_clears=" + std::to_string(predicate.observedClears) +
+            " private_sets=" + std::to_string(predicate.privateSets) +
+            " private_restores=" + std::to_string(predicate.privateRestores) +
+            " tracked_lists=" + std::to_string(predicate.trackedLists) +
+            " capacity_bypass=" + std::to_string(predicate.capacityBypass));
     }
     std::uint32_t Fallback(ffx::DispatchFn original, void** context, const ffx::UpscaleDispatch* desc,
                            const char* reason, bool direct = false) {
@@ -433,7 +449,9 @@ public:
             code[i] = {LockResource(loaded), SizeofResource(selfModule, resource)};
         }
         shaders.InitializeBytecode(device.Get(), code);
-        lifetime.Initialize(device.Get(), commands, &LifetimeLog);
+        predication.Initialize(commands);
+        lifetime.Initialize(device.Get(), commands, &LifetimeLog, &PredicationTracker::ResetObserver, &predication);
+        Log("event=predication_mode admission=observed_disabled_only active_or_unknown=skip_nr preserve_before_ffx=true scale100_covered=false");
         admittedContext = context; admittedContextValue = context ? *context : nullptr;
         admittedExtent = plan.input;
         Log("event=adapter_ready input_width=" + std::to_string(plan.input.width) +
@@ -576,6 +594,7 @@ public:
             if (count == 1 || count % 120 == 0)
                 Log(std::string("event=fallback reason=") + reason);
         }
+        if (frame.predication) frame.predication->Restore();
         frame.result = frame.original(frame.context, &dispatch.header);
         return frame.result;
     }
@@ -611,19 +630,48 @@ std::uint32_t __fastcall HelperHook(ffx::DispatchFn original, void** context, co
     auto* commands = static_cast<ID3D12GraphicsCommandList*>(desc->commandList);
     const auto plan = cmp::make_scale_plan({desc->renderSize.width, desc->renderSize.height}, app->scale);
     if (!plan.scaled) return app->Fallback(original, context, desc, "extent_not_scaled");
-    Slot* slot = nullptr;
+    const auto admissionError = [](const std::exception& error) {
+        const auto deferred = ++app->admissionDeferred;
+        if (deferred == 1 || deferred % 120 == 0)
+            Log(std::string("event=admission_deferred reason=") + error.what());
+        if (app->lifetime.HasUnknownUse()) app->failed.store(true);
+    };
+    bool initializationFailed = false;
     try {
         if (!app->device) app->Initialize(commands, context, plan);
-        if (context != app->admittedContext || *context != app->admittedContextValue)
-            return app->Fallback(original, context, desc, "context_changed");
-        if (plan.input.width != app->admittedExtent.width || plan.input.height != app->admittedExtent.height)
-            return app->Fallback(original, context, desc, "render_extent_changed");
-        if (commands->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT || !app->lifetime.Covers(commands) ||
-            !SameDevice(commands, app->device.Get()) ||
-            !SameDevice(Resource(desc->color), app->device.Get()) ||
-            !SameDevice(Resource(desc->depth), app->device.Get()) ||
-            !SameDevice(Resource(desc->motionVectors), app->device.Get()))
-            return app->Fallback(original, context, desc, "device_or_tracking_changed");
+    } catch (const std::exception& error) {
+        admissionError(error); initializationFailed = true;
+    }
+    // Real FFX callbacks stay outside our catches, even on admission rejection.
+    if (initializationFailed)
+        return app->Fallback(original, context, desc, "scratch_or_lifetime_unavailable");
+    if (context != app->admittedContext || *context != app->admittedContextValue)
+        return app->Fallback(original, context, desc, "context_changed");
+    if (plan.input.width != app->admittedExtent.width || plan.input.height != app->admittedExtent.height)
+        return app->Fallback(original, context, desc, "render_extent_changed");
+    if (commands->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT || !app->lifetime.Covers(commands) ||
+        !SameDevice(commands, app->device.Get()) ||
+        !SameDevice(Resource(desc->color), app->device.Get()) ||
+        !SameDevice(Resource(desc->depth), app->device.Get()) ||
+        !SameDevice(Resource(desc->motionVectors), app->device.Get()))
+        return app->Fallback(original, context, desc, "device_or_tracking_changed");
+
+    // Registration precedes both Begin() and all private GPU recording. An
+    // unknown first recording can therefore become known at its next real Reset.
+    PredicationScope predicate(app->predication, commands);
+    if (!predicate.Admitted()) {
+        const char* reason = "caller_predication_untracked";
+        if (predicate.State() == PredicationState::Unknown) {
+            ++app->predicateUnknown; reason = "caller_predication_unknown";
+        } else if (predicate.State() == PredicationState::Active) {
+            ++app->predicateActive; reason = "caller_predication_active";
+        } else ++app->predicateUntracked;
+        return app->Fallback(original, context, desc, reason);
+    }
+    ++app->predicateAdmitted;
+    Slot* slot = nullptr;
+    bool acquisitionFailed = false;
+    try {
         slot = &app->Acquire(plan);
         slot->use = app->lifetime.Begin(commands);
         slot->use->borrowed.reserve(8);
@@ -632,14 +680,16 @@ std::uint32_t __fastcall HelperHook(ffx::DispatchFn original, void** context, co
         for (const auto* resource : resources)
             if (resource->resource) slot->use->borrowed.emplace_back(Resource(*resource));
     } catch (const std::exception& error) {
-        const auto deferred = ++app->admissionDeferred;
-        if (deferred == 1 || deferred % 120 == 0)
-            Log(std::string("event=admission_deferred reason=") + error.what());
-        if (app->lifetime.HasUnknownUse()) app->failed.store(true);
+        admissionError(error); acquisitionFailed = true;
+    }
+    if (acquisitionFailed) {
+        predicate.Restore();
         return app->Fallback(original, context, desc, "scratch_or_lifetime_unavailable");
     }
     Frame frame{slot, original, context, *desc, plan};
+    frame.predication = &predicate;
     FrameGuard scope(&frame);
+    const char* recordFailure = nullptr;
     try {
         auto low = *desc;
         low.color = AdaptResource(desc->color, slot->baseline.Get(), plan.neural, ffx::FormatRgba16Float);
@@ -657,17 +707,20 @@ std::uint32_t __fastcall HelperHook(ffx::DispatchFn original, void** context, co
         if (!frame.called) {
             app->failed.store(true);
             Log("event=adapter_disabled reason=verified_helper_did_not_invoke_callback");
-            return app->Fallback(original, context, desc, "missing_callback", true);
+            recordFailure = "missing_callback";
+        } else {
+            app->Stats();
+            return result;
         }
-        app->Stats();
-        return result;
     } catch (const std::exception& error) {
         app->failed.store(true);
         Log(std::string("event=adapter_disabled reason=") + error.what());
         // Never dispatch FSR twice if it threw after the callback was entered.
         if (frame.called) throw;
-        return app->Fallback(original, context, desc, "record_exception", true);
+        recordFailure = "record_exception";
     }
+    predicate.Restore();
+    return app->Fallback(original, context, desc, recordFailure, true);
 }
 
 DWORD WINAPI Worker(void*) {

@@ -15,10 +15,13 @@ void* Method(void* object, unsigned index) { return (*reinterpret_cast<void***>(
 }
 void RecordingLifetime::Report(const char* message) noexcept { if (log_) log_(message); }
 
-void RecordingLifetime::Initialize(ID3D12Device* device, ID3D12GraphicsCommandList* firstList, LogFn log) {
+void RecordingLifetime::Initialize(ID3D12Device* device, ID3D12GraphicsCommandList* firstList, LogFn log,
+                                   ResetObserverFn observer, void* observerContext) {
     if (instance_) throw std::runtime_error("Recording lifetime initialized twice");
     device_ = device;
     log_ = log;
+    resetObserver_ = observer;
+    resetObserverContext_ = observerContext;
     D3D12_COMMAND_QUEUE_DESC desc{};
     desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
     ComPtr<ID3D12CommandQueue> probe;
@@ -89,6 +92,9 @@ HRESULT RecordingLifetime::Reset(ID3D12GraphicsCommandList* list, ID3D12CommandA
     if (SUCCEEDED(result)) {
         for (auto& weak : uses_) if (auto use = weak.lock(); use && use->commands.Get() == list) use->sealed = true;
     }
+    // Observer only takes its own tracker lock and never calls back into lifetime
+    // admission. It also watches lists with no RecordingUse (first-frame bypass).
+    if (resetObserver_) resetObserver_(resetObserverContext_, list, result);
     return result;
 }
 void RecordingLifetime::Execute(ID3D12CommandQueue* queue, UINT n, ID3D12CommandList* const* lists) {

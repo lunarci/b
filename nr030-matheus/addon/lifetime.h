@@ -36,7 +36,9 @@ struct RecordingUse {
 class RecordingLifetime {
 public:
     using LogFn = void(*)(const char*);
-    void Initialize(ID3D12Device* device, ID3D12GraphicsCommandList* firstList, LogFn log);
+    using ResetObserverFn = void(*)(void*, ID3D12GraphicsCommandList*, HRESULT) noexcept;
+    void Initialize(ID3D12Device* device, ID3D12GraphicsCommandList* firstList, LogFn log,
+                    ResetObserverFn observer = nullptr, void* observerContext = nullptr);
     bool Covers(ID3D12GraphicsCommandList* list) const noexcept;
     std::shared_ptr<RecordingUse> Begin(ID3D12GraphicsCommandList* list);
     bool Reusable(const std::shared_ptr<RecordingUse>& use);
@@ -61,5 +63,7 @@ private:
     std::vector<std::weak_ptr<RecordingUse>> uses_;
     std::atomic<bool> failed_{false};
     LogFn log_ = nullptr;
+    ResetObserverFn resetObserver_ = nullptr;
+    void* resetObserverContext_ = nullptr;
 };
 } // namespace nr030
