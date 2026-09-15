@@ -1,8 +1,8 @@
-name: Verify original-color installer without prior record
+name: Verify automatic Effect-zero setup and restore
 
 on:
   push:
-    branches: [nr030-original-color-record-fix]
+    branches: [nr030-original-color-effect-setup]
     paths:
       - nr030-matheus/**
       - .github/workflows/test-nr030-original-color-record.yml
@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Exercise installed-file adoption and exact restore in Windows PowerShell 5.1
+      - name: Exercise automatic Effect zero and native INI reading in Windows PowerShell 5.1
         run: |
           & powershell.exe -NoProfile -ExecutionPolicy Bypass -File nr030-matheus/package/Test-Original-Color-Control.ps1
           if ($LASTEXITCODE -ne 0) { throw "Original-color control tests failed: $LASTEXITCODE" }
@@ -31,22 +31,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh run download 34982267399 --repo lunarci/b --name Matheus-NR030-original-color-test-17 --dir build/original-color-base
+          gh run download 34983687040 --repo lunarci/b --name OriginalColor-record-fix-package --dir build/original-color-base
           if ($LASTEXITCODE -ne 0) { throw "Pinned prior artifact download failed: $LASTEXITCODE" }
       - name: Assemble corrected installer with the exact previous ASI
         run: |
-          python nr030-matheus/tools/Build-OriginalColor-RecordFix.py --base-zip build/original-color-base/Matheus_NR030_OriginalColor_Test.zip --source-root nr030-matheus --control-source-commit $env:GITHUB_SHA --run-id $env:GITHUB_RUN_ID --output build/Matheus_NR030_OriginalColor_RecordFix.zip
+          python nr030-matheus/tools/Build-OriginalColor-RecordFix.py --base-zip build/original-color-base/Matheus_NR030_OriginalColor_RecordFix.zip --source-root nr030-matheus --control-source-commit $env:GITHUB_SHA --run-id $env:GITHUB_RUN_ID --output build/Matheus_NR030_OriginalColor_AutoSetup.zip
           if ($LASTEXITCODE -ne 0) { throw "Record-fix package build failed: $LASTEXITCODE" }
       - name: Upload Windows control evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: OriginalColor-record-fix-evidence
+          name: OriginalColor-auto-effect-evidence
           path: nr030-matheus/package/test-results/original-color-control-tests.json
           if-no-files-found: warn
       - name: Upload corrected installation package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: OriginalColor-record-fix-package
-          path: build/Matheus_NR030_OriginalColor_RecordFix.zip
+          name: OriginalColor-auto-effect-package
+          path: build/Matheus_NR030_OriginalColor_AutoSetup.zip
           if-no-files-found: error

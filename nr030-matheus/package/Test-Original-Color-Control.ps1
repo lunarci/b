@@ -10,6 +10,20 @@ function Assert-Stopped { if ($script:OriginalColorTestRunning) { throw 'Close C
 $fixtureRoot=Join-Path ([IO.Path]::GetTempPath()) ('OriginalColorTests-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $fixtureRoot | Out-Null
 $results=New-Object 'System.Collections.Generic.List[object]'
+$script:NativeEffectApiVerified=$false
+if ($env:OS -ceq 'Windows_NT') {
+    Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+using System.Text;
+public static class OriginalColorNativeIni {
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, EntryPoint="GetPrivateProfileStringW")]
+    public static extern uint ReadString(string section, string key, string fallback, StringBuilder value, uint capacity, string path);
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, EntryPoint="GetPrivateProfileIntW")]
+    public static extern uint ReadInt(string section, string key, int fallback, string path);
+}
+'@
+}
+
 function Assert-TrialTest([bool]$Condition,[string]$Message) { if (-not $Condition) { throw ('ASSERTION: '+$Message) } }
 function Assert-TrialThrows([scriptblock]$Code,[string]$Pattern) {
     $failure=$null;try { & $Code | Out-Null } catch { $failure=$_ }
@@ -101,12 +115,17 @@ try {
         Invoke-OriginalColorControl $f.Paths Apply
         foreach ($folder in @($f.Paths.Plugins,$f.Paths.OldPlugins)) {
             $path=Join-Path $folder 'MatheusNR030.ini'
-            Write-Text $path ([IO.File]::ReadAllText($path).Replace('EffectPercent=0','EffectPercent=25'))
+            Write-Text $path ([IO.File]::ReadAllText($path).Replace('EffectPercent=0','EffectPercent=25').Replace('LumaStabilityPercent=100','LumaStabilityPercent=42'))
         }
         $opti=Join-Path $f.Paths.Bin 'OptiScaler.ini';[IO.File]::AppendAllText($opti,"; later user change`n",[Text.Encoding]::Unicode)
         $before=Get-OriginalColorSnapshot $f.Paths
         Remove-Item -LiteralPath $f.Payload
         Invoke-OriginalColorControl $f.Paths Restore
+        foreach ($folder in @($f.Paths.Plugins,$f.Paths.OldPlugins)) {
+            $path=Join-Path $folder 'MatheusNR030.ini';$text=[IO.File]::ReadAllText($path)
+            Assert-TrialTest ((Read-IniValue $text 'MatheusNR030' 'EffectPercent') -ceq '0' -and (Read-IniValue $text 'MatheusNR030' 'LumaStabilityPercent') -ceq '42') 'Effect restore lost a later unrelated edit.'
+            $before[$path]=Get-Hash $path
+        }
         Assert-TrialUnrelated $f.Paths $before
         Assert-TrialTest ((Get-Hash $f.Paths.State) -ceq $originalState) 'Original state bytes changed.'
         Assert-OwnedFiles $f.Paths (Read-AddonState $f.Paths) -AllowModifiedIni
@@ -114,7 +133,7 @@ try {
     Run-TrialCase 'wrong-settings-base-hash-unowned-or-modified-addon-block-before-writes' {
         param($f)
         $ini=Join-Path $f.Paths.OldPlugins 'MatheusNR030.ini';$text=[IO.File]::ReadAllText($ini)
-        foreach ($edit in @(@('EffectPercent=0','EffectPercent=50'),@('ScalePercent=85','ScalePercent=100'),@('Enabled=1','Enabled=0'))) {
+        foreach ($edit in @(@('ScalePercent=85','ScalePercent=100'),@('Enabled=1','Enabled=0'))) {
             Write-Text $ini ($text.Replace($edit[0],$edit[1]));$before=Get-OriginalColorSnapshot $f.Paths
             Assert-TrialThrows { Invoke-OriginalColorControl $f.Paths Apply } 'Trial requires';Assert-OriginalColorSnapshot $f.Paths $before
         }
@@ -257,9 +276,109 @@ try {
         param($f)
         $before=Get-OriginalColorSnapshot $f.Paths
         Invoke-OriginalColorControl $f.Paths Apply
-        $state=Read-AddonState $f.Paths;$state.OriginalColorTrial.PSObject.Properties.Remove('OriginalStateExisted');Write-Json $f.Paths.State $state
+        $state=Read-AddonState $f.Paths;$state.OriginalColorTrial.PSObject.Properties.Remove('OriginalStateExisted');$state.OriginalColorTrial.PSObject.Properties.Remove('EffectFiles');Write-Json $f.Paths.State $state
         Invoke-OriginalColorControl $f.Paths Restore
         Assert-OriginalColorSnapshot $f.Paths $before
+    }
+    Run-TrialCase 'effect-positive-values-and-missing-state-restore-independent-originals' {
+        param($f)
+        $primary=Join-Path $f.Paths.Plugins 'MatheusNR030.ini';$shadow=Join-Path $f.Paths.OldPlugins 'MatheusNR030.ini'
+        Write-Text $primary ([IO.File]::ReadAllText($primary).Replace('EffectPercent=0','EffectPercent=50'))
+        Write-Text $shadow ([IO.File]::ReadAllText($shadow).Replace('EffectPercent=0','EffectPercent=100'))
+        Remove-Item -LiteralPath $f.Paths.State
+        $before=Get-OriginalColorSnapshot $f.Paths;$protected=Get-ProtectedSnapshot $f.Paths
+        Invoke-OriginalColorControl $f.Paths Apply
+        foreach ($path in @($primary,$shadow)) { Assert-TrialTest (Get-OriginalColorEffect ([IO.File]::ReadAllText($path))).NativeZero 'Effect was not set to native-readable zero.' }
+        Assert-SnapshotUnchanged $f.Paths $protected
+        $trial=(Read-AddonState $f.Paths).OriginalColorTrial
+        Assert-TrialTest ($trial.EffectFiles[0].EffectValue -ceq '50' -and $trial.EffectFiles[1].EffectValue -ceq '100') 'Independent original Effects were lost.'
+        $active=Get-OriginalColorSnapshot $f.Paths
+        Invoke-OriginalColorControl $f.Paths Apply;Assert-OriginalColorSnapshot $f.Paths $active
+        Write-Text $primary ([IO.File]::ReadAllText($primary).Replace('EffectPercent=0','EffectPercent=25'))
+        Assert-TrialThrows { Invoke-OriginalColorControl $f.Paths Apply } 'EffectPercent changed after.*Run Restore, then Apply'
+        Invoke-OriginalColorControl $f.Paths Restore;Assert-OriginalColorSnapshot $f.Paths $before
+    }
+    Run-TrialCase 'effect-missing-or-empty-key-restores-original-presence' {
+        param($f)
+        $primary=Join-Path $f.Paths.Plugins 'MatheusNR030.ini';$shadow=Join-Path $f.Paths.OldPlugins 'MatheusNR030.ini'
+        Write-Text $primary ([IO.File]::ReadAllText($primary).Replace("EffectPercent=0`r`n",''))
+        Write-Text $shadow ([IO.File]::ReadAllText($shadow).Replace('EffectPercent=0','EffectPercent='))
+        Remove-Item -LiteralPath $f.Paths.State
+        $before=Get-OriginalColorSnapshot $f.Paths
+        Invoke-OriginalColorControl $f.Paths Apply
+        foreach ($path in @($primary,$shadow)) { Assert-TrialTest (Get-OriginalColorEffect ([IO.File]::ReadAllText($path))).NativeZero 'Missing/empty Effect was not set to zero.' }
+        $trial=(Read-AddonState $f.Paths).OriginalColorTrial
+        Assert-TrialTest (-not $trial.EffectFiles[0].EffectPresent -and $trial.EffectFiles[1].EffectPresent) 'Original key presence was not retained.'
+        Invoke-OriginalColorControl $f.Paths Restore;Assert-OriginalColorSnapshot $f.Paths $before
+    }
+    Run-TrialCase 'effect-restore-preserves-later-unrelated-ini-edits' {
+        param($f)
+        $primary=Join-Path $f.Paths.Plugins 'MatheusNR030.ini';$shadow=Join-Path $f.Paths.OldPlugins 'MatheusNR030.ini'
+        Write-Text $primary ([IO.File]::ReadAllText($primary).Replace('EffectPercent=0','EffectPercent=50'))
+        Write-Text $shadow ([IO.File]::ReadAllText($shadow).Replace("EffectPercent=0`r`n",''))
+        Invoke-OriginalColorControl $f.Paths Apply
+        foreach ($path in @($primary,$shadow)) {
+            Write-Text $path ([IO.File]::ReadAllText($path).Replace('LumaStabilityPercent=100','LumaStabilityPercent=37').Replace('EffectPercent=0','EffectPercent=25')+"; retain this later note`n")
+        }
+        Invoke-OriginalColorControl $f.Paths Restore
+        foreach ($path in @($primary,$shadow)) {
+            $text=[IO.File]::ReadAllText($path)
+            Assert-TrialTest ((Read-IniValue $text 'MatheusNR030' 'LumaStabilityPercent') -ceq '37' -and $text.Contains('; retain this later note')) 'Later unrelated user changes were discarded.'
+            Assert-TrialTest ((Read-IniValue $text 'MatheusNR030' 'ScalePercent') -ceq '85') 'NR input scale changed.'
+        }
+        Assert-TrialTest ((Get-OriginalColorEffect ([IO.File]::ReadAllText($primary))).Value -ceq '50') 'Primary original Effect not restored.'
+        Assert-TrialTest (-not (Get-OriginalColorEffect ([IO.File]::ReadAllText($shadow))).Present) 'Originally absent Effect key was not removed.'
+    }
+    Run-TrialCase 'effect-ini-and-state-write-failures-rollback-whole-transaction' {
+        param($f)
+        foreach ($folder in @($f.Paths.Plugins,$f.Paths.OldPlugins)) {
+            $path=Join-Path $folder 'MatheusNR030.ini';Write-Text $path ([IO.File]::ReadAllText($path).Replace('EffectPercent=0','EffectPercent=50'))
+        }
+        Remove-Item -LiteralPath $f.Paths.State;$before=Get-OriginalColorSnapshot $f.Paths
+        foreach ($failureIndex in @(2,3,4)) {
+            $inject={ param($index) if ($index -eq $failureIndex) { throw 'injected Effect apply failure' } }.GetNewClosure()
+            Assert-TrialThrows { Invoke-OriginalColorControl $f.Paths Apply $inject } 'injected Effect apply failure';Assert-OriginalColorSnapshot $f.Paths $before
+        }
+        Invoke-OriginalColorControl $f.Paths Apply;$active=Get-OriginalColorSnapshot $f.Paths
+        foreach ($failureIndex in @(2,3,4)) {
+            $inject={ param($index) if ($index -eq $failureIndex) { throw 'injected Effect restore failure' } }.GetNewClosure()
+            Assert-TrialThrows { Invoke-OriginalColorControl $f.Paths Restore $inject } 'injected Effect restore failure';Assert-OriginalColorSnapshot $f.Paths $active
+        }
+        Invoke-OriginalColorControl $f.Paths Restore;Assert-OriginalColorSnapshot $f.Paths $before
+    }
+    Run-TrialCase 'effect-duplicate-key-stops-before-any-write' {
+        param($f)
+        $path=Join-Path $f.Paths.OldPlugins 'MatheusNR030.ini'
+        Write-Text $path ([IO.File]::ReadAllText($path)+"EffectPercent=100`n")
+        Remove-Item -LiteralPath $f.Paths.State;$before=Get-OriginalColorSnapshot $f.Paths
+        Assert-TrialThrows { Invoke-OriginalColorControl $f.Paths Apply } 'Ambiguous duplicate INI key.*EffectPercent'
+        Assert-OriginalColorSnapshot $f.Paths $before
+    }
+    Run-TrialCase 'effect-native-windows-parser-reads-zero-across-encodings' {
+        param($f)
+        $path=Join-Path $f.Paths.Plugins 'MatheusNR030.ini'
+        $cases=@(
+            [pscustomobject]@{Name='ascii50';Encoding=[Text.Encoding]::ASCII;Value='50'},
+            [pscustomobject]@{Name='utf8-bom-first-section-zero';Encoding=(New-Object Text.UTF8Encoding($true));Value='0'},
+            [pscustomobject]@{Name='utf8-bom50-inline';Encoding=(New-Object Text.UTF8Encoding($true));Value='50 ; original comment'},
+            [pscustomobject]@{Name='utf16-le-zero-inline';Encoding=[Text.Encoding]::Unicode;Value='0 ; original comment'},
+            [pscustomobject]@{Name='utf16-be100';Encoding=[Text.Encoding]::BigEndianUnicode;Value='100'}
+        )
+        foreach ($case in $cases) {
+            [IO.File]::WriteAllText($path,("[MatheusNR030]`r`nEnabled=1`r`nScalePercent=85`r`nEffectPercent="+$case.Value+"`r`nLumaStabilityPercent=100`r`n"),$case.Encoding)
+            $before=Get-OriginalColorSnapshot $f.Paths
+            Invoke-OriginalColorControl $f.Paths Apply
+            Assert-TrialTest (Get-OriginalColorEffect ([IO.File]::ReadAllText($path))).NativeZero ('Noncanonical Effect after '+$case.Name)
+            if ($env:OS -ceq 'Windows_NT') {
+                $buffer=New-Object Text.StringBuilder 256
+                $null=[OriginalColorNativeIni]::ReadString('MatheusNR030','EffectPercent','__MISSING__',$buffer,256,$path)
+                Assert-TrialTest ($buffer.ToString() -ceq '0') ('Native string parser did not read literal zero for '+$case.Name+': '+$buffer.ToString())
+                Assert-TrialTest ([OriginalColorNativeIni]::ReadInt('MatheusNR030','EffectPercent',9876,$path) -eq 0) ('Native integer parser did not read zero for '+$case.Name)
+                Assert-TrialTest ([OriginalColorNativeIni]::ReadInt('MatheusNR030','ScalePercent',9876,$path) -eq 85) ('Native scale changed for '+$case.Name)
+            }
+            Invoke-OriginalColorControl $f.Paths Restore;Assert-OriginalColorSnapshot $f.Paths $before
+        }
+        if ($env:OS -ceq 'Windows_NT') { $script:NativeEffectApiVerified=$true }
     }
     Run-TrialCase 'running-game-and-corrupt-payload-block-and-status-is-read-only' {
         param($f)
@@ -276,7 +395,7 @@ try {
     Set-Item Function:\Assert-Stopped $originalStopped
     Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
-$report=[pscustomobject]@{SchemaVersion=1;Component='OriginalColorControl';PowerShellVersion=$PSVersionTable.PSVersion.ToString();NativeWindows=($env:OS -ceq 'Windows_NT');WindowsPowerShell51=($env:OS -ceq 'Windows_NT' -and $PSVersionTable.PSVersion.Major -eq 5 -and $PSVersionTable.PSVersion.Minor -eq 1);Passed=@($results | Where-Object { $_.Status -ceq 'PASS' }).Count;Failed=@($results | Where-Object { $_.Status -ceq 'FAIL' }).Count;TestCount=$results.Count;Tests=@($results.ToArray());GameplayVisualQualityVerified=$false}
+$report=[pscustomobject]@{SchemaVersion=1;Component='OriginalColorControl';PowerShellVersion=$PSVersionTable.PSVersion.ToString();NativeWindows=($env:OS -ceq 'Windows_NT');WindowsPowerShell51=($env:OS -ceq 'Windows_NT' -and $PSVersionTable.PSVersion.Major -eq 5 -and $PSVersionTable.PSVersion.Minor -eq 1);NativeEffectApiVerified=$script:NativeEffectApiVerified;Passed=@($results | Where-Object { $_.Status -ceq 'PASS' }).Count;Failed=@($results | Where-Object { $_.Status -ceq 'FAIL' }).Count;TestCount=$results.Count;Tests=@($results.ToArray());GameplayVisualQualityVerified=$false}
 $output=Join-Path $componentRoot 'test-results';New-Item -ItemType Directory -Path $output -Force | Out-Null
 Write-Json (Join-Path $output 'original-color-control-tests.json') $report
 Write-Host ('Original-color control tests: '+$report.Passed+' passed, '+$report.Failed+' failed.')

@@ -50,9 +50,90 @@ function Get-OriginalColorTargets($Paths) {
     }
     return $targets
 }
+function Get-OriginalColorEffectTargets($Paths) {
+    foreach ($folder in @($Paths.Plugins,$Paths.OldPlugins)) {
+        $path=Join-Path $folder 'MatheusNR030.ini';Assert-NoReparse $path
+        if (-not (Test-Path -LiteralPath $path)) {
+            if (Same-Path $folder $Paths.Plugins) { throw ('Existing primary INI is required: '+$path) }
+            continue
+        }
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw ('INI path is not a file: '+$path) }
+        $path
+    }
+}
+function Get-OriginalColorEffect([string]$Text) {
+    if ([regex]::Matches($Text,'(?im)^\s*\[MatheusNR030\]\s*(?:[;#][^\r\n]*)?\r?$').Count -ne 1) { throw 'Exactly one [MatheusNR030] section is required.' }
+    $value=Read-IniValue $Text 'MatheusNR030' 'EffectPercent'
+    $inside=$false;$raw=$null
+    foreach ($line in [regex]::Split($Text,'\r?\n')) {
+        if ($line -match '^\s*\[([^\]]+)\]') { $inside=($matches[1] -ieq 'MatheusNR030');continue }
+        if ($inside -and $line -match '^\s*EffectPercent\s*=\s*(.*)$') { $raw=$matches[1].Trim() }
+    }
+    [pscustomobject]@{Present=($null -ne $value);Value=$value;NativeZero=($null -ne $raw -and $raw -ceq '0')}
+}
+function Test-OriginalColorIniNativeReady([string]$Path,[string]$Text) {
+    $bytes=[IO.File]::ReadAllBytes($Path)
+    if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xfe -and $bytes[1] -eq 0xff) { return $false }
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xef -and $bytes[1] -eq 0xbb -and $bytes[2] -eq 0xbf -and
+        $Text -match '^\s*\[MatheusNR030\]') { return $false }
+    return $true
+}
+function Set-OriginalColorEffectText([string]$Text,[bool]$Present,[AllowNull()][string]$Value) {
+    $setting=Get-OriginalColorEffect $Text
+    if ($setting.Present -eq $Present -and (-not $Present -or ($setting.Value -ceq $Value -and ($Value -cne '0' -or $setting.NativeZero)))) { return $Text }
+    $newline="`r`n";if ($Text.Contains("`n") -and -not $Text.Contains("`r`n")) { $newline="`n" }
+    $inside=$false;$result=New-Object Text.StringBuilder
+    foreach ($match in [regex]::Matches($Text,'[^\r\n]*(?:\r\n|\n|\r|$)')) {
+        if (-not $match.Length) { continue }
+        $line=$match.Value;$body=$line.TrimEnd([char[]]"`r`n");$ending=$line.Substring($body.Length)
+        if ($body -match '^\s*\[([^\]]+)\]') {
+            $inside=($matches[1] -ieq 'MatheusNR030')
+            if ($inside -and $Present -and -not $setting.Present) {
+                if (-not $ending) { $ending=$newline }
+                $null=$result.Append($body+$ending+'EffectPercent='+$Value+$newline);continue
+            }
+        } elseif ($inside -and $body -match '^(\s*EffectPercent\s*=\s*)([^;#]*?)(\s*(?:[;#].*)?)$') {
+            if ($Present) { $null=$result.Append($matches[1]+$Value+$ending) }
+            continue
+        }
+        $null=$result.Append($line)
+    }
+    return $result.ToString()
+}
+function Write-OriginalColorIni([string]$Source,[string]$Destination,[string]$Text) {
+    $bytes=[IO.File]::ReadAllBytes($Source)
+    $hasBom=($bytes.Length -ge 2 -and (($bytes[0] -eq 0xff -and $bytes[1] -eq 0xfe) -or ($bytes[0] -eq 0xfe -and $bytes[1] -eq 0xff))) -or
+        ($bytes.Length -ge 3 -and $bytes[0] -eq 0xef -and $bytes[1] -eq 0xbb -and $bytes[2] -eq 0xbf)
+    # Native profile APIs reliably recognize UTF-16LE. Retain plain ASCII /
+    # UTF-8 without a BOM; normalize Unicode/BOM forms to UTF-16LE when edited.
+    # The exact original byte stream remains in its verified backup.
+    $encoding=New-Object Text.UTF8Encoding($false)
+    if ($hasBom) { $encoding=[Text.Encoding]::Unicode }
+    [IO.File]::WriteAllText($Destination,$Text,$encoding)
+}
+function Read-OriginalColorEffects($Paths,$Trial) {
+    $property=$Trial.PSObject.Properties['EffectFiles']
+    if ($null -eq $property) { return @() }
+    $records=@($property.Value);$targets=@(Get-OriginalColorEffectTargets $Paths);$seen=@{}
+    if ($records.Count -ne $targets.Count) { throw 'Effect INI inventory changed after trial application.' }
+    for ($index=0;$index -lt $records.Count;$index++) {
+        $record=$records[$index];$path=Full-Path ([string](Get-Value $record 'Path'))
+        if (-not @($targets | Where-Object { Same-Path $_ $path }).Count -or $seen.ContainsKey($path)) { throw 'Unowned or duplicate Effect INI path.' }
+        $seen[$path]=$true;$backup=Join-Path $Trial.BackupFolder ('original-effect-'+$index+'.ini')
+        if (-not (Same-Path ([string](Get-Value $record 'Backup')) $backup) -or [string](Get-Value $record 'BeforeHash') -notmatch '^[0-9a-f]{64}$' -or
+            [string](Get-Value $record 'InstalledHash') -notmatch '^[0-9a-f]{64}$' -or (Get-Value $record 'EffectPresent') -isnot [bool]) { throw 'Invalid original Effect INI backup record.' }
+        Assert-NoReparse $backup
+        if (-not (Test-Path -LiteralPath $backup -PathType Leaf) -or (Get-Hash $backup) -cne $record.BeforeHash) { throw 'Original Effect INI backup is missing or changed.' }
+        $original=Get-OriginalColorEffect ([IO.File]::ReadAllText($backup))
+        if ($original.Present -ne $record.EffectPresent -or $original.Value -cne (Get-Value $record 'EffectValue')) { throw 'Original Effect value does not match its backup.' }
+        $null=Get-OriginalColorEffect ([IO.File]::ReadAllText($path))
+    }
+    return $records
+}
 function Assert-OriginalColorApplySettings($Paths) {
+    $issues=New-Object 'System.Collections.Generic.List[string]'
     foreach ($definition in @(
-        [pscustomobject]@{Name='MatheusNR030.ini';Section='MatheusNR030';Pairs=@(@('Enabled','1'),@('ScalePercent','85'),@('EffectPercent','0'))},
+        [pscustomobject]@{Name='MatheusNR030.ini';Section='MatheusNR030';Pairs=@(@('Enabled','1'),@('ScalePercent','85'))},
         [pscustomobject]@{Name='dlssnr_on_amd.ini';Section='DlssNrOnAmd';Pairs=@(@('Enabled','1'),@('PreUpscale','1'),@('Async','0'))}
     )) {
         foreach ($folder in @($Paths.Plugins,$Paths.OldPlugins)) {
@@ -64,7 +145,7 @@ function Assert-OriginalColorApplySettings($Paths) {
             $text=[IO.File]::ReadAllText($path)
             foreach ($pair in $definition.Pairs) {
                 if ((Read-IniValue $text $definition.Section $pair[0]) -cne $pair[1]) {
-                    throw ('Trial requires ['+$definition.Section+'] '+$pair[0]+'='+$pair[1]+' in '+$path+'. Existing settings were not changed.')
+                    $issues.Add('['+$definition.Section+'] '+$pair[0]+'='+$pair[1]+' required in '+$path)
                 }
             }
         }
@@ -77,8 +158,10 @@ function Assert-OriginalColorApplySettings($Paths) {
         }
         if ((Get-Hash $path) -cne $script:ExpectedNrHash) { throw ('Pinned base NR hash mismatch: '+$path) }
     }
-    # Deliberately do not call Assert-Base: its historical 4X gate is not a
-    # requirement of this trial. No OptiScaler, XeFG or INI value is written.
+    foreach ($path in @(Get-OriginalColorEffectTargets $Paths)) { $null=Get-OriginalColorEffect ([IO.File]::ReadAllText($path)) }
+    if ($issues.Count) { throw ('Trial requires compatible unchanged NR settings: '+($issues -join '; ')+'. No files were changed.') }
+    # Do not call the historical 4X-only Assert-Base gate. Only the add-on
+    # EffectPercent setting is controlled; NR, OptiScaler and XeFG stay intact.
 }
 function Read-OriginalColorAddonState($Paths) {
     Assert-NoReparse $Paths.State
@@ -143,6 +226,7 @@ function Read-OriginalColorTrial($Paths,$State) {
         if ((Get-Hash $path) -cne $trial.TargetHash) { throw ('Trial ASI is missing or changed: '+$path) }
     }
     if ((@($State.Files | Where-Object { $_.Name -ceq 'MatheusNR030.asi' })[0].InstalledHash) -cne $trial.TargetHash) { throw 'Trial ASI ownership is inconsistent.' }
+    $null=@(Read-OriginalColorEffects $Paths $trial)
     return $trial
 }
 function Show-OriginalColorStatus($Paths) {
@@ -154,7 +238,7 @@ function Show-OriginalColorStatus($Paths) {
     $trial=Read-OriginalColorTrial $Paths $state
     if ($null -eq $trial) { Write-Host 'Original-color diagnostic trial is not active.' }
     else { Write-Host ('Original-color diagnostic ASI is installed; SHA-256='+$trial.TargetHash+'. Runtime and visual quality are unverified.') }
-    Write-Host 'This control changes add-on ASI files only. INI settings, base NR, OptiScaler and XeFG are preserved.'
+    Write-Host 'This control changes add-on ASIs and sets add-on EffectPercent=0 with a backup. Base NR, OptiScaler and XeFG are preserved.'
 }
 function Invoke-OriginalColorControl($Paths,[ValidateSet('Apply','Restore')][string]$Mode,[scriptblock]$BeforeOperation=$null) {
     Assert-Stopped;Assert-NoReparse $Paths.Root;Assert-NoReparse $Paths.Backup
@@ -175,7 +259,11 @@ function Invoke-OriginalColorControl($Paths,[ValidateSet('Apply','Restore')][str
         Assert-OriginalColorApplySettings $Paths
         if ($null -ne $trial) {
             if ($trial.TargetHash -cne $targetHash) { throw 'A different trial is already active. Restore it before applying this package.' }
-            Write-Host 'The same diagnostic trial is already installed. Original backups and all settings are preserved.';return
+            foreach ($path in @(Get-OriginalColorEffectTargets $Paths)) {
+                $effect=Get-OriginalColorEffect ([IO.File]::ReadAllText($path))
+                if (-not $effect.NativeZero -or -not (Test-OriginalColorIniNativeReady $path ([IO.File]::ReadAllText($path)))) { throw ('EffectPercent changed after the trial was applied: '+$path+'. Run Restore, then Apply to set Effect 0 while retaining the correct original backup.') }
+            }
+            Write-Host 'The same diagnostic trial is already installed with EffectPercent=0. Original backups are preserved.';return
         }
         foreach ($path in $targets) {
             if ((Get-Hash $path) -cne $script:OriginalColorBaselineHash) { throw ('Exact 0.2.4 baseline ASI is required: '+$path) }
@@ -203,14 +291,29 @@ function Invoke-OriginalColorControl($Paths,[ValidateSet('Apply','Restore')][str
         $staged=Join-Path $folder 'diagnostic.asi';Copy-Verified $payload $staged
         if ((Get-Hash $staged) -cne $targetHash) { throw 'Diagnostic payload changed while staging.' }
         $sourceHashes[$staged]=$targetHash
+        $effectRecords=@();$effectStages=@{};$effectIndex=0
+        foreach ($path in @(Get-OriginalColorEffectTargets $Paths)) {
+            $backup=Join-Path $folder ('original-effect-'+$effectIndex+'.ini');Copy-Verified $path $backup
+            $text=[IO.File]::ReadAllText($backup);$effect=Get-OriginalColorEffect $text
+            $effectStage=Join-Path $folder ('prepared-effect-'+$effectIndex+'.ini')
+            if ($effect.NativeZero -and (Test-OriginalColorIniNativeReady $backup $text)) { Copy-Verified $backup $effectStage }
+            else { Write-OriginalColorIni $backup $effectStage (Set-OriginalColorEffectText $text $true '0') }
+            $sourceHashes[$effectStage]=Get-Hash $effectStage;$effectStages[$path]=$effectStage
+            $effectRecords += [pscustomobject]@{Path=(Full-Path $path);Backup=$backup;BeforeHash=(Get-Hash $backup);InstalledHash=$sourceHashes[$effectStage];EffectPresent=$effect.Present;EffectValue=$effect.Value}
+            $effectIndex++
+        }
         $newState=Copy-OriginalColorObject $state
         (@($newState.Files | Where-Object { $_.Name -ceq 'MatheusNR030.asi' })[0]).InstalledHash=$targetHash
+        (@($newState.Files | Where-Object { $_.Name -ceq 'MatheusNR030.ini' })[0]).InstalledHash=$effectRecords[0].InstalledHash
         foreach ($entry in @(@('AddonVersion',$manifest.addon_version),@('SourceCommit',$manifest.source_commit),@('BuildRunId',$manifest.build_run_id),@('InstalledUtc',[DateTime]::UtcNow.ToString('o')),@('ManifestSha256',(Get-Hash (Join-Path $script:PackageRoot 'package-manifest.json'))))) {
             $newState | Add-Member -NotePropertyName $entry[0] -NotePropertyValue $entry[1] -Force
         }
-        $newTrial=[pscustomobject]@{SchemaVersion=1;Root=$Paths.Root;BaselineHash=$script:OriginalColorBaselineHash;TargetHash=$targetHash;BackupFolder=$folder;OriginalStateExisted=$originalStateExisted;OriginalStateBackup=$originalState;OriginalStateHash=$originalStateHash;StateCoreHash=(Get-OriginalColorJsonHash $newState);Files=$records}
+        $newTrial=[pscustomobject]@{SchemaVersion=1;Root=$Paths.Root;BaselineHash=$script:OriginalColorBaselineHash;TargetHash=$targetHash;BackupFolder=$folder;OriginalStateExisted=$originalStateExisted;OriginalStateBackup=$originalState;OriginalStateHash=$originalStateHash;StateCoreHash=(Get-OriginalColorJsonHash $newState);Files=$records;EffectFiles=$effectRecords}
         $newState | Add-Member -NotePropertyName 'OriginalColorTrial' -NotePropertyValue $newTrial
         foreach ($record in $records) { $operations.Add([pscustomobject]@{Path=$record.Path;Action='Copy';Source=$staged}) }
+        foreach ($record in $effectRecords) {
+            if ($record.InstalledHash -cne $record.BeforeHash) { $operations.Add([pscustomobject]@{Path=$record.Path;Action='Copy';Source=$effectStages[$record.Path]}) }
+        }
         $prepared=Join-Path $folder 'prepared-state.json';Write-Json $prepared $newState
         $sourceHashes[$prepared]=Get-Hash $prepared
     } else {
@@ -222,6 +325,24 @@ function Invoke-OriginalColorControl($Paths,[ValidateSet('Apply','Restore')][str
             $sourceHashes[$staged]=$record.Sha256
             $operations.Add([pscustomobject]@{Path=$record.Path;Action='Copy';Source=$staged})
             $restoreIndex++
+        }
+        $effectIndex=0
+        foreach ($record in @(Read-OriginalColorEffects $Paths $trial)) {
+            $current=[IO.File]::ReadAllText($record.Path);$original=[IO.File]::ReadAllText($record.Backup)
+            $effectStage=Join-Path $folder ('restore-effect-'+$effectIndex+'.ini')
+            $currentWithoutEffect=Set-OriginalColorEffectText $current $false $null
+            $originalWithoutEffect=Set-OriginalColorEffectText $original $false $null
+            if ((Get-Hash $record.Path) -ceq $record.InstalledHash -or $currentWithoutEffect -ceq $originalWithoutEffect) {
+                Copy-Verified $record.Backup $effectStage
+                if ((Get-Hash $effectStage) -cne $record.BeforeHash) { throw 'Original Effect INI changed while staging restore.' }
+            } else {
+                $restored=Set-OriginalColorEffectText $current $record.EffectPresent $record.EffectValue
+                if ($restored -ceq $current) { Copy-Verified $record.Path $effectStage }
+                else { Write-OriginalColorIni $record.Path $effectStage $restored }
+            }
+            $sourceHashes[$effectStage]=Get-Hash $effectStage
+            if ($sourceHashes[$effectStage] -cne (Get-Hash $record.Path)) { $operations.Add([pscustomobject]@{Path=$record.Path;Action='Copy';Source=$effectStage}) }
+            $effectIndex++
         }
         $prepared=$null
         if (Test-OriginalColorStateExisted $trial) {
@@ -255,10 +376,10 @@ function Invoke-OriginalColorControl($Paths,[ValidateSet('Apply','Restore')][str
         }
     }.GetNewClosure()
     Invoke-OwnTransaction $Paths @($operations.ToArray()) $folder $before $gate
-    if ($Mode -ceq 'Apply') { Write-Host 'Diagnostic ASI installed. Only existing add-on ASIs and their ownership record changed. This is not a verified visual fix.' }
+    if ($Mode -ceq 'Apply') { Write-Host 'Diagnostic ASI installed and add-on EffectPercent=0 prepared with verified original backups. Base NR, ScalePercent=85, OptiScaler and XeFG were preserved. This is not a verified visual fix.' }
     else {
-        if (Test-OriginalColorStateExisted $trial) { Write-Host 'Exact original add-on ASIs and ownership record restored. All INI files, including later user edits, were preserved.' }
-        else { Write-Host 'Exact original add-on ASIs restored and trial-created ownership record removed. All INI files, including later user edits, were preserved.' }
+        if (Test-OriginalColorStateExisted $trial) { Write-Host 'Exact original add-on ASIs and ownership record restored. Original Effect settings restored; other later INI edits were preserved.' }
+        else { Write-Host 'Exact original add-on ASIs restored and trial-created ownership record removed. Original Effect settings restored; other later INI edits were preserved.' }
     }
 }
 if ($MyInvocation.InvocationName -ne '.') {
