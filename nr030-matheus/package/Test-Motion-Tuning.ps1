@@ -97,6 +97,12 @@ function Assert-MotionSnapshot($Paths,$Before,[string[]]$Except=@()) {
 function Get-MotionIniPaths($Paths) {
     return @((Join-Path $Paths.Plugins 'MatheusNR030.ini'),(Join-Path $Paths.OldPlugins 'MatheusNR030.ini'))
 }
+function Read-MotionZipText($Archive,[string]$EntryName) {
+    $entry=$Archive.GetEntry($EntryName)
+    Assert-MotionTest ($null -ne $entry) ('Missing evidence entry: '+$EntryName)
+    $stream=$entry.Open();$reader=New-Object IO.StreamReader($stream)
+    try { return $reader.ReadToEnd() } finally { $reader.Dispose();$stream.Dispose() }
+}
 function Run-MotionCase([string]$Name,[scriptblock]$Code) {
     try {
         $fixture=New-MotionFixture $Name
@@ -229,7 +235,7 @@ try {
         Assert-MotionTest (Test-Path -LiteralPath $zipPath -PathType Leaf) 'Local ZIP missing.'
         $zip=[IO.Compression.ZipFile]::OpenRead($zipPath)
         try {
-            $allowed=@('inventory.json','MATHEUS_CHECK.txt')
+            $allowed=@('inventory.json','MATHEUS_CHECK.txt','COLLECTION_NOTES.txt')
             foreach ($side in @('ark','overwrite')) {
                 foreach ($name in @('OptiScaler.ini','OptiScaler.log','dlssnr_on_amd.ini','dlssnr_on_amd.log','MatheusNR030.ini','MatheusNR030.log')) { $allowed += ($side+'/'+$name) }
             }
@@ -244,6 +250,77 @@ try {
         } finally { $zip.Dispose() }
         $remaining=@(Get-ChildItem -LiteralPath (Join-Path $f.Package 'Results') -Directory)
         Assert-MotionTest ($remaining.Count -eq 0) 'Collector left temporary uncompressed evidence folders.'
+    }
+    Run-MotionCase 'collector-includes-configured-absolute-logs-and-original-provenance' {
+        param($f)
+        $sources=@{};$contents=@{};$timestamps=@{};$hashes=@{}
+        foreach ($location in @(@('ark',$f.Paths.Bin),@('overwrite',$f.Paths.OldBin))) {
+            $side=$location[0]
+            $source=Join-Path $f.Paths.Root ('OptiScaler-'+$side+'-debug.log')
+            $full="CURRENT SESSION HEADER "+$side+"`r`n"+('unfiltered configured log line'+"`r`n")*200+"FINAL SESSION TAIL "+$side+"`r`n"
+            Write-Text $source $full
+            (Get-Item -LiteralPath $source).LastWriteTimeUtc=[DateTime]::Parse('2026-09-15T13:02:00Z').ToUniversalTime()
+            $sources[$side]=$source;$contents[$side]=$full
+            $timestamps[$side]=(Get-Item -LiteralPath $source).LastWriteTimeUtc.ToString('o')
+            $hashes[$side]=Get-Hash $source
+            $ini=Join-Path $location[1] 'OptiScaler.ini'
+            Write-Text $ini ([IO.File]::ReadAllText($ini)+"`r`n[Log]`r`nLogFileName="+$source+"`r`n")
+            Write-Text (Join-Path $location[1] 'OptiScaler.log') ('OLDER DEFAULT LOG '+$side)
+        }
+        $before=Get-MotionSnapshot $f.Paths
+        Set-Item -Path Function:Check-Complete -Value {param($Paths) return 'SYNTHETIC LOCAL SUMMARY: gameplay unverified'}
+        $zipPath=Collect-MotionEvidence $f.Paths
+        Assert-MotionSnapshot $f.Paths $before
+        Assert-MotionTest ($script:MotionNetworkCalls -eq 0) 'Configured log collection attempted network access.'
+        $zip=[IO.Compression.ZipFile]::OpenRead($zipPath)
+        try {
+            $inventory=@((Read-MotionZipText $zip 'inventory.json') | ConvertFrom-Json)
+            foreach ($side in @('ark','overwrite')) {
+                $entryName='configured-'+$side+'/OptiScaler-configured.log'
+                Assert-MotionTest ((Read-MotionZipText $zip $entryName) -ceq $contents[$side]) 'Configured log header/body/tail was not copied whole.'
+                Assert-MotionTest ((Read-MotionZipText $zip ($side+'/OptiScaler.log')) -ceq ('OLDER DEFAULT LOG '+$side)) 'The default log was replaced or lost when collecting a configured path.'
+                $record=@($inventory | Where-Object { $_.Entry -ceq $entryName })
+                Assert-MotionTest ($record.Count -eq 1) 'Configured log requires exactly one inventory record.'
+                Assert-MotionTest ($record[0].Source -ceq $sources[$side]) 'Inventory lost the actual configured source path.'
+                Assert-MotionTest ($record[0].Sha256 -ceq $hashes[$side]) 'Configured log bytes differ from the recorded source hash.'
+                # PS7 deserializes ISO timestamps as DateTime; Windows PS5.1
+                # leaves them as strings. Compare their UTC instant in both.
+                $recordUtc=([DateTime]$record[0].ModifiedUtc).ToUniversalTime().ToString('o')
+                Assert-MotionTest ($recordUtc -ceq $timestamps[$side]) 'Inventory lost the original log timestamp needed to identify stale sessions.'
+                Assert-MotionTest ((Get-Hash $sources[$side]) -ceq $hashes[$side]) 'Collector changed the configured source log.'
+            }
+        } finally { $zip.Dispose() }
+    }
+    Run-MotionCase 'collector-excludes-outside-root-configured-log-and-explains-omission' {
+        param($f)
+        # A sibling beginning with MO2 also detects an unsafe string-prefix
+        # containment check: it is outside MO2 despite sharing its name prefix.
+        $outside=Join-Path $f.Root 'MO2-external-private.log'
+        $private='UNRELATED OUTSIDE LOG CONTENT MUST NEVER BE COLLECTED'
+        Write-Text $outside $private
+        $outsideHash=Get-Hash $outside
+        $ini=Join-Path $f.Paths.Bin 'OptiScaler.ini'
+        Write-Text $ini ([IO.File]::ReadAllText($ini)+"`r`n[Log]`r`nLogFileName="+$outside+"`r`n")
+        Write-Text (Join-Path $f.Paths.Bin 'OptiScaler.log') 'LOCAL DEFAULT LOG REMAINS AVAILABLE'
+        $before=Get-MotionSnapshot $f.Paths
+        Set-Item -Path Function:Check-Complete -Value {param($Paths) return 'SYNTHETIC LOCAL SUMMARY: gameplay unverified'}
+        $zipPath=Collect-MotionEvidence $f.Paths
+        Assert-MotionSnapshot $f.Paths $before
+        Assert-MotionTest ((Get-Hash $outside) -ceq $outsideHash) 'Excluded outside log was modified.'
+        Assert-MotionTest ($script:MotionNetworkCalls -eq 0) 'Outside path triggered network access.'
+        $zip=[IO.Compression.ZipFile]::OpenRead($zipPath)
+        try {
+            Assert-MotionTest ($null -eq $zip.GetEntry('configured-ark/OptiScaler-configured.log')) 'Outside-root configured log was collected.'
+            Assert-MotionTest ((Read-MotionZipText $zip 'ark/OptiScaler.log') -ceq 'LOCAL DEFAULT LOG REMAINS AVAILABLE') 'Outside path prevented collection of valid local evidence.'
+            $notes=Read-MotionZipText $zip 'COLLECTION_NOTES.txt'
+            Assert-MotionTest ($notes -match 'CONFIGURED_LOG_OUTSIDE_ROOT') 'Omitted configured log was not explicitly explained.'
+            Assert-MotionTest ($notes.Contains($outside)) 'Omission note lost the configured path needed to locate the missing runtime log.'
+            $inventory=@((Read-MotionZipText $zip 'inventory.json') | ConvertFrom-Json)
+            Assert-MotionTest (@($inventory | Where-Object { $_.Source -ceq $outside }).Count -eq 0) 'Outside file was reported as a collected source.'
+            foreach ($entry in $zip.Entries) {
+                Assert-MotionTest (-not (Read-MotionZipText $zip $entry.FullName).Contains($private)) 'Outside log content leaked into the evidence ZIP.'
+            }
+        } finally { $zip.Dispose() }
     }
 } finally {
     $script:Motion024Hash=$motionProductionHash;$script:PackageRoot=$motionProductionPackage

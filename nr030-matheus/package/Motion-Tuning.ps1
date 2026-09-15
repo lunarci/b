@@ -59,6 +59,9 @@ function Collect-MotionEvidence($Paths) {
     $stage=Join-Path $results $name
     New-Item -ItemType Directory -Path $stage | Out-Null
     $inventory=New-Object 'System.Collections.Generic.List[object]'
+    $notes=New-Object 'System.Collections.Generic.List[string]'
+    $notes.Add('Collection UTC: '+[DateTime]::UtcNow.ToString('o'))
+    $notes.Add('File timestamps and INI settings do not prove that a log belongs to the latest game session. Default logs are retained separately from configured logs.')
     try {
         foreach ($location in @(@('ark',$Paths.Bin,$Paths.Plugins),@('overwrite',$Paths.OldBin,$Paths.OldPlugins))) {
             $dest=Join-Path $stage $location[0]
@@ -75,8 +78,50 @@ function Collect-MotionEvidence($Paths) {
                 Copy-Verified $path $copy
                 $inventory.Add([pscustomobject]@{Source=$path;Entry=($location[0]+'/'+$entry[1]);Size=(Get-Item -LiteralPath $copy).Length;Sha256=(Get-Hash $copy);ModifiedUtc=(Get-Item -LiteralPath $path).LastWriteTimeUtc.ToString('o')})
             }
+            $optiIni=Join-Path $location[1] 'OptiScaler.ini'
+            if (-not (Test-Path -LiteralPath $optiIni -PathType Leaf)) { continue }
+            try {
+                $optiText=[IO.File]::ReadAllText($optiIni)
+                $configured=Read-IniValue $optiText 'Log' 'LogFileName'
+                $logToFile=Read-IniValue $optiText 'Log' 'LogToFile'
+                $logLevel=Read-IniValue $optiText 'Log' 'LogLevel'
+                $singleFile=Read-IniValue $optiText 'Log' 'SingleFile'
+                $notes.Add($location[0]+': LogToFile='+$logToFile+'; LogLevel='+$logLevel+'; SingleFile='+$singleFile+'; LogFileName='+$configured)
+                if ($singleFile -ieq 'false') { $notes.Add('CONFIGURED_LOG_SESSION_SUFFIX_NOT_COLLECTED '+$location[0]+': SingleFile=false may create suffixed session logs; this collector only copies the exact configured filename.') }
+            } catch {
+                $notes.Add('CONFIGURED_LOG_INI_PARSE_ERROR '+$optiIni+': '+$_.Exception.Message)
+                continue
+            }
+            if ([string]::IsNullOrWhiteSpace($configured) -or $configured -ieq 'auto') { continue }
+            if (-not [IO.Path]::IsPathRooted($configured)) {
+                $notes.Add('CONFIGURED_LOG_RELATIVE_PATH_UNRESOLVED '+$configured)
+                continue
+            }
+            $configured=Full-Path $configured
+            $rootPrefix=(Full-Path $Paths.Root).TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar
+            if (-not $configured.StartsWith($rootPrefix,[StringComparison]::OrdinalIgnoreCase)) {
+                $notes.Add('CONFIGURED_LOG_OUTSIDE_ROOT '+$configured)
+                continue
+            }
+            if ([IO.Path]::GetExtension($configured) -ine '.log') {
+                $notes.Add('CONFIGURED_LOG_INVALID_EXTENSION '+$configured)
+                continue
+            }
+            Assert-NoReparse $configured
+            if (-not (Test-Path -LiteralPath $configured -PathType Leaf)) {
+                $notes.Add('CONFIGURED_LOG_MISSING '+$configured)
+                continue
+            }
+            if ((Get-Item -LiteralPath $configured).Length -gt 256MB) { throw ('Log exceeds 256 MiB; no incomplete evidence ZIP will be presented: '+$configured) }
+            $configuredLabel='configured-'+$location[0]
+            $configuredDest=Join-Path $stage $configuredLabel
+            New-Item -ItemType Directory -Path $configuredDest | Out-Null
+            $copy=Join-Path $configuredDest 'OptiScaler-configured.log'
+            Copy-Verified $configured $copy
+            $inventory.Add([pscustomobject]@{Source=$configured;Entry=($configuredLabel+'/OptiScaler-configured.log');Size=(Get-Item -LiteralPath $copy).Length;Sha256=(Get-Hash $copy);ModifiedUtc=(Get-Item -LiteralPath $configured).LastWriteTimeUtc.ToString('o')})
         }
         if ($inventory.Count -eq 0) { throw 'No relevant logs or INIs were found under the selected MO2 root.' }
+        Write-Text (Join-Path $stage 'COLLECTION_NOTES.txt') ($notes -join "`r`n")
         Write-Json (Join-Path $stage 'inventory.json') @($inventory.ToArray())
         $report=Check-Complete $Paths 6>$null
         Write-Text (Join-Path $stage 'MATHEUS_CHECK.txt') $report
