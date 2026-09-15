@@ -90,18 +90,18 @@ void ShaderExecutor::InitializeBytecode(ID3D12Device* device,
                 D3D11_SHADER_BUFFER_DESC buffer{};
                 Check(reflection->GetConstantBufferByName(input.Name)->GetDesc(&buffer),
                       "Reflect constant buffer");
-                if (buffer.Size != 16)
-                    throw std::runtime_error("Shader b0 must contain exactly four DWORDs");
+                if (buffer.Size != (kernel == Kernel::Residual ? 32u : 16u))
+                    throw std::runtime_error("Shader b0 size differs from the kernel contract");
                 ++cbCount;
             } else {
                 throw std::runtime_error("Unexpected shader resource binding");
             }
         }
         Program& program = built[index];
-        program.inputCount = kernel == Kernel::Residual ? 3u : 1u;
+        program.inputCount = kernel == Kernel::Residual ? 4u : 1u;
         if (srvMask != ((1u << program.inputCount) - 1u) || uavCount != 1 || cbCount != 1)
             throw std::runtime_error("Shader resource contract differs from expected layout");
-        program.constants = 4;
+        program.constants = kernel == Kernel::Residual ? 8u : 4u;
         UINT groupZ = 0;
         reflection->GetThreadGroupSize(&program.groupX, &program.groupY, &groupZ);
         if (program.groupX != 8 || program.groupY != 8 || groupZ != 1)
@@ -164,8 +164,9 @@ void ShaderExecutor::Record(Kernel kernel, ID3D12GraphicsCommandList* commands,
     for (UINT slot = 0; slot < inputCount; ++slot) {
         if (!inputs[slot].resource) throw std::invalid_argument("Missing shader input texture");
         const auto input = inputs[slot].resource->GetDesc();
-        const UINT readWidth = kernel == Kernel::Residual && slot == 0 ? extent[0] : extent[2];
-        const UINT readHeight = kernel == Kernel::Residual && slot == 0 ? extent[1] : extent[3];
+        const bool full = kernel == Kernel::Residual && (slot == 0 || slot == 3);
+        const UINT readWidth = full ? extent[0] : extent[2];
+        const UINT readHeight = full ? extent[1] : extent[3];
         if (readWidth > input.Width || readHeight > input.Height)
             throw std::invalid_argument("Shader source extent exceeds its bound texture");
     }

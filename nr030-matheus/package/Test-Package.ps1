@@ -292,6 +292,42 @@ try {
         Assert-True (-not $summary.StatsFound -and -not $summary.CommandRecordingObserved) 'Inconsistent counters were accepted.'
     }
 
+    Run-Case 'production-log-fields-and-combined-settings-are-recognized' {
+        param($f)
+        $text="event=session_start utc=2026-09-15T02:00:00Z runtime_validated=false source_commit=ecc7b4d6ef7fcef9c73a1b033d3ff9b15b58e192`n"
+        $text+="event=hook_active static_abi_verified=true runtime_validated=false scale_percent=85`n"
+        $text+="event=resolve_config version=0.2.0 colour_preservation_percent=100 depth_protection=1 effect_percent=100 applies_to_scaled_path_only=true`n"
+        $text+="event=adapter_ready input_width=1920 input_height=1080 nr_width=1632 nr_height=918`n"
+        $text+="event=frame seen=120 scaled=110 nr_recorded=100 resolved=100 fallback=20 gpu_completed=99 allocated_bytes=64000000 allocated_slots=3`n"
+        $s=Get-AddonSessionSummary $text '2026-09-15T01:00:00Z'
+        Assert-True ($s.CommandRecordingObserved -and $s.CompositeRecordingObserved -and $s.GpuRetirementObserved) 'Production log fields were not parsed.'
+        Assert-True ($s.ColourPreservationPercent -eq 100 -and $s.DepthProtection -and $s.NrWidth -eq 1632 -and $s.NrHeight -eq 918) 'Combined settings or extents missing.'
+        Assert-True (-not $s.RuntimeValidated) 'Composite recording was treated as image proof.'
+        $text+="event=session_start utc=2026-09-15T03:00:00Z runtime_validated=false source_commit=ecc7b4d6ef7fcef9c73a1b033d3ff9b15b58e192`n"
+        $s=Get-AddonSessionSummary $text '2026-09-15T01:00:00Z'
+        Assert-True (-not $s.CompositeSettingsFound -and -not $s.CommandRecordingObserved) 'Old combined settings leaked into the latest session.'
+    }
+    Run-Case 'combined-config-without-work-is-not-effect-evidence' {
+        param($f)
+        $text="event=session_start utc=2026-09-15T02:00:00Z runtime_validated=false source_commit=ecc7b4d6ef7fcef9c73a1b033d3ff9b15b58e192`n"
+        $text+="event=hook_active static_abi_verified=true runtime_validated=false scale_percent=85`n"
+        $text+="event=resolve_config version=0.2.0 colour_preservation_percent=100 depth_protection=1 effect_percent=100 applies_to_scaled_path_only=true`n"
+        $s=Get-AddonSessionSummary $text '2026-09-15T01:00:00Z'
+        Assert-True ($s.CompositeSettingsFound -and -not $s.CompositeRecordingObserved) 'INI values became effect evidence.'
+        $text=$text.Replace('scale_percent=85','scale_percent=100')
+        $s=Get-AddonSessionSummary $text '2026-09-15T01:00:00Z'
+        Assert-True ($s.Result -eq 'BASELINE_100_PERCENT' -and -not $s.CompositeRecordingObserved) '100 percent bypass was treated as combined processing.'
+    }
+    Run-Case 'zero-effect-setting-does-not-claim-composite-effect' {
+        param($f)
+        $text="event=session_start utc=2026-09-15T02:00:00Z runtime_validated=false`n"
+        $text+="event=hook_active static_abi_verified=true runtime_validated=false scale_percent=85`n"
+        $text+="event=resolve_config version=0.2.0 colour_preservation_percent=100 depth_protection=1 effect_percent=0 applies_to_scaled_path_only=true`n"
+        $text+="event=frame seen=120 scaled=110 nr_recorded=100 resolved=100 fallback=20 gpu_completed=99 allocated_bytes=64000000 allocated_slots=3`n"
+        $s=Get-AddonSessionSummary $text '2026-09-15T01:00:00Z'
+        Assert-True ($s.CommandRecordingObserved -and -not $s.CompositeRecordingObserved) 'Zero effect was treated as an enabled composite effect.'
+    }
+
     $failed=@($results | Where-Object { $_.Status -eq 'FAIL' })
     $edition=$(if ($PSVersionTable.ContainsKey('PSEdition')) { [string]$PSVersionTable.PSEdition } else { 'Desktop' })
     $windows51=([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT -and $PSVersionTable.PSVersion.Major -eq 5 -and $PSVersionTable.PSVersion.Minor -eq 1 -and $edition -eq 'Desktop')

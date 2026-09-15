@@ -229,20 +229,28 @@ public:
     bool DebugEnabled() const { return debugEnabled_; }
 
     Image Run(Kernel kernel, const std::vector<Image>& inputs, UINT w, UINT h,
-              const std::array<UINT, 4>& constants, DXGI_FORMAT outputFormat) {
+              const std::array<UINT, 4>& constants, DXGI_FORMAT outputFormat,
+              float colour = 0.0f, bool protectDepth = false, float effect = 1.0f) {
         Begin();
+        auto boundInputs = inputs;
+        if (kernel == Kernel::Residual && boundInputs.size() == 3)
+            boundInputs.emplace_back(w, h, DXGI_FORMAT_R32_FLOAT); // flat depth fixture
         std::vector<GpuTexture> textures;
         std::vector<TextureBinding> views;
-        textures.reserve(inputs.size());
-        views.reserve(inputs.size());
-        for (const auto& input : inputs) {
+        textures.reserve(boundInputs.size());
+        views.reserve(boundInputs.size());
+        for (const auto& input : boundInputs) {
             textures.push_back(Upload(input));
             views.push_back({textures.back().resource.Get(), input.format});
         }
         auto result = CreateTexture(w, h, outputFormat, true);
         auto heap = MakeHeap(ShaderExecutor::DescriptorCount);
+        const contract::ResolveConstants resolve{constants[0], constants[1], constants[2], constants[3],
+            colour, protectDepth ? 1u : 0u, effect, 0u};
+        const bool isResolve = kernel == Kernel::Residual;
         executor_.Record(kernel, commands_.Get(), heap.Get(), 0,
-                         constants.data(), 4, views.data(), static_cast<UINT>(views.size()),
+                         isResolve ? static_cast<const void*>(&resolve) : constants.data(),
+                         isResolve ? 8u : 4u, views.data(), static_cast<UINT>(views.size()),
                          {result.Get(), outputFormat}, w, h);
         auto readback = CopyResult(result.Get());
         Finish();
@@ -253,6 +261,7 @@ public:
     Image ChainedIdentity(const Image& source, const contract::ScalePlan& plan) {
         Begin();
         auto input = Upload(source);
+        auto depth = Upload(Image(source.width, source.height, DXGI_FORMAT_R32_FLOAT));
         auto low = CreateTexture(plan.neural.width, plan.neural.height, source.format, true);
         auto result = CreateTexture(source.width, source.height, source.format, true);
         auto heap = MakeHeap(2 * ShaderExecutor::DescriptorCount);
@@ -263,10 +272,11 @@ public:
         Transition(commands_.Get(), low.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                    D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         const TextureBinding resolveInputs[] = {original, {low.Get(), source.format},
-                                                {low.Get(), source.format}};
+                                                {low.Get(), source.format},
+                                                {depth.resource.Get(), DXGI_FORMAT_R32_FLOAT}};
         const auto resolve = plan.resolve_constants();
         executor_.Record(Kernel::Residual, commands_.Get(), heap.Get(), ShaderExecutor::DescriptorCount,
-                         &resolve, 4, resolveInputs, 3, {result.Get(), source.format},
+                         &resolve, 8, resolveInputs, 4, {result.Get(), source.format},
                          source.width, source.height);
         auto readback = CopyResult(result.Get());
         Finish();
@@ -610,6 +620,92 @@ int wmain(int argc, wchar_t** argv) {
             Equal(gpu.Run(Kernel::Residual, {native, baseline, edited}, 9, 5, {9, 5, 4, 3}, half),
                   expected, 0, 0, true);
         });
+        test("Combined colour mode preserves native RGB ratios and correction luminance", [&] {
+            auto native = Filled(9, 5, {2, 4, 8, 0.3125f});
+            auto baseline = Filled(4, 3, {2, 4, 8, 0});
+            auto edited = Filled(4, 3, {3, 3, 9, 1});
+            auto out = gpu.Run(Kernel::Residual, {native, baseline, edited}, 9, 5,
+                               {9, 5, 4, 3}, rgba, 1.0f, true);
+            for (UINT y = 0; y < 5; ++y) for (UINT x = 0; x < 9; ++x) {
+                Require(std::abs(out.At(x,y,1) - 2 * out.At(x,y,0)) < 1e-5f &&
+                        std::abs(out.At(x,y,2) - 4 * out.At(x,y,0)) < 1e-5f,
+                        "Native chromaticity changed");
+                const float luma = out.At(x,y,0)*0.2126f + out.At(x,y,1)*0.7152f + out.At(x,y,2)*0.0722f;
+                Require(std::abs(luma - (3*0.2126f + 3*0.7152f + 9*0.0722f)) < 1e-5f,
+                        "Transferred brightness was lost");
+                Require(out.At(x,y,3) == 0.3125f, "Alpha changed");
+            }
+        });
+        test("Combined HDR mode caps shared gain without clipping RGB ratios", [&] {
+            const auto half = DXGI_FORMAT_R16G16B16A16_FLOAT;
+            auto native = Filled(9, 5, {60000, 30000, 15000, 0.5f}, half);
+            auto low = Filled(4, 3, {60000, 30000, 15000, 0}, half);
+            auto edited = Filled(4, 3, {65504, 45000, 22500, 0}, half);
+            auto out = gpu.Run(Kernel::Residual, {native, low, edited}, 9, 5,
+                               {9, 5, 4, 3}, half, 1.0f, true);
+            auto expected = Filled(9, 5, {65504, 32752, 16376, 0.5f}, half);
+            Equal(out, expected, 0, 0, true);
+        });
+        test("Colour mode keeps signed and near-black originals without gain noise", [&] {
+            for (const auto value : {-0.25f, 1e-7f}) {
+                auto native = Filled(9, 5, {value, value, value, -0.5f});
+                auto low = Filled(4, 3, {value, value, value, 0});
+                auto edited = Filled(4, 3, {value * 1.5f, value * 1.5f, value * 1.5f, 0});
+                Equal(gpu.Run(Kernel::Residual, {native, low, edited}, 9, 5,
+                              {9, 5, 4, 3}, rgba, 1.0f, true), native, 0, 0, true);
+            }
+        });
+        test("Yuri depth edge guard attenuates edges and leaves interiors unchanged", [&] {
+            auto native = Filled(9, 5, {2, 2, 2, 0.75f});
+            auto low = Filled(4, 3, {2, 2, 2, 0});
+            auto edited = Filled(4, 3, {3, 3, 3, 0});
+            for (const bool reversed : {false, true}) {
+                Image depth(9, 5, DXGI_FORMAT_R32_FLOAT);
+                auto expected = Filled(9, 5, {3, 3, 3, 0.75f});
+                for (UINT y=0; y<5; ++y) for (UINT x=0; x<9; ++x) {
+                    depth.At(x,y,0) = ((x < 4) != reversed) ? 0.2f : 0.8f;
+                    if (x == 3 || x == 4) for (UINT c=0; c<3; ++c) expected.At(x,y,c) = 2.25f;
+                }
+                Equal(gpu.Run(Kernel::Residual, {native, low, edited, depth}, 9, 5,
+                              {9, 5, 4, 3}, rgba, 1.0f, true), expected);
+            }
+        });
+        test("Invalid depth rejects correction only when depth protection is enabled", [&] {
+            auto native = Filled(9, 5, {2, 2, 2, 0.5f});
+            auto low = Filled(4, 3, {2, 2, 2, 0});
+            auto edited = Filled(4, 3, {3, 3, 3, 0});
+            Image depth(9, 5, DXGI_FORMAT_R32_FLOAT);
+            for (auto& value : depth.pixels) value = std::numeric_limits<float>::quiet_NaN();
+            Equal(gpu.Run(Kernel::Residual, {native, low, edited, depth}, 9, 5,
+                          {9, 5, 4, 3}, rgba, 1.0f, true), native, 0, 0, true);
+            Equal(gpu.Run(Kernel::Residual, {native, low, edited, depth}, 9, 5,
+                          {9, 5, 4, 3}, rgba, 1.0f, false), Filled(9, 5, {3, 3, 3, 0.5f}));
+        });
+        test("Zero effect preserves finite original even with invalid neural input", [&] {
+            auto native = Pattern(9, 5);
+            auto low = Filled(4, 3, {2, 2, 2, 0});
+            auto edited = Filled(4, 3, {std::numeric_limits<float>::quiet_NaN(), 3, 3, 0});
+            Equal(gpu.Run(Kernel::Residual, {native, low, edited}, 9, 5,
+                          {9, 5, 4, 3}, rgba, 1.0f, true, 0.0f), native, 0, 0, true);
+        });
+        test("Effect blend halves only the final correction", [&] {
+            auto native = Filled(9, 5, {2, 4, 8, 0.5f});
+            auto low = Filled(4, 3, {2, 4, 8, 0});
+            auto edited = Filled(4, 3, {3, 6, 12, 0});
+            Equal(gpu.Run(Kernel::Residual, {native, low, edited}, 9, 5,
+                          {9, 5, 4, 3}, rgba, 1.0f, true, 0.5f), Filled(9, 5, {2.5f, 5, 10, 0.5f}));
+        });
+        test("Partial colour preservation remains between legacy and preserved results", [&] {
+            auto native = Filled(9, 5, {2, 4, 8, 0.5f});
+            auto low = Filled(4, 3, {2, 4, 8, 0});
+            auto edited = Filled(4, 3, {3, 3, 9, 0});
+            auto a = gpu.Run(Kernel::Residual, {native, low, edited}, 9, 5, {9,5,4,3}, rgba, 0.0f);
+            auto b = gpu.Run(Kernel::Residual, {native, low, edited}, 9, 5, {9,5,4,3}, rgba, 1.0f);
+            auto mid = gpu.Run(Kernel::Residual, {native, low, edited}, 9, 5, {9,5,4,3}, rgba, 0.5f);
+            for (UINT c=0; c<3; ++c)
+                Require(std::abs(mid.At(4,2,c) - 0.5f*(a.At(4,2,c)+b.At(4,2,c))) < 1e-5f,
+                        "Colour control is not a bounded blend");
+        });
         SaveResults(report, results, debugEnabled);
         std::cout << "PASS: " << results.passed.size()
                   << " WARP checks. Actual NR runtime, Radeon and game hook are NOT exercised.\n";
@@ -622,4 +718,3 @@ int wmain(int argc, wchar_t** argv) {
         return 1;
     }
 }
-

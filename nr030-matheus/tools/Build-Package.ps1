@@ -21,7 +21,7 @@ if ($cache -notmatch ('(?m)^NR030_SOURCE_COMMIT:STRING='+[regex]::Escape($Source
 $testLog=Join-Path $BuildRoot 'Testing/Temporary/LastTest.log'
 if (-not (Test-Path -LiteralPath $testLog)) { throw 'Native test evidence is missing.' }
 $installerResults=Get-Content -LiteralPath (Join-Path $sourceRoot 'package/test-results/installer-tests.json') -Raw | ConvertFrom-Json
-if ($installerResults.WindowsPowerShell51 -ne $true -or $installerResults.Failed -ne 0 -or $installerResults.Passed -lt 23) {
+if ($installerResults.WindowsPowerShell51 -ne $true -or $installerResults.Failed -ne 0 -or $installerResults.Passed -lt 26) {
     throw 'Windows PowerShell 5.1 installer test gate is not satisfied.'
 }
 $nativeResultPath=Join-Path $BuildRoot 'ctest-results.xml'
@@ -42,11 +42,11 @@ $warpResultPath=Join-Path $BuildRoot 'gpu_tests/warp_results.json'
 $warp=Get-Content -LiteralPath $warpResultPath -Raw | ConvertFrom-Json
 if ($warp.runner -cne 'D3D12 WARP' -or $warp.productionShaders -ne $true -or
     $warp.sharedProductionExecutor -ne $true -or $warp.neuralRuntimeExecuted -ne $false -or
-    $warp.failed -cne '' -or $warp.reason -cne '' -or $warp.passedCount -lt 21 -or
+    $warp.failed -cne '' -or $warp.reason -cne '' -or $warp.passedCount -lt 29 -or
     @($warp.passed).Count -ne $warp.passedCount) {
     throw 'Production shader WARP execution evidence is incomplete or failed.'
 }
-$dist=Join-Path $BuildRoot 'deliverable/Matheus_NR030_Addon_0.1.0_experimental'
+$dist=Join-Path $BuildRoot 'deliverable/Matheus_NR030_Addon_0.2.0_Combined'
 if (Test-Path -LiteralPath $dist) { throw 'Refusing to overwrite an existing staged deliverable.' }
 New-Item -ItemType Directory -Path $dist | Out-Null
 foreach ($name in @('Setup.ps1','01_INSTALL_ADDON.cmd','02_REMOVE_ADDON.cmd','03_CHECK_ADDON.cmd','README_KO.md','protected-files.json')) {
@@ -62,6 +62,14 @@ Copy-Item -LiteralPath $warpResultPath -Destination (Join-Path $dist 'evidence/w
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'components/LICENSE') -Destination (Join-Path $dist 'LICENSE')
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'components/NOTICE') -Destination (Join-Path $dist 'NOTICE')
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'third_party') -Destination (Join-Path $dist 'third_party') -Recurse
+Copy-Item -LiteralPath (Join-Path $sourceRoot 'COMPARISON_KO.md') -Destination $dist
+# Include the reviewed add-on source and pinned Windows build recipe alongside
+# the binary. The existing NR engine, model and XeFG binaries are not redistributed.
+$sourceStage=Join-Path $BuildRoot 'deliverable/combined-source'
+New-Item -ItemType Directory -Path $sourceStage | Out-Null
+Copy-Item -LiteralPath $sourceRoot -Destination (Join-Path $sourceStage 'nr030-matheus') -Recurse
+Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $sourceRoot) '.github/workflows/build-matheus-nr030.yml') -Destination $sourceStage
+Compress-Archive -Path (Join-Path $sourceStage '*') -DestinationPath (Join-Path $dist 'SOURCE.zip') -CompressionLevel Optimal
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'runtime_contract.h') -Destination (Join-Path $dist 'evidence/runtime_contract.h')
 if (Test-Path -LiteralPath (Join-Path $sourceRoot 'runtime_static_evidence.md')) {
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'runtime_static_evidence.md') -Destination (Join-Path $dist 'evidence/runtime_static_evidence.md')
@@ -70,7 +78,7 @@ if (Test-Path -LiteralPath (Join-Path $sourceRoot 'package/test-results')) {
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'package/test-results') -Destination (Join-Path $dist 'evidence/package-tests') -Recurse
 }
 $manifest=Get-Content -LiteralPath (Join-Path $sourceRoot 'package/package-manifest.json') -Raw | ConvertFrom-Json
-$manifest.addon_version='0.1.0-experimental'
+$manifest.addon_version='0.2.0-combined-experimental'
 $manifest.source_commit=$SourceCommit
 $manifest.build_run_id=$RunId
 $manifest.build_verified=$true
@@ -93,6 +101,12 @@ $provenance=[ordered]@{
     build_run_id=$RunId
     runtime_enabled_at_build=$true
     default_scale_percent=85
+    default_colour_preservation_percent=100
+    default_depth_protection=$true
+    default_effect_percent=100
+    matias_reference_commit='333038704896d6e38f735b9ddb6e62210e509cb9'
+    yuri_reference_commit='0c123fc4bb81bbcb343246e3c98a3bcb33a1009c'
+    colour_integration='Same-encoding luminance transfer after AMD residual; no upstream codec or model replacement'
     windows_native_tests=@('nr_component_math_checks','nr030_warp_checks','nr030_addon_smoke')
     warp_checks_passed=$warp.passedCount
     installer_checks_passed=$installerResults.Passed
@@ -103,7 +117,9 @@ $provenance=[ordered]@{
 }
 $provenance | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $dist 'BUILD_PROVENANCE.json') -Encoding UTF8
 $status=@'
-# Matheus NR030 0.1.0 실험용 설치 패키지
+# Matheus NR030 0.2.0 Combined 실험용 설치 패키지
+
+matiasLombo의 색상 보존 원리와 Yuri의 깊이 경계 보호를 기존 Matheus 85% 잔차 합성에 통합했습니다. 새 NR 엔진이나 모델은 포함하지 않습니다. COMPARISON_KO.md에 비교·채택 범위, SOURCE.zip에 수정 소스가 있습니다.
 
 ## 완료한 검증
 
@@ -139,4 +155,3 @@ $zip=$dist+'.zip'
 Compress-Archive -Path $dist -DestinationPath $zip -CompressionLevel Optimal
 Write-Host ('EXPERIMENTAL_PACKAGE='+$zip)
 Get-FileHash -LiteralPath $zip -Algorithm SHA256
-

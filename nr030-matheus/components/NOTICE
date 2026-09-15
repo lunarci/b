@@ -24,6 +24,21 @@ Changes in this extraction (2026-09-15):
 - Added a fixed-scale C++ contract, CPU mathematical checks and a Windows-only
   shader compiler. These are not a DLSS/NR model or a game integration.
 
-No NVIDIA/Daniel runtime, neural model, HIP kernel, fixed-RVA call, injector,
-OptiScaler replacement, frame-generation code or game installer is included.
+No NVIDIA/Daniel runtime, neural model, HIP kernel, OptiScaler replacement or
+frame-generation code is included. The enclosing adapter supplies a separately
+documented exact-C7 helper hook and add-on installer.
 
+Combined resolve changes (0.2.0, 2026-09-15):
+- Adapted luminance-transfer and near-black protection from RestoreRange in
+  matiasLombo/neural-upstream, src/codec.hlsl.h, commit
+  333038704896d6e38f735b9ddb6e62210e509cb9 (Copyright 2026 Matias Lombo).
+- Adapted ScaledDepthWeight from yuriimatysik/neural-upstream, src/codec.hlsl.h,
+  commit 0c123fc4bb81bbcb343246e3c98a3bcb33a1009c (v0.7.0-experimental.1).
+  Attribution: Yuri and the neural-upstream contributors.
+- Both references use MIT; their complete notice is reproduced in the enclosing
+  source/package at third_party/neural-upstream_LICENSE.txt.
+- AMD supplies restored colour, not the upstream bounded proxy. Only a
+  same-encoding luminance transfer and spatial depth heuristic are adapted;
+  no upstream encoder, decoder, exposure estimator, model or NGX hook is copied.
+- Added shared-gain FP16 limiting, feature switches, effect blend, finite-depth
+  fallback and regression tests using the production shader.

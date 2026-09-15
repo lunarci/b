@@ -1,6 +1,12 @@
 # Matheus-style NR scaling adapter for the exact NR 0.3.0 C7 build
 
-**Experimental adapter, version 0.1.0. Install only a successfully built installation package. Actual AMD/Cyberpunk execution remains unverified.**
+**Experimental adapter, version 0.2.0 Combined. Install only a successfully built installation package. Actual AMD/Cyberpunk execution remains unverified.**
+
+This revision adds original-colour luminance transfer adapted from matiasLombo
+and a spatial depth-edge guard adapted from Yuri in the existing Matheus resolve
+pass. Both can be disabled independently. See `COMPARISON_KO.md` for the pinned
+source comparison, limitations and A/B controls. The comparison branch is
+`nr030-combined-color`; the original 0.1.0 branch is retained.
 
 This additive adapter is intended for an existing AMD NR 0.3.0 + OptiScaler FSR + Intel XeFG 4X configuration. It derives area downsampling and matched residual reconstruction from MatheusGViana's AMD PreSR source. Existing engine, model and frame-generation binaries/settings are preserved by the installer.
 

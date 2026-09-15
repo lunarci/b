@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - nr030-matheus-presr
+      - nr030-combined-color
     paths:
       - nr030-matheus/**
       - .github/workflows/build-matheus-nr030.yml
@@ -61,6 +62,6 @@ jobs:
         with:
           name: Matheus-NR030-install-package-${{ github.run_number }}
           path: |
-            build/nr030/deliverable/Matheus_NR030_Addon_0.1.0_experimental.zip
+            build/nr030/deliverable/Matheus_NR030_Addon_0.2.0_Combined.zip
           if-no-files-found: error
           retention-days: 14

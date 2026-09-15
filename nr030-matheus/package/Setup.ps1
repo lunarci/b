@@ -366,12 +366,16 @@ function Get-AddonSessionSummary([string]$Text,[string]$InstalledUtc) {
         HeaderFound=$false;SessionUtc=$null;StartedAfterInstall=$false;HookActive=$false
         ScalePercent=$null;Seen=0L;Scaled=0L;NrRecorded=0L;Resolved=0L;Fallback=0L;GpuCompleted=0L
         StatsFound=$false;CommandRecordingObserved=$false;GpuRetirementObserved=$false
+        SourceCommit=$null;InputWidth=$null;InputHeight=$null;NrWidth=$null;NrHeight=$null
+        ColourPreservationPercent=$null;DepthProtection=$null;EffectPercent=$null
+        CompositeSettingsFound=$false;CompositeRecordingObserved=$false
         RuntimeValidated=$false;Result='UNVERIFIED'
     }
-    $starts=[regex]::Matches($Text,'(?m)^event=session_start utc=([^\s]+) runtime_validated=false\s*$')
+    $starts=[regex]::Matches($Text,'(?m)^event=session_start utc=([^\s]+) runtime_validated=false(?: source_commit=([0-9a-f]{40}|unrecorded))?[ \t\r]*$')
     if (-not $starts.Count) { return $result }
     $start=$starts[$starts.Count-1];$session=$Text.Substring($start.Index)
     $result.HeaderFound=$true;$result.SessionUtc=$start.Groups[1].Value
+    if ($start.Groups[2].Success) { $result.SourceCommit=$start.Groups[2].Value }
     $sessionTime=[DateTimeOffset]::MinValue;$installTime=[DateTimeOffset]::MinValue
     $style=[Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal
     if ([DateTimeOffset]::TryParse($result.SessionUtc,[Globalization.CultureInfo]::InvariantCulture,$style,[ref]$sessionTime) -and
@@ -380,7 +384,20 @@ function Get-AddonSessionSummary([string]$Text,[string]$InstalledUtc) {
     }
     $hooks=[regex]::Matches($session,'(?m)^event=hook_active static_abi_verified=true runtime_validated=false scale_percent=(75|85|100)\s*$')
     if ($hooks.Count) { $result.HookActive=$true;$result.ScalePercent=[int]$hooks[$hooks.Count-1].Groups[1].Value }
-    $stats=[regex]::Matches($session,'(?m)^event=frame seen=(\d+) scaled=(\d+) nr_recorded=(\d+) resolved=(\d+) fallback=(\d+) gpu_completed=(\d+)\s*$')
+    $config=[regex]::Matches($session,'(?m)^event=resolve_config version=0\.2\.0 colour_preservation_percent=(100|[0-9]{1,2}) depth_protection=([01]) effect_percent=(100|[0-9]{1,2}) applies_to_scaled_path_only=true[ \t\r]*$')
+    if ($config.Count) {
+        $last=$config[$config.Count-1];$result.CompositeSettingsFound=$true
+        $result.ColourPreservationPercent=[int]$last.Groups[1].Value
+        $result.DepthProtection=([int]$last.Groups[2].Value -eq 1)
+        $result.EffectPercent=[int]$last.Groups[3].Value
+    }
+    $ready=[regex]::Matches($session,'(?m)^event=adapter_ready input_width=(\d{1,5}) input_height=(\d{1,5}) nr_width=(\d{1,5}) nr_height=(\d{1,5})[ \t\r]*$')
+    if ($ready.Count) {
+        $last=$ready[$ready.Count-1]
+        $result.InputWidth=[int]$last.Groups[1].Value;$result.InputHeight=[int]$last.Groups[2].Value
+        $result.NrWidth=[int]$last.Groups[3].Value;$result.NrHeight=[int]$last.Groups[4].Value
+    }
+    $stats=[regex]::Matches($session,'(?m)^event=frame seen=(\d+) scaled=(\d+) nr_recorded=(\d+) resolved=(\d+) fallback=(\d+) gpu_completed=(\d+)(?: allocated_bytes=\d+ allocated_slots=\d+)?[ \t\r]*$')
     if ($stats.Count) {
         $last=$stats[$stats.Count-1];$values=@();$valid=$true
         for ($i=1;$i -le 6;$i++) {
@@ -399,6 +416,7 @@ function Get-AddonSessionSummary([string]$Text,[string]$InstalledUtc) {
     if ($result.ScalePercent -eq 100) { $result.Result='BASELINE_100_PERCENT';return $result }
     if (-not $result.StatsFound -or $result.NrRecorded -eq 0 -or $result.Resolved -eq 0) { $result.Result='NO_NR_RESOLVE_RECORDING_OBSERVED';return $result }
     $result.CommandRecordingObserved=$true
+    $result.CompositeRecordingObserved=($result.CompositeSettingsFound -and $result.EffectPercent -gt 0)
     $result.GpuRetirementObserved=($result.GpuCompleted -gt 0)
     $result.Result='NR_RESOLVE_COMMAND_RECORDING_OBSERVED'
     return $result
@@ -436,6 +454,7 @@ function Check-Addon($Paths) {
         if ($filesConfirmed) { $installedUtc=[string](Get-Value $state 'InstalledUtc') }
         $addonSummary=Get-AddonSessionSummary $addonText $installedUtc
         $lines.Add('ADD-ON LAST SESSION observations: '+($addonSummary | ConvertTo-Json -Compress))
+        $lines.Add('Combined colour/depth settings recorded: '+$addonSummary.CompositeSettingsFound+'; composite command recording observed: '+$addonSummary.CompositeRecordingObserved)
         $lines.Add('nr_recorded/resolved count recorded GPU commands; gpu_completed counts retired resource slots. They do not establish image correctness or speed gains.')
         $lines.Add('Add-on log tail:')
         foreach ($line in @([regex]::Split($addonText,'\r?\n') | Select-Object -Last 35)) { $lines.Add($line) }

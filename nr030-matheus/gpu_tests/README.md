@@ -46,7 +46,8 @@ real-runtime and game checks.
 ## Executor lifetime contract
 
 - Kernel order for embedded bytecode: Color, Depth, Motion, Residual.
-- b0 contains exactly four DWORDs; t0..t3 and u0 occupy five descriptors per dispatch.
+- Resolve b0 contains eight DWORDs; other kernels contain four. Resolve reads
+  colour t0..t2 and native depth t3. t0..t3 and u0 use five descriptors per dispatch.
 - The caller reserves a distinct five-descriptor range for each outstanding dispatch.
 - Record owns no queue submission, fence, allocator or input/output resource lifetime.
 - The caller tracks and restores resource states; Transition/UavBarrier only emit explicit barriers.
@@ -57,4 +58,3 @@ real-runtime and game checks.
 
 The files here are GPL-3.0-only to match the components they execute; retain the
 component NOTICE and LICENSE when distributing them.
-

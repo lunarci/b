@@ -20,9 +20,13 @@ struct ResampleConstants {
 // Matches b0 in matched_residual_resolve.hlsl.
 struct ResolveConstants {
     std::uint32_t width, height, low_width, low_height;
+    float colour_preservation;
+    std::uint32_t depth_protection;
+    float effect_strength;
+    std::uint32_t reserved;
 };
 static_assert(sizeof(ResampleConstants) == 16);
-static_assert(sizeof(ResolveConstants) == 16);
+static_assert(sizeof(ResolveConstants) == 32);
 
 struct ScalePlan {
     Extent2D input;
@@ -36,8 +40,10 @@ struct ScalePlan {
             throw std::invalid_argument("Active guide extent must fit a nonzero D3D12 2D texture");
         return {neural.width, neural.height, active_guide.width, active_guide.height};
     }
-    ResolveConstants resolve_constants() const {
-        return {input.width, input.height, neural.width, neural.height};
+    ResolveConstants resolve_constants(float colour_preservation = 1.0f,
+        bool depth_protection = true, float effect_strength = 1.0f) const {
+        return {input.width, input.height, neural.width, neural.height,
+                colour_preservation, depth_protection ? 1u : 0u, effect_strength, 0u};
     }
 };
 

@@ -77,6 +77,12 @@ Compilation/linking, static ABI analysis, WARP execution, and actual
 RX 9070 XT / Cyberpunk execution are distinct validation stages. None should
 be reported as another stage.
 
+The 0.2.0 resolve also reads the already-retained native depth as t3. It adds no
+texture or dispatch, and expands only this kernel's b0 from four to eight DWORDs.
+ColourPreservationPercent, DepthProtection and EffectPercent are startup-only
+settings. At scale 100 the original helper bypass also bypasses these controls.
+The log records them in resolve_config; this alone is not execution evidence.
+
 The log distinguishes command recording (`nr_recorded`, `resolved`) from
 observed fence-and-Reset retirement of resolved slots (`gpu_completed`). Those
 counters do not prove neural-model success, visual quality, performance gain,

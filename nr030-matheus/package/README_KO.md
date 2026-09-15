@@ -1,4 +1,6 @@
-# Matheus NR030 추가 모드 — 실험판 0.1
+# Matheus NR030 추가 모드 — 실험판 0.2.0 Combined
+
+**이번 수정:** 기존 85% 입력 축소에 matiasLombo 방식의 원본 색 비율 보존과 Yuri 방식의 깊이 경계 보호를 통합했습니다. 기본값은 두 기능 모두 켬입니다. 비교·채택 범위는 `COMPARISON_KO.md`, 수정 소스는 `SOURCE.zip`에 있습니다. 실제 게임 화질 향상은 아직 검증되지 않았습니다.
 
 **배포 형태와 실제 검증 범위부터 확인해 주세요.** 이 문서는 테스트 통과 증명이 아닙니다. 실제 완료한 검증과 미실시 항목은 동봉된 `BUILD_PROVENANCE.json`, `BUILD_STATUS_KO.md` 및 검증 결과를 기준으로 합니다. ASI가 없거나 manifest의 검증값이 false인 **소스 키트는 플레이용 설치본이 아니며, 아래 설치 명령도 차단됩니다.** Windows 빌드·WARP·Windows PowerShell 5.1 테스트는 해당 실행 결과에 통과가 명시된 경우에만 완료된 것입니다. Linux 교차 빌드나 PowerShell 7 실행은 이 Windows 검증을 대신하지 않습니다.
 
@@ -27,6 +29,8 @@
 
 ## 첫 비교 방법
 
+이번 기능만 비교하려면 `ScalePercent=85`를 유지하고 `ColourPreservationPercent=0`, `DepthProtection=0`, `EffectPercent=100`으로 바꾸면 이전 0.1.0의 합성 계산으로 돌아갑니다. 새 기본값은 각각 `100`, `1`, `100`입니다. `EffectPercent`는 최종 보정 강도(0~100)이며, 0으로 두어도 NR 연산은 계속됩니다. 게임 재실행 후 적용됩니다.
+
 1. 같은 저장 위치와 동일한 그래픽 설정에서 실험판 기본값 `ScalePercent=85`로 확인합니다.
 2. 게임을 종료하고 설치된 `MatheusNR030.ini`의 `[MatheusNR030]`에서 `ScalePercent=100`으로 바꿉니다. 100은 축소·추가 합성을 끄고 기존 NR 처리를 그대로 사용합니다.
 3. 같은 저장 위치를 다시 불러와 FPS, 입력 반응, 얼굴·문자·윤곽의 변화와 잔상을 비교합니다. 두 실행에서 해상도나 XeFG 배율을 함께 바꾸지 않습니다.
@@ -45,6 +49,9 @@
 | 표시 | 뜻 |
 |---|---|
 | `hook_active` | 지정 NR 바이너리의 연결 지점에 추가 모드가 연결됨 |
+| `resolve_config` | 색 보존·깊이 보호·효과 강도 설정. 이 줄만으로 실행 완료를 뜻하지 않음 |
+| `adapter_ready` | 원래 입력과 NR 입력의 실제 할당 크기. 예: 1920×1080 → 1632×918이면 각 축 85% |
+| `CompositeRecordingObserved` | 해당 세션의 설정과 합성 명령 기록을 관찰함. 화질·추론 성공 판정은 아님 |
 | `nr_recorded` | NR 결과를 사용하는 경로가 관찰됨. 기록된 명령 수이며 화면 품질 판정은 아님 |
 | `resolved` | Matheus 잔차 합성 GPU 명령이 게임 명령 목록에 기록됨 |
 | `gpu_completed` | 합성 명령을 기록한 슬롯이 GPU fence 완료 후 회수됨. NR skip만 발생한 슬롯은 포함하지 않으며, NR 모델 추론의 성공 판정은 아님 |

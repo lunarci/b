@@ -76,10 +76,11 @@ std::filesystem::path ModulePath(HMODULE module) {
     if (!count || count >= path.size()) throw std::runtime_error("Cannot resolve loaded module path");
     return std::filesystem::path(std::wstring(path.data(), count));
 }
-int IniInteger(const std::filesystem::path& path, const wchar_t* section, const wchar_t* key) {
+int IniInteger(const std::filesystem::path& path, const wchar_t* section, const wchar_t* key,
+               int missingValue = -1) {
     wchar_t text[64]{};
     GetPrivateProfileStringW(section, key, L"", text, 64, path.c_str());
-    if (!text[0]) return -1;
+    if (!text[0]) return missingValue;
     wchar_t* end = nullptr;
     const auto result = wcstol(text, &end, 10);
     if (!end || *end || result < 0 || result > 100) return -1;
@@ -276,6 +277,7 @@ public:
     HMODULE runtime = nullptr;
     ffx::HelperFn helper = nullptr;
     cmp::FixedScale scale = cmp::FixedScale::Percent85;
+    int colourPreservation = 100, depthProtection = 1, effectPercent = 100;
     std::atomic<bool> everScaled{false};
     std::atomic<bool> failed{false};
     std::mutex mutex;
@@ -444,17 +446,19 @@ public:
             ++nrRecorded;
             try {
                 frame.slot->use->borrowed.emplace_back(Resource(corrected->color));
-                const auto constants = frame.plan.resolve_constants();
+                const auto constants = frame.plan.resolve_constants(colourPreservation / 100.0f,
+                    depthProtection != 0, effectPercent / 100.0f);
                 const gpu::TextureBinding inputs[] = {
                     {Resource(frame.full.color), DXGI_FORMAT_R16G16B16A16_FLOAT},
                     {frame.slot->baseline.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT},
-                    {Resource(corrected->color), DXGI_FORMAT_R16G16B16A16_FLOAT}};
+                    {Resource(corrected->color), DXGI_FORMAT_R16G16B16A16_FLOAT},
+                    {Resource(frame.full.depth), DXGI_FORMAT_R32_FLOAT}};
                 const gpu::TextureBinding output{frame.slot->fullResolved.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT};
                 auto* commands = static_cast<ID3D12GraphicsCommandList*>(frame.full.commandList);
                 gpu::Transition(commands, output.resource, ReadState, WriteState);
                 try {
                 shaders.Record(gpu::Kernel::Residual, commands, frame.slot->descriptors.Get(),
-                    3 * gpu::ShaderExecutor::DescriptorCount, &constants, 4, inputs, 3,
+                    3 * gpu::ShaderExecutor::DescriptorCount, &constants, 8, inputs, 4,
                     output, frame.plan.input.width, frame.plan.input.height);
                 } catch (...) {
                     gpu::Transition(commands, output.resource, WriteState, ReadState);
@@ -582,6 +586,12 @@ DWORD WINAPI Worker(void*) {
         if (percent != 75 && percent != 85 && percent != 100) {
             Log("event=disabled reason=ScalePercent_must_be_75_85_or_100"); return 0;
         }
+        const auto colour = IniInteger(settings, L"MatheusNR030", L"ColourPreservationPercent", 100);
+        const auto depthProtect = IniInteger(settings, L"MatheusNR030", L"DepthProtection", 1);
+        const auto effect = IniInteger(settings, L"MatheusNR030", L"EffectPercent", 100);
+        if (colour < 0 || effect < 0 || depthProtect < 0 || depthProtect > 1) {
+            Log("event=disabled reason=invalid_composite_settings"); return 0;
+        }
         HMODULE runtime = nullptr;
         for (unsigned attempt = 0; attempt < 300 && !runtime; ++attempt) {
             runtime = GetModuleHandleW(L"dlssnr_on_amd.asi");
@@ -599,6 +609,7 @@ DWORD WINAPI Worker(void*) {
         }
         app = new Adapter();
         app->runtime = runtime; app->scale = static_cast<cmp::FixedScale>(percent);
+        app->colourPreservation = colour; app->depthProtection = depthProtect; app->effectPercent = effect;
         const auto initialized = MH_Initialize();
         if (initialized != MH_OK && initialized != MH_ERROR_ALREADY_INITIALIZED)
             HookCheck(initialized, "Initialize hook engine");
@@ -607,6 +618,9 @@ DWORD WINAPI Worker(void*) {
             reinterpret_cast<void**>(&app->helper)), "Create fixed-C7 helper hook");
         HookCheck(MH_EnableHook(target), "Enable fixed-C7 helper hook");
         Log("event=hook_active static_abi_verified=true runtime_validated=false scale_percent=" + std::to_string(percent));
+        Log("event=resolve_config version=0.2.0 colour_preservation_percent=" + std::to_string(colour) +
+            " depth_protection=" + std::to_string(depthProtect) + " effect_percent=" + std::to_string(effect) +
+            " applies_to_scaled_path_only=true");
     } catch (const std::exception& error) { Log(std::string("event=disabled reason=") + error.what()); }
     return 0;
 }

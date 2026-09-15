@@ -19,12 +19,16 @@ No inference implementation or runtime-memory patching is present.
   nr_component_math_checks, and on Windows compile_nr_components /
   nr_component_shaders.
 
-| Pass | t0 | t1 | t2 | u0 | b0: four uint32 values |
-|---|---|---|---|---|---|
-| Area copy | source colour float4 | unused | unused | low colour float4 | low W,H, source W,H |
-| Resolve | current native colour float4 | exact NR low input float4 | low NR output float4 | native-size colour float4 | native W,H, low W,H |
-| Depth | source depth float | unused | unused | low depth float | low W,H, active depth W,H |
-| Motion | source motion float2 | unused | unused | low raw motion float2 | low W,H, active motion W,H |
+| Pass | t0 | t1 | t2 | t3 | u0 | b0 |
+|---|---|---|---|---|---|---|
+| Area copy | source colour float4 | unused | unused | unused | low colour float4 | low W,H, source W,H |
+| Resolve | native colour float4 | exact NR low input float4 | low NR output float4 | native depth float | native-size colour float4 | native W,H, low W,H, colour float, depth uint, effect float, padding uint |
+| Depth | source depth float | unused | unused | unused | low depth float | low W,H, active depth W,H |
+| Motion | source motion float2 | unused | unused | unused | low raw motion float2 | low W,H, active motion W,H |
+
+Resolve b0 is 32 bytes; the other three are 16. Default controls enable original
+RGB ratio preservation and Yuri's spatial depth guard. See COMPARISON_KO.md in
+the enclosing project for scope and A/B settings. No second colour codec is used.
 
 Use typed views: RGBA16F for real colour textures, R32_FLOAT for prepared depth,
 RG16_FLOAT or RG32_FLOAT for prepared motion. RGBA32_FLOAT is acceptable for
@@ -119,4 +123,3 @@ Example Windows CMake:
 
 Do not present this package as a working in-game 0.3.0 integration until the
 actual wrapper, native GPU tests and RX9070XT in-game gates have passed.
-
