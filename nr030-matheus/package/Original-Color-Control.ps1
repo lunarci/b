@@ -9,7 +9,8 @@ $originalColorAction=$Action;$originalColorRoot=$Mo2Root;$originalColorPreserveE
 . (Join-Path $PSScriptRoot 'Setup.ps1') -Action Check
 $script:OriginalColorBaselineHash='8983dd9ff84b2615848ef3ac04f2e31fb150737f8867e26ced33cc8a8941e58d'
 $script:OriginalColorPreviousDiagnosticHash='41953c54e46417a88670a9e91b96a8e87198c2fa66174bdf6d810d834b175d75'
-function Test-OriginalColorKnownSource([string]$Hash) { return ($Hash -cin @($script:OriginalColorBaselineHash,$script:OriginalColorPreviousDiagnosticHash)) }
+$script:OriginalColorPredicationHash='9da458986e1a7f0a9a45f979b08b04017ef2f1f2b6c384926b89ecc05d27638b'
+function Test-OriginalColorKnownSource([string]$Hash) { return ($Hash -cin @($script:OriginalColorBaselineHash,$script:OriginalColorPreviousDiagnosticHash,$script:OriginalColorPredicationHash)) }
 
 function Get-OriginalColorJsonHash($Value) {
     # PowerShell 7 parses ISO dates as DateTime and may normalize fractional
@@ -418,7 +419,7 @@ function Invoke-OriginalColorControl($Paths,[ValidateSet('Apply','Restore')][str
     }.GetNewClosure()
     Invoke-OwnTransaction $Paths @($operations.ToArray()) $folder $before $gate
     if ($Mode -ceq 'Apply') {
-        if ($PreserveEffect) { Write-Host 'NR predication-state repair installed; current NR/effect/OptiScaler/XeFG settings preserved. Gameplay result not verified by installation.' }
+        if ($PreserveEffect) { Write-Host 'NR add-on repair installed; current NR/effect/OptiScaler/XeFG settings preserved. Gameplay result not verified by installation.' }
         else { Write-Host 'Diagnostic ASI installed and add-on EffectPercent=0 prepared with verified original backups. Base NR, ScalePercent=85, OptiScaler and XeFG were preserved. This is not a verified visual fix.' }
     }
     else {

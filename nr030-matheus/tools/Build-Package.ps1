@@ -105,6 +105,9 @@ Copy-Item -LiteralPath $warpResultPath -Destination (Join-Path $dist 'evidence/w
 Copy-Item -LiteralPath $lifetimeResultPath -Destination (Join-Path $dist 'evidence/lifetime_results.json')
 Copy-Item -LiteralPath $inputResultPath -Destination (Join-Path $dist 'evidence/input_results.json')
 Copy-Item -LiteralPath (Join-Path $BuildRoot 'addon/predication_results.json') -Destination (Join-Path $dist 'evidence/predication_results.json')
+if (Test-Path -LiteralPath (Join-Path $BuildRoot 'addon/xefg_barrier_results.json')) {
+    Copy-Item -LiteralPath (Join-Path $BuildRoot 'addon/xefg_barrier_results.json') -Destination (Join-Path $dist 'evidence/xefg_barrier_results.json')
+}
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'components/LICENSE') -Destination (Join-Path $dist 'LICENSE')
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'components/NOTICE') -Destination (Join-Path $dist 'NOTICE')
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'third_party') -Destination (Join-Path $dist 'third_party') -Recurse
@@ -116,6 +119,8 @@ $sourceStage=Join-Path $BuildRoot 'deliverable/combined-source'
 New-Item -ItemType Directory -Path $sourceStage | Out-Null
 Copy-Item -LiteralPath $sourceRoot -Destination (Join-Path $sourceStage 'nr030-matheus') -Recurse
 Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $sourceRoot) '.github/workflows/build-matheus-nr030.yml') -Destination $sourceStage
+$guardWorkflow=Join-Path (Split-Path -Parent $sourceRoot) '.github/workflows/build-nr030-xefg-barrier.yml'
+if (Test-Path -LiteralPath $guardWorkflow) { Copy-Item -LiteralPath $guardWorkflow -Destination $sourceStage }
 Compress-Archive -Path (Join-Path $sourceStage '*') -DestinationPath (Join-Path $dist 'SOURCE.zip') -CompressionLevel Optimal
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'runtime_contract.h') -Destination (Join-Path $dist 'evidence/runtime_contract.h')
 if (Test-Path -LiteralPath (Join-Path $sourceRoot 'runtime_static_evidence.md')) {

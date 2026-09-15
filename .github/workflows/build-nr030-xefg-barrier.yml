@@ -1,0 +1,78 @@
+name: Build and verify exact-host XeFG barrier correction
+on:
+  push:
+    branches: [nr030-white-artifact-runtime-162948]
+    paths:
+      - nr030-matheus/**
+      - .github/workflows/build-nr030-xefg-barrier.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: xefg-barrier-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Configure Windows x64 with exact source identity
+        run: cmake -S nr030-matheus -B build/nr030 -A x64 -DNR030_ENABLE_EXPERIMENTAL_RUNTIME=ON "-DNR030_SOURCE_COMMIT=$env:GITHUB_SHA"
+      - name: Build correction and native tests
+        run: cmake --build build/nr030 --config Release --parallel 4
+      - name: Run native tests and WARP state-mismatch negative control
+        run: ctest --test-dir build/nr030 -C Release --output-on-failure --output-junit ctest-results.xml
+      - name: Verify original installer ownership and rollback
+        run: |
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File nr030-matheus/package/Test-Package.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Installer regression failed.' }
+      - name: Verify complete installer regressions
+        run: |
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File nr030-matheus/package/Test-Complete-Package.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Complete installer regression failed.' }
+      - name: Verify preserved settings and existing backup chain
+        run: |
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File nr030-matheus/package/Test-Original-Color-Control.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Preserved-settings control regression failed.' }
+      - name: Verify session classification and current collector
+        run: |
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File nr030-matheus/package/Test-Session-Evidence.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Session regression failed.' }
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File nr030-matheus/package/Test-Opti-RuntimeEvidence.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Evidence collector regression failed.' }
+      - name: Assemble verified intermediate build
+        run: ./nr030-matheus/tools/Build-Package.ps1 -BuildRoot "$env:GITHUB_WORKSPACE/build/nr030" -SourceCommit $env:GITHUB_SHA -RunId $env:GITHUB_RUN_ID -ExperimentalReviewed
+      - name: Assemble conditional XeFG correction
+        run: |
+          python nr030-matheus/tools/Build-XeFGBarrierGuard-Package.py --base-zip build/nr030/deliverable/Matheus_NR030_0.2.4_LumaStability.zip --source-root nr030-matheus --output build/nr030/deliverable/Matheus_NR030_XeFGBarrierGuard.zip --source-commit $env:GITHUB_SHA --run-id $env:GITHUB_RUN_ID --handoff-results build/nr030/addon/handoff_results.json --control-results nr030-matheus/package/test-results/original-color-control-tests.json --predication-results build/nr030/addon/predication_results.json --session-results nr030-matheus/package/test-results/session-evidence-tests.json --guard-results build/nr030/addon/xefg_barrier_results.json
+          if ($LASTEXITCODE -ne 0) { throw 'XeFG correction packaging failed.' }
+      - name: Test final packaged upgrade from existing predication repair
+        run: |
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File nr030-matheus/package/Test-XeFG-Guard-Package.ps1 -PackageZip "$env:GITHUB_WORKSPACE/build/nr030/deliverable/Matheus_NR030_XeFGBarrierGuard.zip"
+          if ($LASTEXITCODE -ne 0) { throw 'Final packaged upgrade regression failed.' }
+      - name: Upload native and package evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: XeFG-barrier-build-evidence
+          path: |
+            build/nr030/Testing/Temporary/
+            build/nr030/ctest-results.xml
+            build/nr030/gpu_tests/warp_results.json
+            build/nr030/addon/*_results.json
+            nr030-matheus/package/test-results/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload verified correction package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: Matheus-NR030-XeFGBarrierGuard
+          path: build/nr030/deliverable/Matheus_NR030_XeFGBarrierGuard.zip
+          if-no-files-found: error
+          retention-days: 14

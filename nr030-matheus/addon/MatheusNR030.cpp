@@ -24,6 +24,7 @@
 #include "input_contract.h"
 #include "lifetime.h"
 #include "predication.h"
+#include "xefg_barrier_guard.h"
 #include "../runtime_contract.h"
 #include "../components/component_contract.h"
 #include "../components/pool_maintenance.h"
@@ -70,6 +71,9 @@ void Log(const std::string& message) noexcept {
 }
 void LifetimeLog(const char* message) {
     try { Log(std::string("event=lifetime detail=") + message); } catch (...) { }
+}
+void XeFgBarrierLog(const char* message) {
+    try { Log(message); } catch (...) { }
 }
 void HookCheck(MH_STATUS status, const char* action) {
     if (status != MH_OK) throw std::runtime_error(std::string(action) + ": " + MH_StatusToString(status));
@@ -281,6 +285,7 @@ public:
     std::mutex mutex;
     RecordingLifetime lifetime;
     PredicationTracker predication;
+    xefg::Guard xeFgBarrierGuard;
     ComPtr<ID3D12Device> device;
     ComPtr<IDXGIAdapter3> memoryAdapter;
     gpu::ShaderExecutor shaders;
@@ -325,6 +330,7 @@ public:
             }
             if (!diagnostics || now - lastDiagnosticMs < 1000) return;
             lastDiagnosticMs = now;
+            xeFgBarrierGuard.Report();
             unsigned retained = 0;
             for (const auto& slot : slots) if (slot.use) ++retained;
             DXGI_QUERY_VIDEO_MEMORY_INFO local{}, nonlocal{};
@@ -451,6 +457,9 @@ public:
         shaders.InitializeBytecode(device.Get(), code);
         predication.Initialize(commands);
         lifetime.Initialize(device.Get(), commands, &LifetimeLog, &PredicationTracker::ResetObserver, &predication);
+        // This optional exact-host correction cannot disable NR on failure.
+        // Its counters distinguish hook availability from an observed bad barrier.
+        xeFgBarrierGuard.Initialize(commands, &XeFgBarrierLog);
         Log("event=predication_mode admission=observed_disabled_only active_or_unknown=skip_nr preserve_before_ffx=true scale100_covered=false");
         admittedContext = context; admittedContextValue = context ? *context : nullptr;
         admittedExtent = plan.input;
