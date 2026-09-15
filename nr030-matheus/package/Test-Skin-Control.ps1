@@ -87,7 +87,11 @@ try {
                     $buffer=New-Object Text.StringBuilder 256
                     $null=[SkinControlNativeIni]::ReadString('DlssNrOnAmd',$key,'__MISSING__',$buffer,256,$pair[0])
                     $expected='0';if ($key -ceq 'LocalStructure') { $expected=$pair[1] }
-                    Assert-SkinTest ($buffer.ToString() -ceq $expected) ('Native GetPrivateProfileStringA did not read '+$key+'='+$expected+' from the patched INI; got '+$buffer.ToString())
+                    # Win32 may retain an inline comment. C7 converts the
+                    # leading numeric value, so allow only that exact value
+                    # plus whitespace/a preserved comment; never a fallback.
+                    $pattern='^'+[regex]::Escape($expected)+'\s*(?:[;#].*)?$'
+                    Assert-SkinTest ($buffer.ToString() -cmatch $pattern) ('Native GetPrivateProfileStringA did not read '+$key+'='+$expected+' from the patched INI; got '+$buffer.ToString())
                 }
                 Assert-SkinTest ([SkinControlNativeIni]::ReadInt('DlssNrOnAmd','Enabled',12345,$pair[0]) -eq 1) 'Native GetPrivateProfileIntA lost Enabled after the patch.'
             }

@@ -104,7 +104,9 @@ function Invoke-SkinControl($Paths,[ValidateSet('ApplySkin0','RestoreSkin')][str
     foreach ($path in $targets) {
         $source=Join-Path $folder ('staged-'+$operations.Count+'.ini')
         if ($Mode -ceq 'ApplySkin0') {
-            Write-Text $source $patched[$path]
+            # C7 reads this file with Win32 profile APIs. UTF-8 BOM can hide a
+            # first-line section header; UTF-16LE BOM is recognized by those APIs.
+            [IO.File]::WriteAllText($source,$patched[$path],[Text.Encoding]::Unicode)
             $snapshot=@($snapshots | Where-Object { Same-Path $_.Path $path })[0]
             $newSkinFiles += [pscustomobject]@{Path=$path;Backup=$snapshot.Backup;BeforeHash=$snapshot.BeforeHash;InstalledHash=(Get-Hash $source)}
         } else { Copy-Verified @($oldSkin.Files | Where-Object { Same-Path $_.Path $path })[0].Backup $source }
