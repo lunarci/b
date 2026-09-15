@@ -37,6 +37,7 @@ function Get-RuntimeEntryHash($Entry) {
 function Assert-RuntimeZipInventory($Archive,$Inventory) {
     $seen=@{}
     foreach ($item in $Inventory) {
+        if ($item -is [array]) { throw 'Evidence inventory contains a nested array instead of file records.' }
         $name=[string]$item.Entry
         if ($seen.ContainsKey($name)) { throw ('Duplicate evidence inventory entry: '+$name) }
         $seen[$name]=$true
@@ -134,7 +135,10 @@ function Collect-OptiRuntimeEvidence($Paths) {
         Copy-Verified $baseZip $pending
         $archive=[IO.Compression.ZipFile]::Open($pending,[IO.Compression.ZipArchiveMode]::Update)
         try {
-            $inventory=@((Read-RuntimeZipText $archive 'inventory.json') | ConvertFrom-Json)
+            # Windows PowerShell 5.1 emits a JSON array as one pipeline object.
+            # Assign before @() so both PS 5.1 and PS 7 produce flat file records.
+            $parsedInventory=(Read-RuntimeZipText $archive 'inventory.json') | ConvertFrom-Json
+            $inventory=@($parsedInventory)
             Assert-RuntimeZipInventory $archive $inventory
             foreach ($item in $captured.ToArray()) {
                 $null=[IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive,$item.Copy,$item.Entry,[IO.Compression.CompressionLevel]::Optimal)

@@ -63,7 +63,7 @@ function Run-RuntimeCase([string]$Name,[scriptblock]$Code) {
         Set-Item Function:Check-Complete -Value { param($Paths) 'Synthetic check text; installation is intentionally not validated by this collector test.' }
         $f=New-RuntimeFixture $Name;& $Code $f
         $cases.Add([pscustomobject]@{Name=$Name;Status='PASS';Error=$null});Write-Host ('PASS '+$Name)
-    } catch { $cases.Add([pscustomobject]@{Name=$Name;Status='FAIL';Error=$_.Exception.Message});Write-Host ('FAIL '+$Name+': '+$_.Exception.Message) }
+    } catch { $cases.Add([pscustomobject]@{Name=$Name;Status='FAIL';Error=$_.Exception.Message;Position=$_.InvocationInfo.PositionMessage;ScriptStackTrace=$_.ScriptStackTrace});Write-Host ('FAIL '+$Name+': '+$_.Exception.Message+'; '+$_.InvocationInfo.PositionMessage) }
     finally {
         $script:RuntimeTestProcess=$false
         Set-Item Function:Collect-MotionEvidence -Value $originalCollect
@@ -79,7 +79,9 @@ try {
         Assert-RuntimeTest ((Split-Path -Leaf $zip) -like 'MOTION_RUNTIME_EVIDENCE-*.zip') 'Runtime evidence name is ambiguous.'
         $archive=[IO.Compression.ZipFile]::OpenRead($zip)
         try {
-            $inventory=@((Read-RuntimeZipText $archive 'inventory.json') | ConvertFrom-Json)
+            $parsedInventory=(Read-RuntimeZipText $archive 'inventory.json') | ConvertFrom-Json
+            $inventory=@($parsedInventory)
+            Assert-RuntimeTest ($inventory.Count -gt 2 -and $inventory[0] -isnot [array]) 'JSON inventory was deserialized as nested arrays.'
             Assert-RuntimeZipInventory $archive $inventory
             $dlls=@($archive.Entries | Where-Object { $_.FullName -like '*.dll' })
             Assert-RuntimeTest ($dlls.Count -eq 2 -and $null -ne $archive.GetEntry('ark/dxgi.dll') -and $null -ne $archive.GetEntry('overwrite/dxgi.dll')) 'Unrequested DLL or missing exact loader copy.'
@@ -161,12 +163,32 @@ try {
     Run-RuntimeCase 'reparse-loader-parent-is-rejected' {
         param($f)
         $external=Join-Path $f.Root 'external-loader';New-Item -ItemType Directory -Path $external | Out-Null
-        Write-Text (Join-Path $external 'dxgi.dll') 'Outside loader must not be collected'
+        $sentinel=Join-Path $external 'dxgi.dll'
+        Write-Text $sentinel 'Outside loader must not be collected'
+        $sentinelHash=Get-Hash $sentinel
         Remove-Item -LiteralPath $f.Paths.OldBin -Recurse -Force
-        if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { New-Item -ItemType Junction -Path $f.Paths.OldBin -Target $external | Out-Null }
-        else { New-Item -ItemType SymbolicLink -Path $f.Paths.OldBin -Target $external | Out-Null }
-        Assert-RuntimeThrows { Collect-OptiRuntimeEvidence $f.Paths 6>$null } 'Reparse/junction path is not allowed'
-        Remove-Item -LiteralPath $f.Paths.OldBin -Force
+        $windows=([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT)
+        if ($windows) {
+            # Native directory junctions require no symlink privilege. Use the
+            # native create/delete pair independently of PowerShell's provider.
+            $command='mklink /J "'+$f.Paths.OldBin+'" "'+$external+'"'
+            $output=& $env:ComSpec /d /c $command 2>&1
+            Assert-RuntimeTest ($LASTEXITCODE -eq 0) ('Native junction creation failed: '+($output -join ' '))
+        } else { New-Item -ItemType SymbolicLink -Path $f.Paths.OldBin -Target $external | Out-Null }
+        try {
+            Assert-RuntimeTest (((Get-Item -LiteralPath $f.Paths.OldBin -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) 'Fixture did not create a real reparse directory.'
+            Assert-RuntimeThrows { Collect-OptiRuntimeEvidence $f.Paths 6>$null } 'Reparse/junction path is not allowed'
+        } finally {
+            if ($windows) {
+                # No /s: remove only this generated junction, never its target.
+                $cleanupCommand='rmdir "'+$f.Paths.OldBin+'"'
+                $cleanupOutput=& $env:ComSpec /d /c $cleanupCommand 2>&1
+                Assert-RuntimeTest ($LASTEXITCODE -eq 0) ('Native junction cleanup failed: '+($cleanupOutput -join ' '))
+            }
+            else { Remove-Item -LiteralPath $f.Paths.OldBin -Force }
+            Assert-RuntimeTest (-not (Test-Path -LiteralPath $f.Paths.OldBin)) 'Reparse fixture remained after cleanup.'
+            Assert-RuntimeTest ((Test-Path -LiteralPath $sentinel -PathType Leaf) -and (Get-Hash $sentinel) -ceq $sentinelHash) 'Junction test modified or removed its external target.'
+        }
     }
 } finally {
     $failures=@($cases.ToArray() | Where-Object { $_.Status -cne 'PASS' }).Count
