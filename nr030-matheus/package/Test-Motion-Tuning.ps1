@@ -274,7 +274,9 @@ try {
         Assert-MotionTest ($script:MotionNetworkCalls -eq 0) 'Configured log collection attempted network access.'
         $zip=[IO.Compression.ZipFile]::OpenRead($zipPath)
         try {
-            $inventory=@((Read-MotionZipText $zip 'inventory.json') | ConvertFrom-Json)
+            # PS5.1 emits a JSON array as one pipeline object. Assignment
+            # preserves its array shape; @(...pipeline...) would nest it.
+            $inventory=(Read-MotionZipText $zip 'inventory.json') | ConvertFrom-Json
             foreach ($side in @('ark','overwrite')) {
                 $entryName='configured-'+$side+'/OptiScaler-configured.log'
                 Assert-MotionTest ((Read-MotionZipText $zip $entryName) -ceq $contents[$side]) 'Configured log header/body/tail was not copied whole.'
@@ -315,7 +317,7 @@ try {
             $notes=Read-MotionZipText $zip 'COLLECTION_NOTES.txt'
             Assert-MotionTest ($notes -match 'CONFIGURED_LOG_OUTSIDE_ROOT') 'Omitted configured log was not explicitly explained.'
             Assert-MotionTest ($notes.Contains($outside)) 'Omission note lost the configured path needed to locate the missing runtime log.'
-            $inventory=@((Read-MotionZipText $zip 'inventory.json') | ConvertFrom-Json)
+            $inventory=(Read-MotionZipText $zip 'inventory.json') | ConvertFrom-Json
             Assert-MotionTest (@($inventory | Where-Object { $_.Source -ceq $outside }).Count -eq 0) 'Outside file was reported as a collected source.'
             foreach ($entry in $zip.Entries) {
                 Assert-MotionTest (-not (Read-MotionZipText $zip $entry.FullName).Contains($private)) 'Outside log content leaked into the evidence ZIP.'
