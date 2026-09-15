@@ -66,3 +66,16 @@ endif()
 add_test(NAME nr030_lifetime_checks
   COMMAND nr030_lifetime_checks "${CMAKE_CURRENT_BINARY_DIR}/lifetime_results.json")
 set_tests_properties(nr030_lifetime_checks PROPERTIES TIMEOUT 40)
+
+# Admission uses real resource descriptions and the same production contract.
+# No NR inference or game performance result is inferred from these checks.
+add_executable(nr030_input_checks input_checks.cpp)
+target_compile_features(nr030_input_checks PRIVATE cxx_std_17)
+target_compile_definitions(nr030_input_checks PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(nr030_input_checks PRIVATE d3d12 dxgi)
+if(MSVC)
+  target_compile_options(nr030_input_checks PRIVATE /W4 /WX /permissive- /utf-8)
+endif()
+add_test(NAME nr030_input_checks
+  COMMAND nr030_input_checks "${CMAKE_CURRENT_BINARY_DIR}/input_results.json")
+set_tests_properties(nr030_input_checks PROPERTIES TIMEOUT 30)

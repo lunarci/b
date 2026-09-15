@@ -75,14 +75,15 @@ float FromHalf(std::uint16_t value) {
 UINT Channels(DXGI_FORMAT format) {
     switch (format) {
     case DXGI_FORMAT_R32_FLOAT: return 1;
-    case DXGI_FORMAT_R32G32_FLOAT: return 2;
+    case DXGI_FORMAT_R32G32_FLOAT:
+    case DXGI_FORMAT_R16G16_FLOAT: return 2;
     case DXGI_FORMAT_R32G32B32A32_FLOAT:
     case DXGI_FORMAT_R16G16B16A16_FLOAT: return 4;
     default: throw std::invalid_argument("Unsupported test texture format");
     }
 }
 UINT ComponentBytes(DXGI_FORMAT format) {
-    return format == DXGI_FORMAT_R16G16B16A16_FLOAT ? 2u : 4u;
+    return format == DXGI_FORMAT_R16G16B16A16_FLOAT || format == DXGI_FORMAT_R16G16_FLOAT ? 2u : 4u;
 }
 struct Image {
     UINT width = 0, height = 0;
@@ -559,6 +560,41 @@ int wmain(int argc, wchar_t** argv) {
                         expected.At(x, y, c) = input.At(sampledX[x], sampledY[y], c);
                 Equal(gpu.Run(kernel, {input}, 5, 3, {5, 3, 7, 5}, format), expected, 0, 0, true);
             });
+        }
+        // Cyberpunk's captured input stores motion in RGBA16F. The production
+        // Texture2D<float2> shader must read its XY lanes through an RGBA16F SRV
+        // and write real RG16F storage; the unused ZW lanes are not vector units.
+        for (const auto inputFormat : {DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16_FLOAT}) {
+            for (const auto choice : {contract::FixedScale::Percent85, contract::FixedScale::Percent75}) {
+                const auto plan = contract::make_scale_plan({53, 47}, choice);
+                const auto label = inputFormat == DXGI_FORMAT_R16G16B16A16_FLOAT ? "RGBA16F" : "RG16F";
+                test(std::string(label) + " motion to RG16F at " +
+                     std::to_string(static_cast<UINT>(choice)) + "% preserves signed fractional XY", [&] {
+                    Image input(53, 47, inputFormat);
+                    for (UINT y = 0; y < input.height; ++y) for (UINT x = 0; x < input.width; ++x) {
+                        // Exactly representable halves make any unintended
+                        // channel mix or vector scaling an exact mismatch.
+                        input.At(x, y, 0) = (static_cast<float>(x) - 27.0f) / 8.0f;
+                        input.At(x, y, 1) = (static_cast<float>(y) - 23.0f) / -16.0f;
+                        if (Channels(inputFormat) == 4) {
+                            input.At(x, y, 2) = 128.0f + static_cast<float>(y);
+                            input.At(x, y, 3) = -256.0f - static_cast<float>(x);
+                        }
+                    }
+                    Image expected(plan.neural.width, plan.neural.height, DXGI_FORMAT_R16G16_FLOAT);
+                    for (UINT y = 0; y < expected.height; ++y) for (UINT x = 0; x < expected.width; ++x) {
+                        // Integer pixel-center mapping is independent of the
+                        // shader's floating-point coordinate expression.
+                        const UINT sx = ((2 * x + 1) * input.width) / (2 * expected.width);
+                        const UINT sy = ((2 * y + 1) * input.height) / (2 * expected.height);
+                        expected.At(x, y, 0) = input.At(sx, sy, 0);
+                        expected.At(x, y, 1) = input.At(sx, sy, 1);
+                    }
+                    Equal(gpu.Run(Kernel::Motion, {input}, expected.width, expected.height,
+                        {expected.width, expected.height, input.width, input.height},
+                        DXGI_FORMAT_R16G16_FLOAT), expected, 0, 0, true);
+                });
+            }
         }
         test("Residual zero preserves native detail negative values and alpha exactly", [&] {
             auto image = Pattern(11, 7);

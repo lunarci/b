@@ -162,7 +162,9 @@ function Assert-Base($Paths) {
         if ((Get-Value $base 'Version') -ne 2 -or -not (Same-Path ([string](Get-Value $base 'PluginFolder')) $Paths.Plugins)) { throw 'The v1.4 base installation record does not match the fixed ARK path.' }
     }
     $nr=Join-Path $Paths.Plugins 'dlssnr_on_amd.asi'
-    if (-not (Test-Path -LiteralPath $nr -PathType Leaf) -or (Get-Hash $nr) -cne $script:ExpectedNrHash) { throw 'The pinned NR 0.3.0 ASI SHA-256 does not match. No replacement is performed.' }
+    if (-not (Test-Path -LiteralPath $nr -PathType Leaf)) { throw ('Base NR file is missing: '+$nr+'. Use 01_INSTALL_ADDON.cmd to obtain the required base files.') }
+    $nrHash=Get-Hash $nr
+    if ($nrHash -cne $script:ExpectedNrHash) { throw ('The pinned NR 0.3.0 ASI SHA-256 does not match: '+$nr+'; actual='+$nrHash+'; expected='+$script:ExpectedNrHash) }
     $optiPaths=@(Join-Path $Paths.Bin 'OptiScaler.ini')
     $shadowOpti=Join-Path $Paths.OldBin 'OptiScaler.ini'
     if (Test-Path -LiteralPath $shadowOpti -PathType Leaf) { $optiPaths += $shadowOpti }
@@ -418,7 +420,7 @@ function Get-AddonSessionSummary([string]$Text,[string]$InstalledUtc) {
     }
     $hooks=[regex]::Matches($session,'(?m)^event=hook_active static_abi_verified=true runtime_validated=false scale_percent=(75|85|100)\s*$')
     if ($hooks.Count) { $result.HookActive=$true;$result.ScalePercent=[int]$hooks[$hooks.Count-1].Groups[1].Value }
-    $config=[regex]::Matches($session,'(?m)^event=resolve_config version=0\.2\.[01] colour_preservation_percent=(100|[0-9]{1,2}) depth_protection=([01]) effect_percent=(100|[0-9]{1,2}) applies_to_scaled_path_only=true[ \t\r]*$')
+    $config=[regex]::Matches($session,'(?m)^event=resolve_config version=0\.2\.[012] colour_preservation_percent=(100|[0-9]{1,2}) depth_protection=([01]) effect_percent=(100|[0-9]{1,2}) applies_to_scaled_path_only=true[ \t\r]*$')
     if ($config.Count) {
         $last=$config[$config.Count-1];$result.CompositeSettingsFound=$true
         $result.ColourPreservationPercent=[int]$last.Groups[1].Value
@@ -474,11 +476,18 @@ function Check-Addon($Paths) {
     $folders=Get-LogFolders $Paths
     $baseLog=Get-LatestLog $folders 'dlssnr_on_amd.log'
     if ($null -ne $baseLog) {
-        $summary=Get-BaseSessionSummary ([IO.File]::ReadAllText($baseLog.FullName))
+        $baseText=[IO.File]::ReadAllText($baseLog.FullName)
+        $summary=Get-BaseSessionSummary $baseText
         $lines.Add('Base log: '+$baseLog.FullName+'; modified UTC '+$baseLog.LastWriteTimeUtc.ToString('o'))
         $lines.Add('LAST SESSION only: '+($summary | ConvertTo-Json -Compress))
         if ($null -ne $state) { $lines.Add('Log file modified after add-on install: '+($baseLog.LastWriteTimeUtc -ge [DateTime]::Parse($state.InstalledUtc).ToUniversalTime())) }
         $lines.Add('A file timestamp alone does not prove the final session began after installation.')
+        $baseStarts=[regex]::Matches($baseText,'(?m)^dlssnr_amd\s+v[^\r\n]*loaded into[^\r\n]*')
+        if ($baseStarts.Count) {
+            $baseSession=$baseText.Substring($baseStarts[$baseStarts.Count-1].Index)
+            $lines.Add('Base NR current-session input formats / timing:')
+            foreach ($line in @([regex]::Matches($baseSession,'(?m)^(?:dlssnr_amd |ffxCreateContext:|pre-upscale mode:|staging ready:|timing \(avg)[^\r\n]*') | Select-Object -Last 16)) { $lines.Add($line.Value) }
+        }
     } else { $lines.Add('Base NR log not found.') }
     $addonLog=Get-LatestLog $folders 'MatheusNR030.log'
     if ($null -ne $addonLog) {
@@ -489,6 +498,9 @@ function Check-Addon($Paths) {
         $addonSummary=Get-AddonSessionSummary $addonText $installedUtc
         $lines.Add('ADD-ON LAST SESSION observations: '+($addonSummary | ConvertTo-Json -Compress))
         $lines.Add('Combined colour/depth settings recorded: '+$addonSummary.CompositeSettingsFound+'; composite command recording observed: '+$addonSummary.CompositeRecordingObserved)
+        if ($addonSummary.StartedAfterInstall -and $addonSummary.StatsFound -and $addonSummary.Seen -gt 0 -and $addonSummary.Scaled -eq 0) {
+            $lines.Add('NOT APPLIED: no NR input downscaling was recorded. A configured ScalePercent=85 alone is not successful application.')
+        }
         $poolSummary=Get-PoolSessionSummary $addonText
         $lines.Add('POOL / MEMORY LAST SESSION: '+($poolSummary | ConvertTo-Json -Compress -Depth 5))
         $lines.Add('DXGI local_usage is process usage, not addon-only VRAM. Over-budget observations do not prove the map-drop cause; ffx_frame_time_ms is supplied dispatch data, not measured FPS.')

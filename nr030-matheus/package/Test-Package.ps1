@@ -179,6 +179,23 @@ try {
         Assert-True (-not (Test-Path -LiteralPath $f.Paths.Backup)) 'Add-on ownership was fabricated.'
         Assert-True (-not (Test-Path -LiteralPath $f.Paths.BaseState)) 'Legacy ownership was fabricated.'
     }
+    Run-Case 'missing-base-file-is-not-reported-as-hash-mismatch' {
+        param($f)
+        Remove-Item -LiteralPath (Join-Path $f.Paths.Plugins 'dlssnr_on_amd.asi')
+        Assert-Throws { Install-Addon $f.Paths } 'Base NR file is missing:'
+        Assert-True (-not (Test-Path -LiteralPath $f.Paths.Backup)) 'Missing base file changed the installation.'
+    }
+    Run-Case 'current-input-rejection-is-not-reported-as-working-scale' {
+        param($f)
+        $log="event=session_start utc=2026-09-15T09:12:30.976Z runtime_validated=false source_commit="+('a'*40)+"`n"
+        $log+="event=hook_active static_abi_verified=true runtime_validated=false scale_percent=85`n"
+        $log+="event=resolve_config version=0.2.2 colour_preservation_percent=100 depth_protection=1 effect_percent=50 applies_to_scaled_path_only=true`n"
+        $log+="event=input_check reason=motion_input_unsupported motion_ffx_format=4 motion_dxgi=10`n"
+        $log+="event=frame seen=1080 scaled=0 nr_recorded=0 resolved=0 fallback=1080 gpu_completed=0 allocated_bytes=0 allocated_slots=0`n"
+        $a=Get-AddonSessionSummary $log '2026-09-15T09:00:00Z'
+        Assert-True ($a.CompositeSettingsFound -and $a.EffectPercent -eq 50) '0.2.2 settings were not recognized.'
+        Assert-True ($a.Result -ceq 'NO_NR_RESOLVE_RECORDING_OBSERVED' -and -not $a.CommandRecordingObserved -and -not $a.CompositeRecordingObserved) 'Rejected input was mistaken for a working scale/quality effect.'
+    }
     Run-Case 'wrong-base-hash-no-write' {
         param($f)
         Write-Text (Join-Path $f.Paths.Plugins 'dlssnr_on_amd.asi') 'DIFFERENT NR BINARY'

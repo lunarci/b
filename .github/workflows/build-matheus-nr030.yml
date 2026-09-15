@@ -7,6 +7,7 @@ on:
       - nr030-combined-color
       - nr030-map-recovery
       - nr030-install-record-fix
+      - nr030-complete-install
     paths:
       - nr030-matheus/**
       - .github/workflows/build-matheus-nr030.yml
@@ -43,6 +44,10 @@ jobs:
             & powershell.exe -NoProfile -ExecutionPolicy Bypass -File nr030-matheus/package/Test-Package.ps1
             if ($LASTEXITCODE -ne 0) { throw "Package fixture tests failed: $LASTEXITCODE" }
           }
+      - name: Validate complete downloads, configuration, and recovery in Windows PowerShell 5.1
+        run: |
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File nr030-matheus/package/Test-Complete-Package.ps1
+          if ($LASTEXITCODE -ne 0) { throw "Complete package fixture tests failed: $LASTEXITCODE" }
       - name: Assemble experimental installation package
         run: |
           ./nr030-matheus/tools/Build-Package.ps1 -BuildRoot "$env:GITHUB_WORKSPACE/build/nr030" -SourceCommit $env:GITHUB_SHA -RunId $env:GITHUB_RUN_ID -ExperimentalReviewed
@@ -57,6 +62,7 @@ jobs:
             build/nr030/**/*.log
             build/nr030/gpu_tests/warp_results.json
             build/nr030/addon/lifetime_results.json
+            build/nr030/addon/input_results.json
             nr030-matheus/package/test-results/
           if-no-files-found: warn
           retention-days: 14
@@ -65,6 +71,6 @@ jobs:
         with:
           name: Matheus-NR030-install-package-${{ github.run_number }}
           path: |
-            build/nr030/deliverable/Matheus_NR030_Addon_0.2.1_MapRecovery_InstallFix.zip
+            build/nr030/deliverable/Matheus_NR030_0.2.2_Complete.zip
           if-no-files-found: error
           retention-days: 14

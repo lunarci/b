@@ -3,7 +3,9 @@
 This is an experimental adaptation of the Matheus PreSR downsample/residual
 idea. It is not an upstream Matheus release, an official AMD/NVIDIA interface,
 or a game-validated replacement runtime. The existing NR ASI, neural model,
-OptiScaler and XeFG binaries remain separate and are not modified on disk.
+OptiScaler and XeFG binaries remain separate. The complete installer preserves
+OptiScaler/XeFG binaries and can replace incompatible NR/model files with verified
+pinned versions after backup; the adapter does not patch their disk images.
 
 ## Exact admission contract
 
@@ -18,7 +20,7 @@ OptiScaler and XeFG binaries remain separate and are not modified on disk.
   extent. Color, depth and motion active description and allocation extents
   must all equal the render extent. Each resource has one mip, one slice and
   one sample and is in FFX compute-read state.
-- Formats: RGBA16F color, R32F depth, RG16F motion; compatible typeless backing
+- Formats: RGBA16F color, R32F depth, RG16F or RGBA16F motion; compatible typeless backing
   allocations are accepted. Display-resolution guide paths are not admitted.
 - The descriptor extension chain must be empty. Other FFX calls pass through.
 
@@ -43,9 +45,8 @@ queue. There is no CPU wait before command-list submission and no frame-count
 reuse heuristic. Unknown submission state freezes those resources and stops
 new addon admission. Fences alone do not permit reuse.
 
-Before the first low-NR call, unsupported inputs use the original NR helper.
-After that call, an unsupported or busy frame dispatches the original full
-input directly to FFX, temporarily omitting NR. This prevents a fallback from
+Since 0.2.2, unsupported or busy admission dispatches the original full
+input directly to FFX, omitting NR even before the first low-NR call. This prevents a fallback from
 resizing the runtime back to a different extent while low-resolution work can
 still be queued. A changed context or extent requires restarting the game to
 re-admit this experiment. Scale 100 selected before launch uses original NR
@@ -94,3 +95,10 @@ observed fence-and-Reset retirement of resolved slots (`gpu_completed`). Those
 counters do not prove neural-model success, visual quality, performance gain,
 or XeFG compatibility. `allocated_bytes` and `allocated_slots` expose actual
 addon texture usage; the allocation ceiling is not a VRAM-saving promise.
+
+In 0.2.2, RGBA16F motion inputs use their actual typed SRV and only XY is
+written to the RG16F low-motion target. Input rejection diagnostics expose both
+FFX and actual D3D12 formats. Default residual effect strength is 50 percent;
+this reduces the final correction amount and does not reduce inference work.
+The complete installer also applies the user-requested OptiScaler ratio 2.0,
+backs up changed settings and supports disabling both NR layers together.

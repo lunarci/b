@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 #include "ffx_contract.h"
+#include "input_contract.h"
 #include "lifetime.h"
 #include "../runtime_contract.h"
 #include "../components/component_contract.h"
@@ -216,30 +217,22 @@ bool SameDevice(ID3D12DeviceChild* child, ID3D12Device* expected) {
 ID3D12Resource* Resource(const ffx::Resource& resource) {
     return static_cast<ID3D12Resource*>(resource.resource);
 }
-bool TextureAllowed(const ffx::Resource& resource, cmp::Extent2D extent,
-                    DXGI_FORMAT typed, DXGI_FORMAT alias, std::uint32_t ffxFormat) {
-    if (!resource.resource || resource.state != ffx::ComputeRead ||
-        resource.description.type != 2 || resource.description.format != ffxFormat || resource.description.width != extent.width ||
-        resource.description.height != extent.height) return false;
-    const auto actual = Resource(resource)->GetDesc();
-    return actual.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D && actual.DepthOrArraySize == 1 &&
-           actual.MipLevels == 1 && actual.SampleDesc.Count == 1 && actual.Width == extent.width &&
-           actual.Height == extent.height && (actual.Format == typed || actual.Format == alias) &&
-           !(actual.Flags & D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE);
-}
-bool Eligible(const ffx::UpscaleDispatch* desc) {
-    if (!desc || desc->header.type != ffx::UpscaleType || desc->header.next || !desc->commandList)
-        return false;
-    const cmp::Extent2D extent{desc->renderSize.width, desc->renderSize.height};
-    if (!cmp::valid_extent(extent) || !std::isfinite(desc->motionVectorScale.x) ||
-        !std::isfinite(desc->motionVectorScale.y) || !std::isfinite(desc->jitterOffset.x) ||
-        !std::isfinite(desc->jitterOffset.y)) return false;
-    return TextureAllowed(desc->color, extent, DXGI_FORMAT_R16G16B16A16_FLOAT,
-                         DXGI_FORMAT_R16G16B16A16_TYPELESS, ffx::FormatRgba16Float) &&
-           TextureAllowed(desc->depth, extent, DXGI_FORMAT_R32_FLOAT,
-                         DXGI_FORMAT_R32_TYPELESS, ffx::FormatR32Float) &&
-           TextureAllowed(desc->motionVectors, extent, DXGI_FORMAT_R16G16_FLOAT,
-                         DXGI_FORMAT_R16G16_TYPELESS, ffx::FormatRg16Float);
+std::string ResourceFacts(const char* label, const ffx::Resource& resource) {
+    std::string result = std::string(" ") + label + "_present=" + std::to_string(resource.resource != nullptr) +
+        " " + label + "_ffx_format=" + std::to_string(resource.description.format) +
+        " " + label + "_state=" + std::to_string(resource.state) +
+        " " + label + "_type=" + std::to_string(resource.description.type) +
+        " " + label + "_width=" + std::to_string(resource.description.width) +
+        " " + label + "_height=" + std::to_string(resource.description.height);
+    if (resource.resource && resource.description.type == 2) {
+        const auto actual = Resource(resource)->GetDesc();
+        result += std::string(" ") + label + "_dxgi=" + std::to_string(actual.Format) +
+            " " + label + "_texture_width=" + std::to_string(actual.Width) +
+            " " + label + "_texture_height=" + std::to_string(actual.Height) +
+            " " + label + "_mips=" + std::to_string(actual.MipLevels) +
+            " " + label + "_samples=" + std::to_string(actual.SampleDesc.Count);
+    }
+    return result;
 }
 ffx::Resource AdaptResource(const ffx::Resource& source, ID3D12Resource* resource,
                             cmp::Extent2D extent, std::uint32_t format) {
@@ -280,9 +273,8 @@ public:
     HMODULE runtime = nullptr;
     ffx::HelperFn helper = nullptr;
     cmp::FixedScale scale = cmp::FixedScale::Percent85;
-    int colourPreservation = 100, depthProtection = 1, effectPercent = 100;
+    int colourPreservation = 100, depthProtection = 1, effectPercent = 50;
     bool trimIdleScratch = true, diagnostics = true;
-    std::atomic<bool> everScaled{false};
     std::atomic<bool> failed{false};
     std::mutex mutex;
     RecordingLifetime lifetime;
@@ -364,6 +356,21 @@ public:
         return (*reinterpret_cast<const volatile std::uint8_t*>(base + RuntimeContract::EnabledRva) & 1u) &&
             *reinterpret_cast<const volatile std::int32_t*>(base + RuntimeContract::PreUpscaleRva) != 0;
     }
+    void InputDiagnostic(const ffx::UpscaleDispatch* desc, const char* issue) const noexcept {
+        if (!diagnostics || (seen.load() != 1 && seen.load() % 120 != 0)) return;
+        try {
+            std::string line = std::string("event=input_check reason=") + (issue ? issue : "accepted");
+            if (desc) line += " dispatch_type=" + std::to_string(desc->header.type) +
+                " has_extension=" + std::to_string(desc->header.next != nullptr);
+            if (desc && desc->header.type == ffx::UpscaleType) {
+                line += " render_width=" + std::to_string(desc->renderSize.width) +
+                    " render_height=" + std::to_string(desc->renderSize.height) +
+                    ResourceFacts("color", desc->color) + ResourceFacts("depth", desc->depth) +
+                    ResourceFacts("motion", desc->motionVectors);
+            }
+            Log(line);
+        } catch (...) { }
+    }
     void Stats(bool force = false) const {
         const auto count = seen.load();
         if (!force && count != 1 && count % 120 != 0) return;
@@ -377,8 +384,10 @@ public:
         const auto count = ++fallback;
         lastFallbackReason.store(reason);
         if (count == 1 || count % 120 == 0) Log(std::string("event=fallback reason=") + reason);
-        const auto value = direct || everScaled.load()
-            ? original(context, desc ? &desc->header : nullptr) : helper(original, context, desc);
+        // A rejected 75/85% path must not silently run expensive, unscaled NR.
+        // Restore ordinary FFX input immediately. The explicit 100% comparison
+        // mode reaches the original NR helper separately in HelperHook.
+        const auto value = original(context, desc ? &desc->header : nullptr);
         // Direct admission failures can be on a competing thread without the
         // adapter mutex. Only its owner emits a coherent frame snapshot.
         if (!direct) Stats();
@@ -481,19 +490,19 @@ public:
     void Downsample(Slot& slot, ID3D12GraphicsCommandList* commands,
                     const ffx::UpscaleDispatch& full, const cmp::ScalePlan& plan) {
         const auto constants = plan.colour_constants();
-        const std::array<gpu::TextureBinding, 3> input{{
+        const std::array<gpu::TextureBinding, 3> inputs{{
             {Resource(full.color), DXGI_FORMAT_R16G16B16A16_FLOAT},
             {Resource(full.depth), DXGI_FORMAT_R32_FLOAT},
-            {Resource(full.motionVectors), DXGI_FORMAT_R16G16_FLOAT}}};
+            {Resource(full.motionVectors), input::MotionViewFormat(full.motionVectors)}}};
         const std::array<gpu::TextureBinding, 3> output{{
             {slot.baseline.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT},
             {slot.lowDepth.Get(), DXGI_FORMAT_R32_FLOAT},
             {slot.lowMotion.Get(), DXGI_FORMAT_R16G16_FLOAT}}};
-        for (UINT index = 0; index < input.size(); ++index) {
+        for (UINT index = 0; index < inputs.size(); ++index) {
             gpu::Transition(commands, output[index].resource, ReadState, WriteState);
             try {
             shaders.Record(static_cast<gpu::Kernel>(index), commands, slot.descriptors.Get(),
-                index * gpu::ShaderExecutor::DescriptorCount, &constants, 4, &input[index], 1,
+                index * gpu::ShaderExecutor::DescriptorCount, &constants, 4, &inputs[index], 1,
                 output[index], plan.neural.width, plan.neural.height);
             } catch (...) {
                 gpu::Transition(commands, output[index].resource, WriteState, ReadState);
@@ -508,11 +517,13 @@ public:
         frame.called = true;
         auto dispatch = frame.full;
         const auto* corrected = reinterpret_cast<const ffx::UpscaleDispatch*>(header);
-        if (context == frame.context && corrected && corrected->header.type == ffx::UpscaleType &&
-            corrected->commandList == frame.full.commandList &&
+        const bool callbackMatches = context == frame.context && corrected &&
+            corrected->header.type == ffx::UpscaleType &&
+            corrected->commandList == frame.full.commandList;
+        if (callbackMatches &&
             corrected->color.resource != frame.slot->baseline.Get() &&
-            TextureAllowed(corrected->color, frame.plan.neural, DXGI_FORMAT_R16G16B16A16_FLOAT,
-                           DXGI_FORMAT_R16G16B16A16_TYPELESS, ffx::FormatRgba16Float) &&
+            !input::TextureRejection(corrected->color, frame.plan.neural, ffx::FormatRgba16Float,
+                                     DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_TYPELESS) &&
             SameDevice(Resource(corrected->color), device.Get())) {
             ++nrRecorded;
             try {
@@ -541,12 +552,19 @@ public:
                 frame.slot->resolved = true; ++resolved;
             } catch (const std::exception& error) {
                 failed.store(true); ++fallback;
+                lastFallbackReason.store("resolve_record_failed");
                 Log(std::string("event=resolve_disabled reason=") + error.what());
             }
         } else {
-            ++fallback;
-            if (fallback.load() == 1 || fallback.load() % 120 == 0)
-                Log("event=fallback reason=runtime_did_not_record_compatible_low_NR_color");
+            // Record(false) passes the low input through unchanged, including
+            // normal startup/busy skips. Retry later instead of latching a fault.
+            const char* reason = callbackMatches &&
+                corrected->color.resource == frame.slot->baseline.Get()
+                ? "nr_output_unavailable" : "nr_output_incompatible";
+            lastFallbackReason.store(reason);
+            const auto count = ++fallback;
+            if (count == 1 || count % 120 == 0)
+                Log(std::string("event=fallback reason=") + reason);
         }
         frame.result = frame.original(frame.context, &dispatch.header);
         return frame.result;
@@ -575,8 +593,11 @@ std::uint32_t __fastcall HelperHook(ffx::DispatchFn original, void** context, co
     std::unique_lock guard(app->mutex, std::try_to_lock);
     if (!guard.owns_lock()) return app->Fallback(original, context, desc, "concurrent_dispatch", true);
     app->Maintain(desc);
-    if (app->failed.load() || !app->LiveModeAllowed() || !context || !*context || !Eligible(desc))
-        return app->Fallback(original, context, desc, "unsupported_input_or_mode");
+    const char* issue = app->failed.load() ? "adapter_failed" :
+        !app->LiveModeAllowed() ? "base_mode_disabled" :
+        (!context || !*context) ? "context_missing" : input::Rejection(desc);
+    app->InputDiagnostic(desc, issue);
+    if (issue) return app->Fallback(original, context, desc, issue);
     auto* commands = static_cast<ID3D12GraphicsCommandList*>(desc->commandList);
     const auto plan = cmp::make_scale_plan({desc->renderSize.width, desc->renderSize.height}, app->scale);
     if (!plan.scaled) return app->Fallback(original, context, desc, "extent_not_scaled");
@@ -621,7 +642,7 @@ std::uint32_t __fastcall HelperHook(ffx::DispatchFn original, void** context, co
         low.jitterOffset = {desc->jitterOffset.x * (float(plan.neural.width) / float(plan.input.width)),
                             desc->jitterOffset.y * (float(plan.neural.height) / float(plan.input.height))};
         app->Downsample(*slot, commands, *desc, plan);
-        app->everScaled.store(true); ++app->scaled;
+        ++app->scaled;
         const auto result = app->helper(&AfterNr, context, &low);
         if (!frame.called) {
             app->failed.store(true);
@@ -662,7 +683,7 @@ DWORD WINAPI Worker(void*) {
         }
         const auto colour = IniInteger(settings, L"MatheusNR030", L"ColourPreservationPercent", 100);
         const auto depthProtect = IniInteger(settings, L"MatheusNR030", L"DepthProtection", 1);
-        const auto effect = IniInteger(settings, L"MatheusNR030", L"EffectPercent", 100);
+        const auto effect = IniInteger(settings, L"MatheusNR030", L"EffectPercent", 50);
         const auto trim = IniInteger(settings, L"MatheusNR030", L"TrimIdleScratch", 1);
         const auto diagnostic = IniInteger(settings, L"MatheusNR030", L"Diagnostics", 1);
         if (colour < 0 || effect < 0 || depthProtect < 0 || depthProtect > 1 ||
@@ -696,11 +717,12 @@ DWORD WINAPI Worker(void*) {
             reinterpret_cast<void**>(&app->helper)), "Create fixed-C7 helper hook");
         HookCheck(MH_EnableHook(target), "Enable fixed-C7 helper hook");
         Log("event=hook_active static_abi_verified=true runtime_validated=false scale_percent=" + std::to_string(percent));
-        Log("event=resolve_config version=0.2.1 colour_preservation_percent=" + std::to_string(colour) +
+        Log("event=resolve_config version=0.2.2 colour_preservation_percent=" + std::to_string(colour) +
             " depth_protection=" + std::to_string(depthProtect) + " effect_percent=" + std::to_string(effect) +
             " applies_to_scaled_path_only=true");
-        Log("event=pool_policy version=0.2.1 sweep_all_completed=1 idle_trim=" + std::to_string(trim) +
+        Log("event=pool_policy version=0.2.2 sweep_all_completed=1 idle_trim=" + std::to_string(trim) +
             " idle_ms=2000 warm_slots=2 diagnostics=" + std::to_string(diagnostic));
+        Log("event=fallback_policy version=0.2.2 rejected_scaled_path=fsr_without_nr explicit_scale100=original_nr");
     } catch (const std::exception& error) { Log(std::string("event=disabled reason=") + error.what()); }
     return 0;
 }

@@ -8,7 +8,7 @@ The existing helper records NR capture/wait/residual work into the supplied comm
 
 No base relocation is present in the helper's `0x1c430..0x1c9bc` body. The runtime gate checks the complete file hash, image bounds, executable helper region, and pristine helper bytes. A different runtime or another patch of this function must be refused. `tools/verify_runtime_contract.py` reproduces the read-only PE/hash portion of this audit.
 
-The adapter uses GPU queue completion and successful command-list Reset before reusing shader resource slots. After scaled NR has been used, a busy/unsupported frame bypasses NR and calls the existing FFX callback directly; returning automatically to native NR could reshape the global NR context while work is still pending. Such skips must be reported and cannot count as successful NR acceleration.
+The adapter uses GPU queue completion and successful command-list Reset before reusing shader resource slots. Since 0.2.2, a busy/unsupported admission bypasses NR even before the first scaled call and calls the existing FFX callback directly; returning automatically to native NR could reshape the global NR context while work is still pending. Such skips must be reported and cannot count as successful NR acceleration.
 
 ## Scope and remaining validation
 
