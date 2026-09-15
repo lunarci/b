@@ -425,6 +425,22 @@ try {
         Assert-True ($a.CompositeSettingsFound -and -not $a.RuntimeValidated -and -not $a.CommandRecordingObserved) '0.2.3 settings were rejected or treated as gameplay proof.'
     }
 
+    Run-Case 'luma-stability-config-is-observed-not-visual-proof' {
+        param($f)
+        $header="event=session_start utc=2026-09-15T02:00:00Z runtime_validated=false`n"
+        $config="event=resolve_config version=0.2.4 colour_preservation_percent=100 depth_protection=1 effect_percent=50 applies_to_scaled_path_only=true`n"
+        foreach ($strength in @(0,65,100)) {
+            $line="event=luma_stability_config version=0.2.4 strength_percent=$strength applies_to_scaled_path_only=true temporal_filter=0`n"
+            $a=Get-AddonSessionSummary ($header+$config+$line) '2026-09-15T01:00:00Z'
+            Assert-True ($a.CompositeSettingsFound -and $a.LumaStabilitySettingsFound -and $a.LumaStabilityPercent -eq $strength) 'Stability setting was not parsed.'
+            Assert-True (-not $a.RuntimeValidated -and -not $a.CommandRecordingObserved) 'Settings were misreported as game execution.'
+        }
+        $bad="event=luma_stability_config version=0.2.4 strength_percent=101 applies_to_scaled_path_only=true temporal_filter=0`n"
+        $a=Get-AddonSessionSummary ($header+$config+$bad) '2026-09-15T01:00:00Z'
+        Assert-True (-not $a.LumaStabilitySettingsFound -and $null -eq $a.LumaStabilityPercent) 'Out-of-range setting accepted.'
+        $a=Get-AddonSessionSummary ($header+$config+$line+$header+$config) '2026-09-15T01:00:00Z'
+        Assert-True (-not $a.LumaStabilitySettingsFound) 'Stale session stability setting was reused.'
+    }
     $failed=@($results | Where-Object { $_.Status -eq 'FAIL' })
     $edition=$(if ($PSVersionTable.ContainsKey('PSEdition')) { [string]$PSVersionTable.PSEdition } else { 'Desktop' })
     $windows51=([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT -and $PSVersionTable.PSVersion.Major -eq 5 -and $PSVersionTable.PSVersion.Minor -eq 1 -and $edition -eq 'Desktop')

@@ -43,6 +43,12 @@ void geometry_checks() {
     require(dispatch_groups(811) == 102 && dispatch_groups(1080) == 135, "ceil dispatch");
     const auto constants = p75.colour_constants();
     require(constants.width == 1920 && constants.source_width == 2560, "b0 contract");
+    const auto default_resolve = p75.resolve_constants();
+    require(default_resolve.luma_stability_percent == 0, "Legacy resolve defaults to luma stability off");
+    const auto stable_resolve = p75.resolve_constants(1.0f, true, 0.5f, 70);
+    require(sizeof(stable_resolve) == 32 && offsetof(ResolveConstants, luma_stability_percent) == 28 &&
+            stable_resolve.luma_stability_percent == 70 && stable_resolve.effect_strength == 0.5f,
+            "Luma stability must occupy the final uint without changing the b0 ABI");
     rejects([] { make_scale_plan({0, 1080}, FixedScale::Percent75); }, "zero extent");
     rejects([] { make_scale_plan({20000, 1080}, FixedScale::Percent75); }, "oversized extent");
     rejects([] { make_scale_plan({1920, 1080}, static_cast<FixedScale>(67)); }, "unsupported scale");
@@ -200,6 +206,90 @@ void residual_support_checks() {
         }
     }
 }
+
+// Scalar moment oracle for independently chosen neighborhoods. GPU fixtures
+// separately exercise sampling, RGB/depth guides, borders and malformed data.
+// These checks specify which edits may shrink, rather than treating native
+// texture itself as the signal to be spatially averaged.
+double stability_from_moments(double center_b, double center_d,
+                              const std::array<double, 4>& neighbor_b,
+                              const std::array<double, 4>& neighbor_d,
+                              const std::array<double, 4>& weights, unsigned percent) {
+    double total_weight = 0, average_b = 0, average_d = 0;
+    for (std::size_t i = 0; i < weights.size(); ++i) {
+        total_weight += weights[i];
+        average_b += weights[i] * neighbor_b[i];
+        average_d += weights[i] * neighbor_d[i];
+    }
+    if (total_weight <= 1e-5) return 1;
+    average_b /= total_weight;
+    average_d /= total_weight;
+    const double old_detail = center_b - average_b;
+    const double new_detail = old_detail + center_d - average_d;
+    const double excess = std::max(0.0, std::abs(new_detail) - std::abs(old_detail)) /
+                          std::max({std::abs(center_b), std::abs(average_b), 1e-5});
+    const double t = std::clamp((excess - 0.02) / 0.08, 0.0, 1.0);
+    return 1 - std::min(percent / 100.0, 1.0) * t * t * (3 - 2 * t);
+}
+
+void luma_stability_checks() {
+    const std::array<double, 4> equal_weights{1, 1, 1, 1};
+    const std::array<double, 4> flat{1, 1, 1, 1};
+    const std::array<double, 4> negative_noise{-0.1, -0.1, -0.1, -0.1};
+    near(stability_from_moments(1, 0.1, flat, negative_noise, equal_weights, 0), 1, 0,
+         "Disabled luma stability retains the guarded edit");
+    near(stability_from_moments(1, 0.1, flat, negative_noise, equal_weights, 70), 0.3, 1e-12,
+         "Added checker contrast attenuates an edit by the selected amount");
+    near(stability_from_moments(1, 0.1, flat, negative_noise, equal_weights, 100), 0, 0,
+         "Full stability rejects a saturated added-contrast fixture");
+    near(stability_from_moments(1, 0.1, flat, negative_noise, equal_weights, 1000), 0, 0,
+         "Malformed oversized percentage cannot reverse an edit");
+    near(stability_from_moments(1, 0.03, flat, {-0.03, -0.03, -0.03, -0.03},
+                               equal_weights, 70), 0.65, 1e-12,
+         "Six-percent excess is the midpoint of the relative contrast ramp");
+    near(stability_from_moments(1, 0.005, flat, {-0.005, -0.005, -0.005, -0.005},
+                               equal_weights, 100), 1, 0,
+         "Small residual contrast stays below the relative threshold");
+    near(stability_from_moments(1, 0.1, flat, negative_noise, {0, 0, 0, 0}, 100), 1, 0,
+         "Rejected neighbors cannot suppress the surviving center edit");
+
+    for (const double level : {0.125, 1.0, 100.0, 40000.0}) {
+        const std::array<double, 4> baseline{level, level, level, level};
+        const std::array<double, 4> down{-0.1 * level, -0.1 * level, -0.1 * level, -0.1 * level};
+        near(stability_from_moments(level, 0.1 * level, baseline, down, equal_weights, 70),
+             0.3, 1e-12, "Added-contrast attenuation must be homogeneous in HDR scene units");
+        for (const double dc : {-0.4 * level, 0.0, 0.4 * level}) {
+            near(stability_from_moments(level, dc, baseline, {dc, dc, dc, dc}, equal_weights, 100),
+                 1, 0, "Uniform edits, identity and coherent frame-wide flicker are retained");
+        }
+    }
+
+    // Common weighted moments preserve a legitimate cancellation even when
+    // the baseline/depth guides select an asymmetric neighborhood.
+    const std::array<double, 4> textured{0.96, 1.0, 1.02, 0.94};
+    const std::array<double, 4> weighted{1.0, 0.1, 0.5, 0.0};
+    for (const double amount : {0.0, 0.25, 0.5, 1.0}) {
+        std::array<double, 4> cancellation{};
+        for (std::size_t i = 0; i < cancellation.size(); ++i)
+            cancellation[i] = amount * (1 - textured[i]);
+        near(stability_from_moments(1.08, amount * (1 - 1.08), textured, cancellation,
+                                   weighted, 100), 1, 0,
+             "Edits that remove baseline high-frequency noise must survive");
+    }
+
+    // Multiplication preserves each signed tap's support before reconstruction;
+    // a filtered neighboring edit must never be added to an unchanged tap.
+    for (const unsigned percent : {0u, 20u, 70u, 100u}) {
+        const double factor = stability_from_moments(1, 0.1, flat, negative_noise, equal_weights, percent);
+        require(factor >= 0 && factor <= 1, "Stability factor must be a contraction");
+        for (const double original_edit : {-0.5, 0.0, 0.5}) {
+            const double stable_edit = original_edit * factor;
+            require(std::abs(stable_edit) <= std::abs(original_edit) && stable_edit * original_edit >= 0,
+                    "Stability cannot enlarge or reverse a signed tap");
+            if (original_edit == 0) near(stable_edit, 0, 0, "Zero tap keeps its exact native identity");
+        }
+    }
+}
 } // namespace
 
 int main() {
@@ -210,8 +300,9 @@ int main() {
         area_partition_check(17, 11, 13, 8);
         area_partition_check(9, 7, 9, 7);
         residual_support_checks();
+        luma_stability_checks();
         std::cout << "PASS: fixed-scale geometry, motion units, fractional area conservation, "
-                     "per-tap residual support and HDR invariants\n";
+                     "per-tap residual support, HDR and added-luma-contrast invariants\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';

@@ -21,10 +21,10 @@ if ($cache -notmatch ('(?m)^NR030_SOURCE_COMMIT:STRING='+[regex]::Escape($Source
 $testLog=Join-Path $BuildRoot 'Testing/Temporary/LastTest.log'
 if (-not (Test-Path -LiteralPath $testLog)) { throw 'Native test evidence is missing.' }
 $installerResults=Get-Content -LiteralPath (Join-Path $sourceRoot 'package/test-results/installer-tests.json') -Raw | ConvertFrom-Json
-if ($installerResults.WindowsPowerShell51 -ne $true -or $installerResults.Failed -ne 0 -or $installerResults.Passed -lt 35) {
+if ($installerResults.WindowsPowerShell51 -ne $true -or $installerResults.Failed -ne 0 -or $installerResults.Passed -lt 36) {
     throw 'Windows PowerShell 5.1 installer test gate is not satisfied.'
 }
-foreach ($name in @('missing-legacy-record-install-repeat-remove','missing-legacy-record-wrong-hash-blocked','missing-legacy-record-wrong-settings-blocked','conflicting-legacy-record-blocked','missing-legacy-record-does-not-bypass-addon-ownership','missing-base-file-is-not-reported-as-hash-mismatch','current-input-rejection-is-not-reported-as-working-scale')) {
+foreach ($name in @('missing-legacy-record-install-repeat-remove','missing-legacy-record-wrong-hash-blocked','missing-legacy-record-wrong-settings-blocked','conflicting-legacy-record-blocked','missing-legacy-record-does-not-bypass-addon-ownership','missing-base-file-is-not-reported-as-hash-mismatch','current-input-rejection-is-not-reported-as-working-scale','luma-stability-config-is-observed-not-visual-proof')) {
     $cases=@($installerResults.Tests | Where-Object { $_.Test -ceq $name })
     if ($cases.Count -ne 1 -or $cases[0].Status -cne 'PASS') { throw ('Required installer regression did not pass: '+$name) }
 }
@@ -33,7 +33,7 @@ if ($completeResults.WindowsPowerShell51 -ne $true -or $completeResults.Failed -
     $completeResults.Passed -lt 30 -or $completeResults.GameRuntimeVerified -ne $false) {
     throw 'Windows PowerShell 5.1 complete installer test gate is not satisfied.'
 }
-foreach ($name in @('absent-nr-model-and-inis-downloaded-before-install','corrupt-download-blocked-before-game-writes','failed-addon-step-rolls-back-new-base-and-state','failed-upgrade-restores-old-addon-and-ownership','disable-nr-preserves-fsr-xefg-and-reinstall-reenables','disable-nr-failure-restores-all-ini-and-state-bytes','disabled-install-can-restore-complete-originals','requested-ratio-two-updates-both-ark-and-overwrite-ini','ratio-check-reports-configured-expectation-without-runtime-claim','regenerated-weights-are-backed-up-and-do-not-block-restore','standalone-recovery-configures-two-and-disables-both-nr-layers','recovery-failure-rolls-back-ratio-enabled-flags-and-state','recovery-missing-primary-opti-ini-stops-before-changes')) {
+foreach ($name in @('absent-nr-model-and-inis-downloaded-before-install','corrupt-download-blocked-before-game-writes','failed-addon-step-rolls-back-new-base-and-state','failed-upgrade-restores-old-addon-and-ownership','disable-nr-preserves-fsr-xefg-and-reinstall-reenables','disable-nr-failure-restores-all-ini-and-state-bytes','disabled-install-can-restore-complete-originals','requested-ratio-two-updates-both-ark-and-overwrite-ini','ratio-check-reports-configured-expectation-without-runtime-claim','regenerated-weights-are-backed-up-and-do-not-block-restore','standalone-recovery-configures-two-and-disables-both-nr-layers','recovery-failure-rolls-back-ratio-enabled-flags-and-state','recovery-missing-primary-opti-ini-stops-before-changes','owned-addon-upgrade-preserves-tuned-ini-and-state')) {
     $cases=@($completeResults.Tests | Where-Object { $_.Test -ceq $name })
     if ($cases.Count -ne 1 -or $cases[0].Status -cne 'PASS') { throw ('Required complete installer regression did not pass: '+$name) }
 }
@@ -55,7 +55,7 @@ $warpResultPath=Join-Path $BuildRoot 'gpu_tests/warp_results.json'
 $warp=Get-Content -LiteralPath $warpResultPath -Raw | ConvertFrom-Json
 if ($warp.runner -cne 'D3D12 WARP' -or $warp.productionShaders -ne $true -or
     $warp.sharedProductionExecutor -ne $true -or $warp.neuralRuntimeExecuted -ne $false -or
-    $warp.failed -cne '' -or $warp.reason -cne '' -or $warp.passedCount -lt 38 -or
+    $warp.failed -cne '' -or $warp.reason -cne '' -or $warp.passedCount -lt 47 -or
     @($warp.passed).Count -ne $warp.passedCount) {
     throw 'Production shader WARP execution evidence is incomplete or failed.'
 }
@@ -64,7 +64,16 @@ foreach ($required in @(
     '85% negative outlier keeps its 2.5% interpolation support',
     'Residual rejects mismatched taps even when their baseline average matches',
     'Tap guards retain matched uniform HDR correction and RGB ratios',
-    'Tap guards preserve signed FP16 identity on the 85% grid'
+    'Tap guards preserve signed FP16 identity on the 85% grid',
+    'Luma stability suppresses new checker detail at 0 50 and 100 percent',
+    'Luma stability preserves native high-frequency identity on the 85% grid',
+    'Luma stability retains correction that removes existing baseline detail',
+    'Luma stability retains uniform HDR correction and RGB ratios',
+    'Luma stability never expands positive or negative outlier support',
+    'Luma stability retains per-tap rejection of falsely matching averages',
+    'Luma stability rejects same-colour neighbours across a depth edge',
+    'Luma stability rejects neighbours across a baseline colour edge',
+    'Luma stability ignores malformed extra neighbours without enlarging fallback'
 )) {
     if ($warp.passed -cnotcontains $required) { throw ('Missing image stability regression: '+$required) }
 }
@@ -80,7 +89,7 @@ if ($inputChecks.passedCount -lt 16 -or $inputChecks.failure -cne '' -or
     @($inputChecks.passed).Count -ne $inputChecks.passedCount -or $inputChecks.amdGpuGameTested -ne $false) {
     throw 'Production input admission validation is incomplete.'
 }
-$dist=Join-Path $BuildRoot 'deliverable/Matheus_NR030_0.2.3_ImageStability'
+$dist=Join-Path $BuildRoot 'deliverable/Matheus_NR030_0.2.4_LumaStability'
 if (Test-Path -LiteralPath $dist) { throw 'Refusing to overwrite an existing staged deliverable.' }
 New-Item -ItemType Directory -Path $dist | Out-Null
 foreach ($name in @('Setup.ps1','Complete-Setup.ps1','00_FIX_RATIO_AND_DISABLE_NR.cmd','01_INSTALL_ADDON.cmd','02_REMOVE_ADDON.cmd','03_CHECK_ADDON.cmd','04_RESTORE_FSR_XEFG.cmd','05_REMOVE_AND_RESTORE_BASE.cmd','README_KO.md','protected-files.json')) {
@@ -115,7 +124,7 @@ if (Test-Path -LiteralPath (Join-Path $sourceRoot 'package/test-results')) {
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'package/test-results') -Destination (Join-Path $dist 'evidence/package-tests') -Recurse
 }
 $manifest=Get-Content -LiteralPath (Join-Path $sourceRoot 'package/package-manifest.json') -Raw | ConvertFrom-Json
-$manifest.addon_version='0.2.3-image-stability-experimental'
+$manifest.addon_version='0.2.4-luma-stability-experimental'
 $manifest.source_commit=$SourceCommit
 $manifest.build_run_id=$RunId
 $manifest.build_verified=$true
@@ -141,6 +150,9 @@ $provenance=[ordered]@{
     default_colour_preservation_percent=100
     default_depth_protection=$true
     default_effect_percent=50
+    default_luma_stability_percent=100
+    luma_stability_policy='Attenuate existing guarded taps when same-frame guided cross statistics detect added luminance contrast'
+    luma_stability_game_verified=$false
     requested_upscaler_ratio=2.0
     residual_guard='Per-tap clamp and baseline confidence before bilinear interpolation'
     temporal_filter_added=$false
@@ -162,7 +174,7 @@ $provenance=[ordered]@{
     installer_windows_powershell51=$installerResults.WindowsPowerShell51
     complete_installer_checks_passed=$completeResults.Passed
     complete_installer_windows_powershell51=$completeResults.WindowsPowerShell51
-    installer_revision='complete-0.2.3'
+    installer_revision='complete-0.2.4'
     legacy_base_record_required=$false
     base_compatibility='Verified existing C7 ASI and model or pinned automatic downloads; required NR / OptiScaler / XeFG route keys and requested ratio 2.0 backed up before changes'
     amd_gpu_game_tested=$false
@@ -172,19 +184,21 @@ $provenance=[ordered]@{
 }
 $provenance | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $dist 'BUILD_PROVENANCE.json') -Encoding UTF8
 $status=@'
-# Matheus NR030 0.2.3 영상 합성 수정 설치본
+# Matheus NR030 0.2.4 휘도 보정 안정화 설치본
 
-NR 결과의 밝은 이상치가 주변으로 번질 수 있는 공간 합성 순서를 수정한 빌드입니다. 설치 및 실행 성공 여부와 실제 영상 품질은 별도로 확인해야 합니다.
+0.2.4는 원본보다 NR 결과에서 증가한 국소적인 밝기 대비를 검사합니다. 같은 프레임의 고정된 주변 픽셀을 참고해 기존 NR 보정량을 약화합니다. 원본 영상 자체를 흐리거나 주변 보정값으로 덮어쓰지 않습니다.
 
-0.2.3은 NR 보정량의 제한과 원본 일치도 검사를 각 저해상도 픽셀에 먼저 적용한 뒤 주변 값을 섞습니다. 기존에는 먼저 섞고 나중에 제한해, 조금만 섞여야 하는 과도하게 밝은 NR 픽셀이 주변의 보정 한도를 모두 차지할 수 있었습니다. 이 특정 수치 문제를 재현한 생산용 셰이더 검사를 추가했습니다.
+0.2.3의 픽셀별 제한 후 보간 순서를 유지합니다. 잔차가 0인 픽셀에 주변의 보정값을 추가하지 않으며, 원본 색과 깊이가 다른 이웃의 영향을 제한합니다. 전체적으로 일정한 HDR 입력과 보정, 원래 입력 노이즈를 줄이는 NR 보정, 기존 외곽 보호를 검증합니다.
 
-픽셀 간 혼합 방식을 수정했으며 시간축 필터·이전 프레임 누적·추가 GPU 텍스처는 넣지 않았습니다. 정상 HDR 영역과 무보정 원본 보존도 검사합니다. 균일한 표면에서 기본 NR 자체가 프레임마다 다른 보정을 만드는 경우의 깜빡임은 별도 문제입니다. 사용자 게임에서 모든 흰색 깨짐과 피부 자글거림이 해결됐다는 판정은 하지 않았습니다.
+LumaStabilityPercent=100이 기본입니다. 0은 이번 억제만 끄며 기존 0.2.3 합성 방식으로 비교합니다. NR 전체를 끄는 설정이 아닙니다. 공간적으로 거친 보정에 섞여 있는 유효한 밝기 변화나 작은 세부 대비도 약해질 수 있습니다. 피부나 흰색 조명을 판별하는 기능이 아니며, 균일한 넓은 영역의 시간적 깜빡임과 원본 자체의 자글거림을 해결한다고 검증하지 않았습니다.
+
+새 GPU 텍스처·이전 프레임 누적·추가 dispatch는 없지만 이웃을 읽는 셰이더 연산은 증가합니다. 실제 Radeon 게임의 처리 시간과 화질 개선은 확인 전입니다.
 
 필요한 기본 NR C7과 모델 310.8.0을 기존 파일에서 검증·재사용하거나 지정 출처에서 다운로드합니다. 압축 파일과 추출 파일의 크기 및 SHA-256을 모두 확인한 뒤 설치합니다. 기본 NR·모델은 이 ZIP에 재배포하지 않습니다. 기존 OptiScaler·XeFG 실행 파일은 유지합니다.
 
 재윤님 요청에 따라 설치 시 OptiScaler 전체 배율을 2.0으로 설정합니다. 4K 출력 기준 입력은 1920×1080이며 85% NR 입력은 1632×918입니다. 설정 검사는 파일 설정값을 확인하며 게임이 실제로 사용한 크기까지 자동으로 입증하지는 않습니다.
 
-새 추가 모드 INI는 85% 입력·색상 보존 100%·깊이 보호 켬·합성 강도 50%가 기본입니다. 기존에 조정한 INI는 유지될 수 있습니다. 50% 합성 강도는 과한 보정을 줄여 비교하기 위한 값이며 NR 추론 시간을 절반으로 줄이는 값이 아닙니다.
+새 추가 모드 INI는 85% 입력·색상 보존 100%·깊이 보호 켬·합성 강도 50%·휘도 안정화 100%가 기본입니다. 기존에 조정한 INI는 유지될 수 있습니다. 50% 합성 강도는 과한 보정을 줄여 비교하기 위한 값이며 NR 추론 시간을 절반으로 줄이는 값이 아닙니다.
 
 ## 완료한 검증
 

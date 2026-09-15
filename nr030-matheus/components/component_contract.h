@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Source attribution and pinned upstream commit: see NOTICE.
 #pragma once
+#include <cstddef>
 #include <cmath>
 #include <cstdint>
 #include <stdexcept>
@@ -23,10 +24,11 @@ struct ResolveConstants {
     float colour_preservation;
     std::uint32_t depth_protection;
     float effect_strength;
-    std::uint32_t reserved;
+    std::uint32_t luma_stability_percent;
 };
 static_assert(sizeof(ResampleConstants) == 16);
 static_assert(sizeof(ResolveConstants) == 32);
+static_assert(offsetof(ResolveConstants, luma_stability_percent) == 28);
 
 struct ScalePlan {
     Extent2D input;
@@ -41,9 +43,11 @@ struct ScalePlan {
         return {neural.width, neural.height, active_guide.width, active_guide.height};
     }
     ResolveConstants resolve_constants(float colour_preservation = 1.0f,
-        bool depth_protection = true, float effect_strength = 1.0f) const {
+        bool depth_protection = true, float effect_strength = 1.0f,
+        std::uint32_t luma_stability_percent = 0) const {
         return {input.width, input.height, neural.width, neural.height,
-                colour_preservation, depth_protection ? 1u : 0u, effect_strength, 0u};
+                colour_preservation, depth_protection ? 1u : 0u, effect_strength,
+                luma_stability_percent};
     }
 };
 

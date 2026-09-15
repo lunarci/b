@@ -65,7 +65,7 @@ XeFGPath=C:\existing\alternative\provider
 "@
     $script:ExpectedNrHash=Get-Hash (Join-Path $paths.Plugins 'dlssnr_on_amd.asi')
     Write-CompleteFakePe (Join-Path $payload 'MatheusNR030.asi') 6
-    Write-Text (Join-Path $payload 'MatheusNR030.ini') "[MatheusNR030]`r`nEnabled=1`r`nScalePercent=85`r`nDiagnostics=1`r`n"
+    Write-Text (Join-Path $payload 'MatheusNR030.ini') "[MatheusNR030]`r`nEnabled=1`r`nScalePercent=85`r`nDiagnostics=1`r`nLumaStabilityPercent=100`r`n"
     $files=@()
     foreach ($name in $script:AddonNames) {
         $path=Join-Path $payload $name;$files += [pscustomobject]@{name=$name;sha256=(Get-Hash $path);size=(Get-Item -LiteralPath $path).Length}
@@ -315,6 +315,10 @@ try {
         Assert-CompleteTest ((Read-IniValue $text 'MatheusNR030' 'ScalePercent') -ceq '75') 'Tuned scale reset.'
         Assert-CompleteTest ((Read-IniValue $text 'MatheusNR030' 'Diagnostics') -ceq '0') 'Tuned diagnostics reset.'
         Assert-CompleteTest ((Read-IniValue $text 'MatheusNR030' 'UserComment') -ceq 'keep') 'Unrelated user key lost.'
+        Assert-CompleteTest ((Read-IniValue $text 'MatheusNR030' 'LumaStabilityPercent') -ceq '100') 'New stability default was not merged into existing tuning.'
+        Write-Text $ini (Set-CompleteIniValue $text 'MatheusNR030' 'LumaStabilityPercent' '35')
+        Install-Complete $f.Paths $f.Download
+        Assert-CompleteTest ((Read-IniValue ([IO.File]::ReadAllText($ini)) 'MatheusNR030' 'LumaStabilityPercent') -ceq '35') 'Existing stability tuning was reset.'
         Assert-OwnedFiles $f.Paths (Read-AddonState $f.Paths)
         Remove-Addon $f.Paths
     }

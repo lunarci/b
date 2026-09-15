@@ -1,6 +1,13 @@
 # Matheus-style NR scaling adapter for the exact NR 0.3.0 C7 build
 
-**Experimental adapter, version 0.2.3 ImageStability. Install only a successfully built installation package. Actual AMD/Cyberpunk execution remains unverified.**
+**Experimental adapter, version 0.2.4 LumaStability. Install only a successfully built installation package. Actual AMD/Cyberpunk execution remains unverified.**
+
+0.2.4 attenuates an existing guarded residual only when a fixed, same-frame
+cross neighbourhood indicates increased local luminance contrast relative to
+the baseline. It does not blur native colour, spread neighbouring corrections,
+classify skin/lighting, or add temporal history. Default LumaStabilityPercent is
+100; zero preserves the 0.2.3 correction path. Real GPU cost and gameplay quality
+remain unverified. Broad temporal flicker is outside this spatial control.
 
 0.2.3 guards each low-resolution residual tap before interpolation. The previous
 interpolate-then-clamp order let a finite HDR outlier with tiny spatial support

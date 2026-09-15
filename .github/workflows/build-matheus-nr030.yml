@@ -9,6 +9,7 @@ on:
       - nr030-install-record-fix
       - nr030-complete-install
       - nr030-image-stability
+      - nr030-luma-stability
     paths:
       - nr030-matheus/**
       - .github/workflows/build-matheus-nr030.yml
@@ -72,6 +73,6 @@ jobs:
         with:
           name: Matheus-NR030-install-package-${{ github.run_number }}
           path: |
-            build/nr030/deliverable/Matheus_NR030_0.2.3_ImageStability.zip
+            build/nr030/deliverable/Matheus_NR030_0.2.4_LumaStability.zip
           if-no-files-found: error
           retention-days: 14

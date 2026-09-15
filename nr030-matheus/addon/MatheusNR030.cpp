@@ -273,7 +273,7 @@ public:
     HMODULE runtime = nullptr;
     ffx::HelperFn helper = nullptr;
     cmp::FixedScale scale = cmp::FixedScale::Percent85;
-    int colourPreservation = 100, depthProtection = 1, effectPercent = 50;
+    int colourPreservation = 100, depthProtection = 1, effectPercent = 50, lumaStability = 100;
     bool trimIdleScratch = true, diagnostics = true;
     std::atomic<bool> failed{false};
     std::mutex mutex;
@@ -529,7 +529,7 @@ public:
             try {
                 frame.slot->use->borrowed.emplace_back(Resource(corrected->color));
                 const auto constants = frame.plan.resolve_constants(colourPreservation / 100.0f,
-                    depthProtection != 0, effectPercent / 100.0f);
+                    depthProtection != 0, effectPercent / 100.0f, static_cast<std::uint32_t>(lumaStability));
                 const gpu::TextureBinding inputs[] = {
                     {Resource(frame.full.color), DXGI_FORMAT_R16G16B16A16_FLOAT},
                     {frame.slot->baseline.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT},
@@ -684,9 +684,10 @@ DWORD WINAPI Worker(void*) {
         const auto colour = IniInteger(settings, L"MatheusNR030", L"ColourPreservationPercent", 100);
         const auto depthProtect = IniInteger(settings, L"MatheusNR030", L"DepthProtection", 1);
         const auto effect = IniInteger(settings, L"MatheusNR030", L"EffectPercent", 50);
+        const auto stability = IniInteger(settings, L"MatheusNR030", L"LumaStabilityPercent", 100);
         const auto trim = IniInteger(settings, L"MatheusNR030", L"TrimIdleScratch", 1);
         const auto diagnostic = IniInteger(settings, L"MatheusNR030", L"Diagnostics", 1);
-        if (colour < 0 || effect < 0 || depthProtect < 0 || depthProtect > 1 ||
+        if (colour < 0 || effect < 0 || stability < 0 || depthProtect < 0 || depthProtect > 1 ||
             trim < 0 || trim > 1 || diagnostic < 0 || diagnostic > 1) {
             Log("event=disabled reason=invalid_composite_settings"); return 0;
         }
@@ -708,6 +709,7 @@ DWORD WINAPI Worker(void*) {
         app = new Adapter();
         app->runtime = runtime; app->scale = static_cast<cmp::FixedScale>(percent);
         app->colourPreservation = colour; app->depthProtection = depthProtect; app->effectPercent = effect;
+        app->lumaStability = stability;
         app->trimIdleScratch = trim != 0; app->diagnostics = diagnostic != 0;
         const auto initialized = MH_Initialize();
         if (initialized != MH_OK && initialized != MH_ERROR_ALREADY_INITIALIZED)
@@ -717,13 +719,15 @@ DWORD WINAPI Worker(void*) {
             reinterpret_cast<void**>(&app->helper)), "Create fixed-C7 helper hook");
         HookCheck(MH_EnableHook(target), "Enable fixed-C7 helper hook");
         Log("event=hook_active static_abi_verified=true runtime_validated=false scale_percent=" + std::to_string(percent));
-        Log("event=resolve_config version=0.2.3 colour_preservation_percent=" + std::to_string(colour) +
+        Log("event=resolve_config version=0.2.4 colour_preservation_percent=" + std::to_string(colour) +
             " depth_protection=" + std::to_string(depthProtect) + " effect_percent=" + std::to_string(effect) +
             " applies_to_scaled_path_only=true");
-        Log("event=pool_policy version=0.2.3 sweep_all_completed=1 idle_trim=" + std::to_string(trim) +
+        Log("event=pool_policy version=0.2.4 sweep_all_completed=1 idle_trim=" + std::to_string(trim) +
             " idle_ms=2000 warm_slots=2 diagnostics=" + std::to_string(diagnostic));
-        Log("event=resolve_policy version=0.2.3 per_tap_guard_before_interpolation=1 temporal_filter=0");
-        Log("event=fallback_policy version=0.2.3 rejected_scaled_path=fsr_without_nr explicit_scale100=original_nr");
+        Log("event=resolve_policy version=0.2.4 per_tap_guard_before_interpolation=1 temporal_filter=0");
+        Log("event=luma_stability_config version=0.2.4 strength_percent=" + std::to_string(stability) +
+            " applies_to_scaled_path_only=true temporal_filter=0");
+        Log("event=fallback_policy version=0.2.4 rejected_scaled_path=fsr_without_nr explicit_scale100=original_nr");
     } catch (const std::exception& error) { Log(std::string("event=disabled reason=") + error.what()); }
     return 0;
 }

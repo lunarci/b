@@ -233,7 +233,8 @@ public:
 
     Image Run(Kernel kernel, const std::vector<Image>& inputs, UINT w, UINT h,
               const std::array<UINT, 4>& constants, DXGI_FORMAT outputFormat,
-              float colour = 0.0f, bool protectDepth = false, float effect = 1.0f) {
+              float colour = 0.0f, bool protectDepth = false, float effect = 1.0f,
+              UINT lumaStability = 0) {
         Begin();
         auto boundInputs = inputs;
         if (kernel == Kernel::Residual && boundInputs.size() == 3)
@@ -249,7 +250,7 @@ public:
         auto result = CreateTexture(w, h, outputFormat, true);
         auto heap = MakeHeap(ShaderExecutor::DescriptorCount);
         const contract::ResolveConstants resolve{constants[0], constants[1], constants[2], constants[3],
-            colour, protectDepth ? 1u : 0u, effect, 0u};
+            colour, protectDepth ? 1u : 0u, effect, lumaStability};
         const bool isResolve = kernel == Kernel::Residual;
         executor_.Record(kernel, commands_.Get(), heap.Get(), 0,
                          isResolve ? static_cast<const void*>(&resolve) : constants.data(),
@@ -851,6 +852,258 @@ int wmain(int argc, wchar_t** argv) {
             for (UINT c=0; c<3; ++c)
                 Require(std::abs(mid.At(4,2,c) - 0.5f*(a.At(4,2,c)+b.At(4,2,c))) < 1e-5f,
                         "Colour control is not a bounded blend");
+        });
+        test("Luma stability suppresses new checker detail at 0 50 and 100 percent", [&] {
+            const auto half = DXGI_FORMAT_R16G16B16A16_FLOAT;
+            const auto plan = contract::make_scale_plan({40, 40}, contract::FixedScale::Percent85);
+            Require(plan.neural.width == 34 && plan.neural.height == 34,
+                    "Noise fixture must use the actual 85% grid");
+            // All channels and the HDR exposure are binary-exact in FP16.
+            // A +/-12.5% NR checker creates 25% extra local contrast, above
+            // the 10% rejection threshold, on a genuinely flat area baseline.
+            for (const float exposure : {1.0f, 100.0f}) {
+                auto native = Filled(40, 40, {exposure, exposure / 2, exposure / 4, 0.3125f}, half);
+                auto low = gpu.Run(Kernel::Color, {native}, 34, 34, {34, 34, 40, 40}, half);
+                Equal(low, Filled(34, 34, {exposure, exposure / 2, exposure / 4, 0.3125f}, half),
+                      0, 0, true);
+                auto edited = low;
+                for (UINT y = 0; y < 34; ++y) for (UINT x = 0; x < 34; ++x)
+                    for (UINT c = 0; c < 3; ++c)
+                        edited.At(x, y, c) *= ((x + y) % 2) ? 1.125f : 0.875f;
+                const auto off = gpu.Run(Kernel::Residual, {native, low, edited}, 40, 40,
+                                         {40, 40, 34, 34}, half, 1.0f, true, 1.0f, 0);
+                const auto mid = gpu.Run(Kernel::Residual, {native, low, edited}, 40, 40,
+                                         {40, 40, 34, 34}, half, 1.0f, true, 1.0f, 50);
+                const auto on = gpu.Run(Kernel::Residual, {native, low, edited}, 40, 40,
+                                        {40, 40, 34, 34}, half, 1.0f, true, 1.0f, 100);
+                const auto rms = [&](const Image& value) {
+                    double sum = 0;
+                    for (UINT y = 2; y < 38; ++y) for (UINT x = 2; x < 38; ++x) {
+                        const double correction = (value.At(x, y, 0) - exposure) / exposure;
+                        sum += correction * correction;
+                    }
+                    return std::sqrt(sum / (36 * 36));
+                };
+                const double offRms = rms(off), midRms = rms(mid), onRms = rms(on);
+                std::cout << "Checker exposure=" << exposure << " relative RMS at 0/50/100: "
+                          << offRms << ", " << midRms << ", " << onRms << '\n';
+                Require(offRms > 0.02, "Checker was already absent without luma stability");
+                Require(midRms > 0.45 * offRms && midRms < 0.55 * offRms,
+                        "50 percent did not halve the new checker correction within FP16 rounding");
+                Equal(on, native, 0, 0, true);
+                for (const Image* value : {&off, &mid}) {
+                    for (UINT y = 0; y < 40; ++y) for (UINT x = 0; x < 40; ++x) {
+                        Require(value->At(x, y, 0) == 2 * value->At(x, y, 1) &&
+                                value->At(x, y, 0) == 4 * value->At(x, y, 2),
+                                "Checker correction changed native RGB ratios");
+                        Require(value->At(x, y, 3) == 0.3125f, "Checker correction changed alpha");
+                    }
+                }
+            }
+        });
+        test("Luma stability preserves native high-frequency identity on the 85% grid", [&] {
+            const auto half = DXGI_FORMAT_R16G16B16A16_FLOAT;
+            auto native = Pattern(40, 40);
+            native.format = half;
+            native.At(9, 17, 2) = 1024.0f;
+            auto low = gpu.Run(Kernel::Color, {native}, 34, 34, {34, 34, 40, 40}, half);
+            Require(native.At(0, 0, 1) != native.At(1, 0, 1) && native.At(0, 0, 0) < 0,
+                    "Identity fixture lacks native high-frequency or signed detail");
+            Equal(gpu.Run(Kernel::Residual, {native, low, low}, 40, 40,
+                          {40, 40, 34, 34}, half, 1.0f, true, 1.0f, 100), native, 0, 0, true);
+        });
+        test("Luma stability retains correction that removes existing baseline detail", [&] {
+            const auto half = DXGI_FORMAT_R16G16B16A16_FLOAT;
+            auto native = Filled(40, 40, {1, 1, 1, 0.375f}, half);
+            for (UINT y = 0; y < 40; ++y) for (UINT x = 0; x < 40; ++x)
+                for (UINT c = 0; c < 3; ++c)
+                    native.At(x, y, c) += ((x + y) % 2) ? 0.03125f : -0.03125f;
+            auto low = gpu.Run(Kernel::Color, {native}, 34, 34, {34, 34, 40, 40}, half);
+            auto edited = Filled(34, 34, {1, 1, 1, 0}, half);
+            const auto off = gpu.Run(Kernel::Residual, {native, low, edited}, 40, 40,
+                                     {40, 40, 34, 34}, half, 1.0f, true, 1.0f, 0);
+            const auto on = gpu.Run(Kernel::Residual, {native, low, edited}, 40, 40,
+                                    {40, 40, 34, 34}, half, 1.0f, true, 1.0f, 100);
+            float baselineDetail = 0, correction = 0;
+            for (UINT y = 0; y < 34; ++y) for (UINT x = 0; x < 34; ++x)
+                baselineDetail = std::max(baselineDetail, std::abs(low.At(x, y, 0) - 1.0f));
+            for (UINT y = 0; y < 40; ++y) for (UINT x = 0; x < 40; ++x)
+                correction = std::max(correction, std::abs(off.At(x, y, 0) - native.At(x, y, 0)));
+            std::cout << "Existing checker maximum area detail=" << baselineDetail
+                      << ", applied correction=" << correction << '\n';
+            Require(baselineDetail > 0.01f && correction > 0.002f,
+                    "Existing-detail fixture did not exercise a real NR correction");
+            // Edited is spatially constant: its local detail is zero, so this
+            // is removal of input detail, not newly introduced NR contrast.
+            Equal(on, off, 0, 0, true);
+        });
+        test("Luma stability retains uniform HDR correction and RGB ratios", [&] {
+            const auto half = DXGI_FORMAT_R16G16B16A16_FLOAT;
+            auto native = Filled(40, 40, {100, 50, 25, 0.25f}, half);
+            auto low = gpu.Run(Kernel::Color, {native}, 34, 34, {34, 34, 40, 40}, half);
+            auto edited = Filled(34, 34, {150, 75, 37.5f, 0}, half);
+            const auto off = gpu.Run(Kernel::Residual, {native, low, edited}, 40, 40,
+                                     {40, 40, 34, 34}, half, 1.0f, true, 0.5f, 0);
+            const auto on = gpu.Run(Kernel::Residual, {native, low, edited}, 40, 40,
+                                    {40, 40, 34, 34}, half, 1.0f, true, 0.5f, 100);
+            std::cout << "Stable uniform HDR RGB=" << on.At(0, 0, 0) << ", "
+                      << on.At(0, 0, 1) << ", " << on.At(0, 0, 2) << '\n';
+            Equal(on, off, 0, 0, true);
+            const float expected[]{125, 62.5f, 31.25f};
+            for (UINT y = 0; y < 40; ++y) for (UINT x = 0; x < 40; ++x) {
+                for (UINT c = 0; c < 3; ++c) {
+                    const auto center = ToHalf(expected[c]);
+                    Require(on.At(x, y, c) >= FromHalf(static_cast<std::uint16_t>(center - 1)) &&
+                            on.At(x, y, c) <= FromHalf(static_cast<std::uint16_t>(center + 1)),
+                            "Uniform HDR correction differs by more than one FP16 step");
+                }
+                Require(on.At(x, y, 0) == 2 * on.At(x, y, 1) &&
+                        on.At(x, y, 0) == 4 * on.At(x, y, 2), "Uniform HDR RGB ratios changed");
+                Require(on.At(x, y, 3) == 0.25f, "Uniform HDR alpha changed");
+            }
+        });
+        test("Luma stability never expands positive or negative outlier support", [&] {
+            const auto half = DXGI_FORMAT_R16G16B16A16_FLOAT;
+            for (const float outlier : {65504.0f, -65504.0f}) {
+                auto native = Filled(40, 40, {1, 1, 1, 0.3125f}, half);
+                auto low = gpu.Run(Kernel::Color, {native}, 34, 34, {34, 34, 40, 40}, half);
+                auto edited = low;
+                for (UINT y = 0; y < 34; ++y) for (UINT c = 0; c < 3; ++c)
+                    edited.At(6, y, c) = outlier;
+                const auto off = gpu.Run(Kernel::Residual, {native, low, edited}, 40, 40,
+                                         {40, 40, 34, 34}, half, 1.0f, true, 0.5f, 0);
+                const auto on = gpu.Run(Kernel::Residual, {native, low, edited}, 40, 40,
+                                        {40, 40, 34, 34}, half, 1.0f, true, 0.5f, 100);
+                const float expected = FromHalf(ToHalf(outlier > 0 ? 1.00625f : 0.99375f));
+                std::cout << "Stable outlier=" << outlier << " at 2.5% support, off/on="
+                          << off.At(6, 20, 0) << "/" << on.At(6, 20, 0) << '\n';
+                Require(off.At(6, 20, 0) == expected, "Outlier fixture lost its 2.5% support premise");
+                for (UINT y = 0; y < 40; ++y) for (UINT x = 0; x < 40; ++x) {
+                    for (UINT c = 0; c < 3; ++c) {
+                        const float previous = off.At(x, y, c), value = on.At(x, y, c);
+                        Require(value >= std::min(1.0f, previous) && value <= std::max(1.0f, previous),
+                                "Stability expanded, amplified or reversed an outlier correction");
+                    }
+                    Require(on.At(x, y, 3) == 0.3125f, "Outlier alpha changed");
+                }
+            }
+        });
+        test("Luma stability retains per-tap rejection of falsely matching averages", [&] {
+            const auto half = DXGI_FORMAT_R16G16B16A16_FLOAT;
+            auto native = Filled(40, 40, {0, 0, 0, 0.3125f}, half);
+            for (UINT y = 0; y < 40; ++y) for (UINT c = 0; c < 3; ++c) {
+                native.At(5, y, c) = -33.5f;
+                native.At(6, y, c) = 1.0f;
+                native.At(7, y, c) = 50.0f;
+            }
+            auto low = gpu.Run(Kernel::Color, {native}, 34, 34, {34, 34, 40, 40}, half);
+            auto edited = low;
+            for (UINT y = 0; y < 34; ++y) for (UINT c = 0; c < 3; ++c) {
+                const double left = low.At(5, y, c), right = low.At(6, y, c);
+                const double blended = (39 * left + right) / 40;
+                const auto mismatch = [](double value) {
+                    return std::abs(1 - value) / std::max(1.0, std::abs(value));
+                };
+                Require(std::isfinite(left) && std::isfinite(right) &&
+                        mismatch(left) >= 0.75 && mismatch(right) >= 0.75 && mismatch(blended) <= 0.15,
+                        "Stable cancellation fixture did not reproduce a false averaged match");
+                edited.At(6, y, c) = 60.0f;
+            }
+            std::cout << "Stable cancellation area taps=" << low.At(5, 0, 0)
+                      << ", " << low.At(6, 0, 0) << '\n';
+            const auto on = gpu.Run(Kernel::Residual, {native, low, edited}, 40, 40,
+                                    {40, 40, 34, 34}, half, 1.0f, true, 0.5f, 100);
+            for (UINT y = 0; y < 40; ++y) for (UINT c = 0; c < 4; ++c)
+                Require(on.At(6, y, c) == native.At(6, y, c),
+                        "Stability restored confidence to individually mismatched taps");
+        });
+        test("Luma stability rejects same-colour neighbours across a depth edge", [&] {
+            // Equal grids isolate neighbour admission from bilinear mixing.
+            // The actual 85% grid also requires low x=16/17 to map to native
+            // x=19/20 for the depth guide. A +/-25% correction step gives
+            // 12.5% cross-neighbour contrast, fully suppressed without a guide.
+            for (const bool scaledGrid : {false, true}) {
+                const UINT w = scaledGrid ? 40u : 12u, h = scaledGrid ? 40u : 8u;
+                const UINT lw = scaledGrid ? 34u : w, lh = scaledGrid ? 34u : h;
+                const std::array<UINT, 4> extent{w, h, lw, lh};
+                auto native = Filled(w, h, {1, 1, 1, 0.5f});
+                auto low = gpu.Run(Kernel::Color, {native}, lw, lh, {lw, lh, w, h}, rgba);
+                auto edited = low;
+                for (UINT y = 0; y < lh; ++y) for (UINT x = 0; x < lw; ++x)
+                    for (UINT c = 0; c < 3; ++c) edited.At(x, y, c) = x < lw / 2 ? 1.25f : 0.75f;
+                const auto flat = Filled(w, h, {0.2f}, DXGI_FORMAT_R32_FLOAT);
+                const auto unguided = gpu.Run(Kernel::Residual, {native, low, edited, flat}, w, h,
+                                             extent, rgba, 1.0f, true, 1.0f, 100);
+                Require(std::abs(unguided.At(w / 2 - 1, h / 2, 0) - 1.0f) < 1e-5f &&
+                        std::abs(unguided.At(w / 2, h / 2, 0) - 1.0f) < 1e-5f,
+                        "Depth fixture does not activate cross-edge contrast suppression");
+                for (const bool reversed : {false, true}) {
+                    auto depth = flat;
+                    for (UINT y = 0; y < h; ++y) for (UINT x = 0; x < w; ++x)
+                        depth.At(x, y, 0) = ((x < w / 2) != reversed) ? 0.2f : 0.8f;
+                    const auto off = gpu.Run(Kernel::Residual, {native, low, edited, depth}, w, h,
+                                             extent, rgba, 1.0f, true, 1.0f, 0);
+                    const auto on = gpu.Run(Kernel::Residual, {native, low, edited, depth}, w, h,
+                                            extent, rgba, 1.0f, true, 1.0f, 100);
+                    const UINT probe = w / 2 - 1;
+                    std::cout << "Depth-guided grid=" << w << "/" << lw << " boundary off/on="
+                              << off.At(probe, h / 2, 0) << "/" << on.At(probe, h / 2, 0)
+                              << ", reversed=" << reversed << '\n';
+                    // x=19 -> q=16.075: (.925*.25-.075*.25)*depthFloor(.25).
+                    const float expected = scaledGrid ? 1.053125f : 1.0625f;
+                    Require(std::abs(off.At(probe, h / 2, 0) - expected) < 1e-5f,
+                            "Depth fixture lost its interpolation and 25% depth-floor premise");
+                    Equal(on, off);
+                }
+            }
+        });
+        test("Luma stability rejects neighbours across a baseline colour edge", [&] {
+            // These distinct RGB values have the same luminance. The 75% red
+            // mismatch rejects the neighbour; luminance alone cannot see it.
+            const float rightGreen = 0.25f + 0.75f * 0.2126f / 0.7152f;
+            const float leftY = 0.2126f + 0.25f * 0.7152f + 0.25f * 0.0722f;
+            const float rightY = 0.25f * 0.2126f + rightGreen * 0.7152f + 0.25f * 0.0722f;
+            Require(std::abs(leftY - rightY) < 1e-6f,
+                    "Colour edge fixture must have equal baseline luminance");
+            auto native = Filled(12, 8, {1, 0.25f, 0.25f, 0.625f});
+            for (UINT y = 0; y < 8; ++y) for (UINT x = 6; x < 12; ++x) {
+                native.At(x, y, 0) = 0.25f; native.At(x, y, 1) = rightGreen;
+            }
+            auto low = native, edited = native;
+            for (UINT y = 0; y < 8; ++y) for (UINT x = 0; x < 12; ++x)
+                for (UINT c = 0; c < 3; ++c) edited.At(x, y, c) *= x < 6 ? 1.25f : 0.75f;
+            const auto off = gpu.Run(Kernel::Residual, {native, low, edited}, 12, 8,
+                                     {12, 8, 12, 8}, rgba, 1.0f, true, 1.0f, 0);
+            const auto on = gpu.Run(Kernel::Residual, {native, low, edited}, 12, 8,
+                                    {12, 8, 12, 8}, rgba, 1.0f, true, 1.0f, 100);
+            std::cout << "Colour-edge equal luma=" << leftY << ", " << rightY
+                      << "; boundary off/on=" << off.At(5, 4, 0) << "/" << on.At(5, 4, 0) << '\n';
+            Require(std::abs(off.At(5, 4, 0) - 1.25f) < 1e-5f,
+                    "Colour edge fixture did not transfer a real boundary correction");
+            Equal(on, off);
+        });
+        test("Luma stability ignores malformed extra neighbours without enlarging fallback", [&] {
+            auto native = Filled(40, 40, {1, 1, 1, 0.75f});
+            auto baseline = gpu.Run(Kernel::Color, {native}, 34, 34, {34, 34, 40, 40}, rgba);
+            for (const bool invalidBaseline : {false, true}) {
+                auto low = baseline, edited = Filled(34, 34, {1.125f, 1.125f, 1.125f, 0});
+                for (UINT y = 0; y < 34; ++y) {
+                    if (invalidBaseline) low.At(7, y, 1) = std::numeric_limits<float>::infinity();
+                    else edited.At(7, y, 0) = std::numeric_limits<float>::quiet_NaN();
+                }
+                // Native x=6 reads primary low taps 5 and 6. Invalid low tap 7
+                // is seen only by the new neighbour probe for primary tap 6.
+                const auto off = gpu.Run(Kernel::Residual, {native, low, edited}, 40, 40,
+                                         {40, 40, 34, 34}, rgba, 1.0f, true, 1.0f, 0);
+                const auto on = gpu.Run(Kernel::Residual, {native, low, edited}, 40, 40,
+                                        {40, 40, 34, 34}, rgba, 1.0f, true, 1.0f, 100);
+                std::cout << "Invalid extra neighbour, baseline=" << invalidBaseline
+                          << ", primary-valid pixel off/on=" << off.At(6, 20, 0)
+                          << "/" << on.At(6, 20, 0) << '\n';
+                Require(std::abs(off.At(6, 20, 0) - 1.125f) < 1e-5f && off.At(8, 20, 0) == 1.0f,
+                        "Malformed-neighbour fixture must separate valid primary taps from fallback");
+                Equal(on, off);
+            }
         });
         SaveResults(report, results, debugEnabled);
         std::cout << "PASS: " << results.passed.size()

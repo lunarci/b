@@ -109,3 +109,13 @@ from saturating the full blended correction allowance. Depth weight applies once
 after interpolation. No motion-reprojected history or temporal filter is added.
 Compatible constant HDR fields retain the same effect strength; edge/detail
 balance can change and must be compared in game.
+
+
+0.2.4 uses the final reserved DWORD as a 0..100 same-frame luminance stability
+control. The cbuffer remains 32 bytes and binding count stays unchanged. Fixed
+low-tap cross statistics estimate added contrast relative to the baseline,
+with colour and optional depth guidance, then only attenuate the existing
+guarded residual. Zero taps cannot gain a neighbour's correction. This is not
+a temporal filter or a material/lighting classifier; valid detail can weaken.
+Opposite-sign taps can be attenuated differently, reducing their cancellation:
+the per-tap budget is preserved, but final per-pixel correction need not shrink.

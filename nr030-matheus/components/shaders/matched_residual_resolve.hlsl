@@ -12,7 +12,7 @@ Texture2D<float> depth : register(t3);
 RWTexture2D<float4> dst : register(u0);
 cbuffer Extent : register(b0) {
     uint w; uint h; uint lowW; uint lowH;
-    float colourPreservation; uint depthProtection; float effectStrength; uint reserved;
+    float colourPreservation; uint depthProtection; float effectStrength; uint lumaStabilityPercent;
 };
 
 float Luminance(float3 value) { return dot(value, float3(0.2126, 0.7152, 0.0722)); }
@@ -74,6 +74,77 @@ float3 GuardTap(float3 original, float3 base, float3 delta) {
     return clamp(delta, -limit, limit) * confidence;
 }
 
+// Statistics stay on the low grid and never depend on the reconstructed native
+// pixel. Clamp the center first, so repeated border taps use the same cross.
+// Only attenuate the existing guarded edit: do not move a neighbor's residual
+// into a zero tap or enlarge any tap's interpolation-support budget.
+float BaselineWeight(float3 center, float3 neighbor) {
+    float3 magnitude = max(max(abs(center), abs(neighbor)), 1e-5);
+    float3 relative = abs(center - neighbor) / magnitude;
+    return 1.0 - smoothstep(0.15, 0.75, max(relative.r, max(relative.g, relative.b)));
+}
+
+float LowDepth(int2 pixel) {
+    // Integer nearest-center mapping avoids fractional boundary rounding.
+    uint2 full = (uint2(pixel) * 2u + 1u) * uint2(w, h) / (uint2(lowW, lowH) * 2u);
+    return depth.Load(int3(min(full, uint2(w - 1, h - 1)), 0));
+}
+
+float LumaStabilityWeight(int2 pixel, float3 base, float3 delta) {
+    if (any(base < 0.0)) return 1.0;
+    pixel = clamp(pixel, int2(0, 0), int2(lowW - 1, lowH - 1));
+    float centerB = Luminance(base);
+    float centerD = Luminance(clamp(delta, -0.5 * base, 0.5 * base));
+    if (!all(isfinite(float2(centerB, centerD)))) return 1.0;
+    float centerDepth = 0.0;
+    if (depthProtection != 0) {
+        centerDepth = LowDepth(pixel);
+        if (!isfinite(centerDepth)) return 1.0;
+    }
+    float sumB = 0.0, sumD = 0.0, sumWeight = 0.0;
+    const int2 offsets[4] = {int2(-1, 0), int2(1, 0), int2(0, -1), int2(0, 1)};
+    [unroll] for (int i = 0; i < 4; ++i) {
+        int2 neighbor = pixel + offsets[i];
+        if (any(neighbor < int2(0, 0)) || any(neighbor >= int2(lowW, lowH))) continue;
+        float3 neighborB, neighborD;
+        // A malformed extra neighbor cannot invalidate the original four taps.
+        if (!LowTap(neighbor, neighborB, neighborD) || any(neighborB < 0.0)) continue;
+        float weight = BaselineWeight(base, neighborB);
+        if (weight <= 0.0) continue;
+        if (depthProtection != 0) {
+            float neighborDepth = LowDepth(neighbor);
+            if (!isfinite(neighborDepth)) continue;
+            float relativeDepth = abs(centerDepth - neighborDepth) /
+                max(max(abs(centerDepth), abs(neighborDepth)), 1e-6);
+            weight *= 1.0 - smoothstep(0.01, 0.05, relativeDepth);
+        }
+        if (weight <= 0.0) continue;
+        float neighborY = Luminance(neighborB);
+        float neighborDY = Luminance(clamp(neighborD, -0.5 * neighborB, 0.5 * neighborB));
+        if (!all(isfinite(float2(neighborY, neighborDY)))) continue;
+        sumB += weight * neighborY;
+        sumD += weight * neighborDY;
+        sumWeight += weight;
+    }
+    if (sumWeight <= 1e-5 || !all(isfinite(float2(sumB, sumD)))) return 1.0;
+    float meanB = sumB / sumWeight, meanD = sumD / sumWeight;
+    float baselineDetail = centerB - meanB;
+    float editedDetail = baselineDetail + (centerD - meanD);
+    if (!all(isfinite(float2(baselineDetail, editedDetail)))) return 1.0;
+    // Constant edits and edits that cancel baseline detail are retained. Only
+    // additional local luminance contrast attenuates the existing correction.
+    // This same-frame test cannot stabilize coherent temporal flicker.
+    float excess = max(0.0, abs(editedDetail) - abs(baselineDetail)) /
+        max(max(abs(centerB), abs(meanB)), 1e-5);
+    return 1.0 - saturate(float(lumaStabilityPercent) * 0.01) * smoothstep(0.02, 0.10, excess);
+}
+
+float3 StableGuardTap(int2 pixel, float3 original, float3 base, float3 delta) {
+    float3 guarded = GuardTap(original, base, delta);
+    if (lumaStabilityPercent == 0 || all(guarded == 0.0)) return guarded;
+    return guarded * LumaStabilityWeight(pixel, base, delta);
+}
+
 [numthreads(8, 8, 1)]
 void MainCS(uint3 p : SV_DispatchThreadID) {
     if (p.x >= w || p.y >= h) return;
@@ -100,10 +171,10 @@ void MainCS(uint3 p : SV_DispatchThreadID) {
     // interpolation support must not spend the whole output pixel's edit budget.
     // Match each baseline separately too; averaging dissimilar taps can create
     // a false match. This is spatial protection, not temporal NR stabilization.
-    d00 = GuardTap(c.rgb, b00, d00);
-    d10 = GuardTap(c.rgb, b10, d10);
-    d01 = GuardTap(c.rgb, b01, d01);
-    d11 = GuardTap(c.rgb, b11, d11);
+    d00 = StableGuardTap(a, c.rgb, b00, d00);
+    d10 = StableGuardTap(a + int2(1, 0), c.rgb, b10, d10);
+    d01 = StableGuardTap(a + int2(0, 1), c.rgb, b01, d01);
+    d11 = StableGuardTap(a + int2(1, 1), c.rgb, b11, d11);
     float3 d = lerp(lerp(d00, d10, t.x), lerp(d01, d11, t.x), t.y);
     // Identity is exact for finite inputs, including negative scene-linear RGB.
     // The upstream unconditional final clamp did not preserve that case.
