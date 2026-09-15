@@ -289,38 +289,25 @@ void KnownDisabledProof(Warp& warp, nr030::PredicationTracker& tracker, bool thr
     Require(actual[2] == Replacement, "Private work did not execute for known-disabled caller");
 }
 
-void MutatedSnapshotProof(Warp& warp, nr030::PredicationTracker& tracker, bool initiallyPass) {
+void MutatedSnapshotProof(Warp& warp, nr030::PredicationTracker& tracker, bool notEqualZero) {
     warp.Reset();
+    // Both predicates initially allow work. This lets an ordinary GPU copy
+    // mutate the bound source without relying on unpredicated query/WBI behavior.
+    // The separate conditional-copy groups exercise actually suppressed work.
+    const UINT64 beforeValue = notEqualZero ? 0ull : 1ull;
+    const UINT64 afterValue = notEqualZero ? 1ull : 0ull;
+    const auto operation = notEqualZero ? D3D12_PREDICATION_OP_NOT_EQUAL_ZERO
+                                        : D3D12_PREDICATION_OP_EQUAL_ZERO;
     const auto source = warp.Upload(std::array<UINT64, 1>{Replacement});
-    const auto initialValue = warp.Upload(std::array<UINT64, 1>{1});
-    const auto initial = warp.Upload(std::array<UINT64, 7>{
-        Sentinel, Sentinel, Sentinel, Sentinel, Sentinel, Sentinel, Sentinel});
+    const auto initialValue = warp.Upload(std::array<UINT64, 1>{beforeValue});
+    const auto changedValue = warp.Upload(std::array<UINT64, 1>{afterValue});
+    const auto initial = warp.Upload(std::array<UINT64, 4>{Sentinel, Sentinel, Sentinel, Sentinel});
     const auto predicate = warp.Buffer(D3D12_HEAP_TYPE_DEFAULT, sizeof(UINT64), D3D12_RESOURCE_STATE_COPY_DEST);
-    const auto activeSeparate = warp.Buffer(D3D12_HEAP_TYPE_DEFAULT, sizeof(UINT64), D3D12_RESOURCE_STATE_COPY_DEST);
-    const auto nullControl = warp.Buffer(D3D12_HEAP_TYPE_DEFAULT, sizeof(UINT64), D3D12_RESOURCE_STATE_COPY_DEST);
-    const auto wbiActive = warp.Buffer(D3D12_HEAP_TYPE_DEFAULT, sizeof(UINT64), D3D12_RESOURCE_STATE_COPY_DEST);
-    const auto wbiNull = warp.Buffer(D3D12_HEAP_TYPE_DEFAULT, sizeof(UINT64), D3D12_RESOURCE_STATE_COPY_DEST);
-    const auto destination = warp.Buffer(D3D12_HEAP_TYPE_DEFAULT, 7 * sizeof(UINT64),
+    const auto destination = warp.Buffer(D3D12_HEAP_TYPE_DEFAULT, 4 * sizeof(UINT64),
         D3D12_RESOURCE_STATE_COPY_DEST);
-    D3D12_FEATURE_DATA_D3D12_OPTIONS3 options{};
-    ComPtr<ID3D12GraphicsCommandList2> commands2;
-    const bool wbiSupported = SUCCEEDED(warp.device->CheckFeatureSupport(
-        D3D12_FEATURE_D3D12_OPTIONS3, &options, sizeof(options))) &&
-        (options.WriteBufferImmediateSupportFlags & D3D12_COMMAND_LIST_SUPPORT_FLAG_DIRECT) != 0 &&
-        SUCCEEDED(warp.commands.As(&commands2));
-    D3D12_QUERY_HEAP_DESC queryDescription{};
-    queryDescription.Type = D3D12_QUERY_HEAP_TYPE_OCCLUSION;
-    queryDescription.Count = 1;
-    ComPtr<ID3D12QueryHeap> queries;
-    Check(warp.device->CreateQueryHeap(&queryDescription, IID_PPV_ARGS(&queries)), "Create predicate mutation query");
-    constexpr auto queryType = D3D12_QUERY_TYPE_BINARY_OCCLUSION;
     auto* commands = warp.commands.Get();
-    commands->BeginQuery(queries.Get(), queryType, 0);
-    commands->EndQuery(queries.Get(), queryType, 0);
     commands->CopyBufferRegion(predicate.Get(), 0, initialValue.Get(), 0, sizeof(UINT64));
-    for (auto* control : {activeSeparate.Get(), nullControl.Get(), wbiActive.Get(), wbiNull.Get()})
-        commands->CopyBufferRegion(control, 0, initialValue.Get(), 0, sizeof(UINT64));
-    commands->CopyBufferRegion(destination.Get(), 0, initial.Get(), 0, 7 * sizeof(UINT64));
+    commands->CopyBufferRegion(destination.Get(), 0, initial.Get(), 0, 4 * sizeof(UINT64));
     D3D12_RESOURCE_BARRIER barrier{};
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     barrier.Transition.pResource = predicate.Get();
@@ -328,24 +315,17 @@ void MutatedSnapshotProof(Warp& warp, nr030::PredicationTracker& tracker, bool i
     barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PREDICATION;
     commands->ResourceBarrier(1, &barrier);
-    commands->SetPredication(predicate.Get(), 0, initiallyPass
-        ? D3D12_PREDICATION_OP_EQUAL_ZERO : D3D12_PREDICATION_OP_NOT_EQUAL_ZERO);
+    commands->SetPredication(predicate.Get(), 0, operation);
     commands->CopyBufferRegion(destination.Get(), 0, source.Get(), 0, sizeof(UINT64));
 
-    // ResolveQueryData is documented as unpredicated. Independently observe
-    // this runtime's actual behavior with the same completed query resolved
-    // into the bound buffer, an unrelated buffer under the active predicate,
-    // and an unrelated buffer after NULL. The mutation assertion stays strict.
-    // Keep the bound buffer in COPY_SOURCE to detect an invalid tuple rebind.
+    // SetPredication has already snapped a permitting value. CopyBufferRegion
+    // therefore executes and changes the buffer even though the new value
+    // would suppress work if it were incorrectly rebound. Leave COPY_SOURCE
+    // during the guard to additionally prohibit an invalid raw tuple restore.
     barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PREDICATION;
     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
     commands->ResourceBarrier(1, &barrier);
-    commands->ResolveQueryData(queries.Get(), queryType, 0, 1, predicate.Get(), 0);
-    commands->ResolveQueryData(queries.Get(), queryType, 0, 1, activeSeparate.Get(), 0);
-    if (wbiSupported) {
-        const D3D12_WRITEBUFFERIMMEDIATE_PARAMETER write{wbiActive->GetGPUVirtualAddress(), 0};
-        commands2->WriteBufferImmediate(1, &write, nullptr);
-    }
+    commands->CopyBufferRegion(predicate.Get(), 0, changedValue.Get(), 0, sizeof(UINT64));
     barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
     commands->ResourceBarrier(1, &barrier);
@@ -354,37 +334,30 @@ void MutatedSnapshotProof(Warp& warp, nr030::PredicationTracker& tracker, bool i
         Require(!scope.Admitted(), "Active snapshotted predicate must be passed through untouched");
     }
     commands->CopyBufferRegion(destination.Get(), sizeof(UINT64), source.Get(), 0, sizeof(UINT64));
+    // Measure the actual source mutation independently of predicate behavior.
     commands->SetPredication(nullptr, 0, D3D12_PREDICATION_OP_EQUAL_ZERO);
-    commands->ResolveQueryData(queries.Get(), queryType, 0, 1, nullControl.Get(), 0);
-    if (wbiSupported) {
-        const D3D12_WRITEBUFFERIMMEDIATE_PARAMETER write{wbiNull->GetGPUVirtualAddress(), 0};
-        commands2->WriteBufferImmediate(1, &write, nullptr);
-    }
     commands->CopyBufferRegion(destination.Get(), 2 * sizeof(UINT64), predicate.Get(), 0, sizeof(UINT64));
-    UINT64 outputOffset = 3 * sizeof(UINT64);
-    for (auto* control : {activeSeparate.Get(), nullControl.Get(), wbiActive.Get(), wbiNull.Get()}) {
-        barrier.Transition.pResource = control;
-        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-        barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
-        commands->ResourceBarrier(1, &barrier);
-        commands->CopyBufferRegion(destination.Get(), outputOffset, control, 0, sizeof(UINT64));
-        outputOffset += sizeof(UINT64);
-    }
-    const auto actual = ReadCompleted<7>(warp, destination.Get());
-    const auto expected = initiallyPass ? Replacement : Sentinel;
-    std::cout << "GPU snapshot evidence: initiallyPass=" << initiallyPass
-              << " initialPredicate=1 expected=" << expected
+
+    // Negative control: rebinding the same original tuple, after restoring the
+    // resource's legal state, must snap the changed value and reverse the result.
+    // This proves that saving/restoring only buffer+offset+operation is unsafe.
+    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
+    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PREDICATION;
+    commands->ResourceBarrier(1, &barrier);
+    commands->SetPredication(nullptr, 0, D3D12_PREDICATION_OP_EQUAL_ZERO);
+    commands->SetPredication(predicate.Get(), 0, operation);
+    commands->CopyBufferRegion(destination.Get(), 3 * sizeof(UINT64), source.Get(), 0, sizeof(UINT64));
+    const auto actual = ReadCompleted<4>(warp, destination.Get());
+    std::cout << "GPU snapshot evidence: operation=" << (notEqualZero ? "NOT_EQUAL_ZERO" : "EQUAL_ZERO")
+              << " initialPredicate=" << beforeValue << " expectedChanged=" << afterValue
               << " baseline=" << actual[0] << " guarded=" << actual[1]
-              << " mutatedPredicate=" << actual[2]
-              << " queryActiveSeparate=" << actual[3] << " queryNullControl=" << actual[4]
-              << " wbiSupported=" << wbiSupported << " wbiActive=" << actual[5]
-              << " wbiNullControl=" << actual[6] << '\n';
-    Require(actual[0] == expected && actual[1] == expected,
-        "Guard changed a latched predicate after its source buffer mutated");
-    Require(actual[4] == 0, "Unpredicated empty-query control did not produce the required zero result");
-    if (wbiSupported) Require(actual[6] == 0, "Unpredicated immediate-write control did not produce zero");
-    Require(actual[2] == 0,
-        "GPU query did not actually mutate the predicate source as intended");
+              << " mutatedPredicate=" << actual[2] << " unsafeRebind=" << actual[3] << '\n';
+    Require(actual[0] == Replacement && actual[1] == Replacement,
+        "Guard changed a latched permitting predicate after its source buffer mutated");
+    Require(actual[2] == afterValue && actual[2] != beforeValue,
+        "GPU copy did not actually mutate the predicate source as intended");
+    Require(actual[3] == Sentinel,
+        "Unsafe tuple-rebind control did not reverse the conditional result");
 }
 } // namespace
 
@@ -499,10 +472,10 @@ int wmain(int argc, wchar_t** argv) {
         test("GPU active predicate that permits work still permits the original conditional copy", [&] {
             ConditionalCopyProof(warp, *tracker, 8, D3D12_PREDICATION_OP_EQUAL_ZERO, false);
         });
-        test("GPU skip snapshot survives mutation and retransition of its original predicate source", [&] {
+        test("GPU EQUAL_ZERO initially-passing snapshot survives source mutation and rejects unsafe rebind", [&] {
             MutatedSnapshotProof(warp, *tracker, false);
         });
-        test("GPU pass snapshot survives mutation and retransition of its original predicate source", [&] {
+        test("GPU NOT_EQUAL_ZERO initially-passing snapshot survives source mutation and rejects unsafe rebind", [&] {
             MutatedSnapshotProof(warp, *tracker, true);
         });
         test("GPU known-disabled scope clears private predicate before one original callback", [&] {

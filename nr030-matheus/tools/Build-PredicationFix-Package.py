@@ -24,8 +24,8 @@ REQUIRED_PREDICATION_CASES = {
     "GPU EQUAL_ZERO conditional-copy control is broken without guard and preserved with guard",
     "GPU NOT_EQUAL_ZERO at nonzero offset preserves the actual conditional-copy result",
     "GPU active predicate that permits work still permits the original conditional copy",
-    "GPU skip snapshot survives mutation and retransition of its original predicate source",
-    "GPU pass snapshot survives mutation and retransition of its original predicate source",
+    "GPU EQUAL_ZERO initially-passing snapshot survives source mutation and rejects unsafe rebind",
+    "GPU NOT_EQUAL_ZERO initially-passing snapshot survives source mutation and rejects unsafe rebind",
     "GPU known-disabled scope clears private predicate before one original callback",
     "GPU known-disabled scope clears private predicate on exception before one fallback callback",
 }
