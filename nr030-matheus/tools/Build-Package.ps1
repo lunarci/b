@@ -27,7 +27,7 @@ if ($installerResults.WindowsPowerShell51 -ne $true -or $installerResults.Failed
 $nativeResultPath=Join-Path $BuildRoot 'ctest-results.xml'
 [xml]$nativeResults=Get-Content -LiteralPath $nativeResultPath -Raw
 $suite=$nativeResults.DocumentElement
-if ($suite.Name -ne 'testsuite' -or [int]$suite.GetAttribute('failures') -ne 0 -or
+if ($suite.LocalName -cne 'testsuite' -or [int]$suite.GetAttribute('failures') -ne 0 -or
     [int]$suite.GetAttribute('skipped') -ne 0 -or [int]$suite.GetAttribute('disabled') -ne 0) {
     throw 'Native CTest suite has failures, skipped or disabled tests.'
 }
