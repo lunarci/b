@@ -259,6 +259,38 @@ try {
         Assert-CompleteTest ($report.Contains('The ratio check reads configuration only.')) 'Check overstates configuration as runtime proof.'
         Assert-CompleteSnapshot $f.Paths $before
     }
+    Run-CompleteCase 'ratio-check-uses-invariant-numeric-values-with-explicit-overrides' {
+        param($f)
+        $ini=Join-Path $f.Paths.Bin 'OptiScaler.ini'
+        $original=[IO.File]::ReadAllText($ini)
+        $priorCulture=[Threading.Thread]::CurrentThread.CurrentCulture
+        try {
+            # A comma-decimal Windows locale must not change the INI format.
+            [Threading.Thread]::CurrentThread.CurrentCulture=[Globalization.CultureInfo]::GetCultureInfo('fr-FR')
+            foreach ($ratioCase in @(
+                @('2',$true),@('2.0',$true),@('2.000000',$true),@('2e0',$true),
+                @('1.5',$false),@('2.000001',$false),@('20',$false),
+                @('2,0',$false),@('2,000',$false),@('NaN',$false),@('Infinity',$false),@('auto',$false)
+            )) {
+                $literal=[string]$ratioCase[0];$expected=[bool]$ratioCase[1]
+                Write-Text $ini ($original.Replace('UpscaleRatioOverrideValue=2.0',('UpscaleRatioOverrideValue='+$literal)))
+                $before=Get-CompleteGameSnapshot $f.Paths
+                $report=Check-Complete $f.Paths
+                $observation='Ratio='+$literal+'; PerPresetOverride=false; ExpectedRatio=2.0; MatchesRequested='+$expected+'; GameRuntimeVerified=false'
+                Assert-CompleteTest ($report.Contains($observation)) ('Unexpected numeric ratio observation for '+$literal)
+                Assert-CompleteSnapshot $f.Paths $before
+            }
+            foreach ($flags in @(@('true','auto'),@('true','true'),@('auto','false'),@('false','false'))) {
+                $text=$original.Replace('UpscaleRatioOverrideValue=2.0','UpscaleRatioOverrideValue=2.000000').Replace('UpscaleRatioOverrideEnabled=true',('UpscaleRatioOverrideEnabled='+$flags[0])).Replace('QualityRatioOverrideEnabled=false',('QualityRatioOverrideEnabled='+$flags[1]))
+                Write-Text $ini $text
+                $before=Get-CompleteGameSnapshot $f.Paths
+                $report=Check-Complete $f.Paths
+                $observation='OverrideAll='+$flags[0]+'; Ratio=2.000000; PerPresetOverride='+$flags[1]+'; ExpectedRatio=2.0; MatchesRequested=False; GameRuntimeVerified=false'
+                Assert-CompleteTest ($report.Contains($observation)) 'Unknown or conflicting override flags were reported as matching.'
+                Assert-CompleteSnapshot $f.Paths $before
+            }
+        } finally { [Threading.Thread]::CurrentThread.CurrentCulture=$priorCulture }
+    }
     Run-CompleteCase 'changed-runtime-and-old-weights-backed-up-and-restored' {
         param($f)
         Write-CompleteFakePe (Join-Path $f.Paths.Plugins 'dlssnr_on_amd.asi') 99

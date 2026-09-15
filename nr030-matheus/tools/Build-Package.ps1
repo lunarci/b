@@ -30,7 +30,7 @@ foreach ($name in @('missing-legacy-record-install-repeat-remove','missing-legac
 }
 $completeResults=Get-Content -LiteralPath (Join-Path $sourceRoot 'package/test-results/complete-installer-tests.json') -Raw | ConvertFrom-Json
 if ($completeResults.WindowsPowerShell51 -ne $true -or $completeResults.Failed -ne 0 -or
-    $completeResults.Passed -lt 30 -or $completeResults.GameRuntimeVerified -ne $false) {
+    $completeResults.Passed -lt 31 -or $completeResults.GameRuntimeVerified -ne $false) {
     throw 'Windows PowerShell 5.1 complete installer test gate is not satisfied.'
 }
 foreach ($name in @('absent-nr-model-and-inis-downloaded-before-install','corrupt-download-blocked-before-game-writes','failed-addon-step-rolls-back-new-base-and-state','failed-upgrade-restores-old-addon-and-ownership','disable-nr-preserves-fsr-xefg-and-reinstall-reenables','disable-nr-failure-restores-all-ini-and-state-bytes','disabled-install-can-restore-complete-originals','requested-ratio-two-updates-both-ark-and-overwrite-ini','ratio-check-reports-configured-expectation-without-runtime-claim','regenerated-weights-are-backed-up-and-do-not-block-restore','standalone-recovery-configures-two-and-disables-both-nr-layers','recovery-failure-rolls-back-ratio-enabled-flags-and-state','recovery-missing-primary-opti-ini-stops-before-changes','owned-addon-upgrade-preserves-tuned-ini-and-state')) {

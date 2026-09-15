@@ -545,7 +545,11 @@ function Check-Complete($Paths) {
             $all=Read-IniValue $text 'UpscaleRatio' 'UpscaleRatioOverrideEnabled'
             $ratio=Read-IniValue $text 'UpscaleRatio' 'UpscaleRatioOverrideValue'
             $perPreset=Read-IniValue $text 'QualityOverrides' 'QualityRatioOverrideEnabled'
-            $matchesRequested=($all -ieq 'true' -and $ratio -eq '2.0' -and $perPreset -ieq 'false')
+            # OptiScaler can serialize 2.0 as 2.000000. Compare the invariant
+            # numeric value, while still requiring explicit override flags.
+            $numericRatio=0.0
+            $ratioParsed=[double]::TryParse($ratio,[Globalization.NumberStyles]::Float,[Globalization.CultureInfo]::InvariantCulture,[ref]$numericRatio)
+            $matchesRequested=($all -ieq 'true' -and $ratioParsed -and $numericRatio -eq 2.0 -and $perPreset -ieq 'false')
             $lines.Add('OptiScaler configured ratio: '+$ini+'; OverrideAll='+$all+'; Ratio='+$ratio+'; PerPresetOverride='+$perPreset+'; ExpectedRatio=2.0; MatchesRequested='+$matchesRequested+'; GameRuntimeVerified=false')
         } catch { $lines.Add('OptiScaler configured ratio: '+$ini+'; ExpectedRatio=2.0; NOT CONFIRMED - '+$_.Exception.Message) }
     }

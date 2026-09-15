@@ -1,0 +1,36 @@
+name: Verify NR030 configuration controls
+on:
+  push:
+    branches: [nr030-024-motion-evidence]
+    paths:
+      - nr030-matheus/package/**
+      - .github/workflows/test-nr030-motion-controls.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Test controls and recovery in Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          foreach ($script in @('Test-Complete-Package.ps1','Test-Motion-Tuning.ps1','Test-Skin-Control.ps1')) {
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path 'nr030-matheus/package' $script)
+            if ($LASTEXITCODE -ne 0) { throw "$script failed: $LASTEXITCODE" }
+          }
+          $skin=Get-Content nr030-matheus/package/test-results/skin-control-tests.json -Raw | ConvertFrom-Json
+          if (-not $skin.WindowsPowerShell51 -or -not $skin.NativeWin32ApiVerified -or $skin.NativeWin32ApiSkipped) { throw 'The native Windows INI reader was not verified.' }
+      - name: Upload configuration test evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: NR030-configuration-tests
+          path: nr030-matheus/package/test-results/
+          if-no-files-found: error
+          retention-days: 14
