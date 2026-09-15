@@ -126,8 +126,9 @@ try {
         Assert-TrialThrows { Invoke-OriginalColorControl $f.Paths Apply } 'Modified add-on file';Assert-OriginalColorSnapshot $f.Paths $before
         Write-TrialPe $f.Secondary 1
         $stateFile=[IO.File]::ReadAllBytes($f.Paths.State);Remove-Item -LiteralPath $f.Paths.State
-        $before=Get-OriginalColorSnapshot $f.Paths;Assert-TrialThrows { Invoke-OriginalColorControl $f.Paths Apply } 'ownership record';Assert-OriginalColorSnapshot $f.Paths $before
-        [IO.File]::WriteAllBytes($f.Paths.State,$stateFile)
+        $primaryBytes=[IO.File]::ReadAllBytes($f.Primary);Remove-Item -LiteralPath $f.Primary
+        $before=Get-OriginalColorSnapshot $f.Paths;Assert-TrialThrows { Invoke-OriginalColorControl $f.Paths Apply } ([regex]::Escape('Existing primary add-on ASI is required: '+$f.Primary));Assert-OriginalColorSnapshot $f.Paths $before
+        [IO.File]::WriteAllBytes($f.Primary,$primaryBytes);[IO.File]::WriteAllBytes($f.Paths.State,$stateFile)
     }
     Run-TrialCase 'tampered-backups-trial-state-or-binaries-block-restore' {
         param($f)
@@ -181,6 +182,82 @@ try {
         } }.GetNewClosure()
         Assert-TrialThrows { Invoke-OriginalColorControl $f.Paths Restore $restoreInject } 'Staged trial source changed before copy'
         Assert-OriginalColorSnapshot $f.Paths $active
+        Invoke-OriginalColorControl $f.Paths Restore
+        Assert-OriginalColorSnapshot $f.Paths $before
+    }
+    Run-TrialCase 'missing-record-adopts-verified-files-and-restores-absence-primary-and-overwrite' {
+        param($f)
+        Remove-Item -LiteralPath $f.Paths.State
+        foreach ($variant in @('with-overwrite','primary-only')) {
+            if ($variant -ceq 'primary-only') { Remove-Item -LiteralPath $f.Paths.OldBin -Recurse -Force }
+            $before=Get-OriginalColorSnapshot $f.Paths
+            Show-OriginalColorStatus $f.Paths;Assert-OriginalColorSnapshot $f.Paths $before
+            Invoke-OriginalColorControl $f.Paths Apply;Assert-TrialUnrelated $f.Paths $before
+            $state=Read-AddonState $f.Paths;$trial=Read-OriginalColorTrial $f.Paths $state
+            Assert-TrialTest ($trial.OriginalStateExisted -is [bool] -and -not $trial.OriginalStateExisted) 'Original record absence was not retained.'
+            Assert-TrialTest ($null -eq $trial.OriginalStateBackup -and $null -eq $trial.OriginalStateHash) 'A historical state backup was fabricated.'
+            Assert-TrialTest (-not (Test-Path -LiteralPath (Join-Path $trial.BackupFolder 'original-state.json'))) 'An absent original state was fabricated on disk.'
+            Assert-TrialTest ($state.OwnershipBasis -ceq 'CurrentFilesVerifiedAtTrialApply') 'Current file verification basis was not explicit.'
+            $active=Get-OriginalColorSnapshot $f.Paths
+            Invoke-OriginalColorControl $f.Paths Apply;Assert-OriginalColorSnapshot $f.Paths $active
+            Invoke-OriginalColorControl $f.Paths Restore;Assert-OriginalColorSnapshot $f.Paths $before
+            Assert-TrialTest (-not (Test-Path -LiteralPath $f.Paths.State)) 'Restoration did not recover original record absence.'
+        }
+    }
+    Run-TrialCase 'missing-record-write-failures-preserve-absence-and-rollback-active-trial' {
+        param($f)
+        Remove-Item -LiteralPath $f.Paths.State;$before=Get-OriginalColorSnapshot $f.Paths
+        foreach ($failureIndex in @(0,1,2)) {
+            $inject={ param($index) if ($index -eq $failureIndex) { throw 'injected recordless apply failure' } }.GetNewClosure()
+            Assert-TrialThrows { Invoke-OriginalColorControl $f.Paths Apply $inject } 'injected recordless apply failure'
+            Assert-OriginalColorSnapshot $f.Paths $before
+        }
+        Invoke-OriginalColorControl $f.Paths Apply;$active=Get-OriginalColorSnapshot $f.Paths
+        foreach ($failureIndex in @(0,1,2)) {
+            $inject={ param($index) if ($index -eq $failureIndex) { throw 'injected recordless restore failure' } }.GetNewClosure()
+            Assert-TrialThrows { Invoke-OriginalColorControl $f.Paths Restore $inject } 'injected recordless restore failure'
+            Assert-OriginalColorSnapshot $f.Paths $active
+        }
+        Invoke-OriginalColorControl $f.Paths Restore;Assert-OriginalColorSnapshot $f.Paths $before
+    }
+    Run-TrialCase 'malformed-conflicting-or-directory-state-is-never-adopted' {
+        param($f)
+        $original=[IO.File]::ReadAllBytes($f.Paths.State)
+        Write-Text $f.Paths.State '{ this is not JSON'
+        $before=Get-OriginalColorSnapshot $f.Paths
+        Assert-TrialThrows { Invoke-OriginalColorControl $f.Paths Apply } 'JSON|Unexpected|Invalid';Assert-OriginalColorSnapshot $f.Paths $before
+        [IO.File]::WriteAllBytes($f.Paths.State,$original)
+        $state=Read-AddonState $f.Paths;$state.SchemaVersion=2;Write-Json $f.Paths.State $state
+        $before=Get-OriginalColorSnapshot $f.Paths
+        Assert-TrialThrows { Invoke-OriginalColorControl $f.Paths Apply } 'Invalid add-on state';Assert-OriginalColorSnapshot $f.Paths $before
+        [IO.File]::WriteAllBytes($f.Paths.State,$original)
+        $state=Read-AddonState $f.Paths;(@($state.Files | Where-Object { $_.Name -ceq 'MatheusNR030.asi' })[0]).InstalledHash=('f'*64);Write-Json $f.Paths.State $state
+        $before=Get-OriginalColorSnapshot $f.Paths
+        Assert-TrialThrows { Invoke-OriginalColorControl $f.Paths Apply } 'Modified add-on file';Assert-OriginalColorSnapshot $f.Paths $before
+        [IO.File]::WriteAllBytes($f.Paths.State,$original);$before=Get-OriginalColorSnapshot $f.Paths
+        Remove-Item -LiteralPath $f.Paths.State;New-Item -ItemType Directory -Path $f.Paths.State | Out-Null
+        Assert-TrialThrows { Invoke-OriginalColorControl $f.Paths Apply } 'directory occupies the add-on state path'
+        Assert-TrialTest (Test-Path -LiteralPath $f.Paths.State -PathType Container) 'State directory was replaced.'
+        Remove-Item -LiteralPath $f.Paths.State;[IO.File]::WriteAllBytes($f.Paths.State,$original)
+        Assert-OriginalColorSnapshot $f.Paths $before
+    }
+    Run-TrialCase 'missing-record-concurrent-state-creation-is-never-overwritten' {
+        param($f)
+        foreach ($conflictIndex in @(0,2)) {
+            Remove-Item -LiteralPath $f.Paths.State -ErrorAction SilentlyContinue
+            $before=Get-OriginalColorSnapshot $f.Paths
+            $inject={ param($index) if ($index -eq $conflictIndex) { Write-Text $f.Paths.State 'EXTERNAL STATE CREATED CONCURRENTLY' } }.GetNewClosure()
+            Assert-TrialThrows { Invoke-OriginalColorControl $f.Paths Apply $inject } 'Files changed while preparing|Trial destination changed before write'
+            Assert-TrialTest ([IO.File]::ReadAllText($f.Paths.State) -ceq 'EXTERNAL STATE CREATED CONCURRENTLY') 'External state was overwritten or deleted.'
+            $before[$f.Paths.State]=Get-Hash $f.Paths.State
+            Assert-OriginalColorSnapshot $f.Paths $before
+        }
+    }
+    Run-TrialCase 'legacy-trial-without-original-state-flag-restores-existing-record' {
+        param($f)
+        $before=Get-OriginalColorSnapshot $f.Paths
+        Invoke-OriginalColorControl $f.Paths Apply
+        $state=Read-AddonState $f.Paths;$state.OriginalColorTrial.PSObject.Properties.Remove('OriginalStateExisted');Write-Json $f.Paths.State $state
         Invoke-OriginalColorControl $f.Paths Restore
         Assert-OriginalColorSnapshot $f.Paths $before
     }

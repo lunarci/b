@@ -1,5 +1,11 @@
 # NR 원본 색상 전달 비교본
 
+**설치 기록 누락 대응판 — RecordFix 1**
+
+이전 비교본의 `Existing add-on ownership record is required` 오류를 수정했습니다. 설치 기록 JSON이 없어도 실제 설치된 0.2.4 ASI·기본 NR·INI를 확인하고 백업한 뒤 적용합니다. 처음부터 기록이 없었다면 원복할 때 새로 만든 기록도 제거합니다. 기존 기록이 손상되었거나 실제 파일과 충돌하는 경우에는 자동으로 무시하지 않습니다.
+
+직전 비교본과 ASI는 완전히 동일합니다. 이번 수정은 설치·원복 도구에만 적용되며 그래픽 처리나 설정을 추가로 변경하지 않습니다. 이전 설치가 이 오류로 중단됐다면 이번 ZIP을 새 폴더에 전체 압축 해제하고 01번을 실행하면 됩니다.
+
 재윤님이 확인하신 상태는 NR을 완전히 끄면 흰색 깨짐과 팔 잔상이 모두 사라지고, NR을 켜면 XeFG 활성 여부에 따라 증상이 달라지는 것입니다. XeFG 4배와 5배 모두 깨짐이 나타났으므로, 이 비교본은 의도하신 5배 설정을 유지합니다.
 
 이 파일은 **원인을 좁히기 위한 비교 빌드**입니다. 흰색 깨짐이나 피부 그림자 자글거림이 해결됐다고 검증한 수정본은 아닙니다.
@@ -51,4 +57,4 @@ event=original_color_stats passthrough=...
 
 기존 SkinControl처럼 0.2.4 ASI 해시를 검사하는 도구를 다시 사용하기 전에는 **이 비교본의 `02_RESTORE_PREVIOUS_ADDON.cmd`로 먼저 복구**하십시오. 이번 ZIP에는 전체 모드 재설치나 NR 끄기 버튼이 없습니다.
 
-Windows에서 실제 production `After()`의 원본 descriptor 보존·callback 1회·예외 전달·참조 유지와 적용/복구 도구를 검증합니다. 구체적인 시험 기록은 `evidence`, 빌드 출처와 한계는 `BUILD_PROVENANCE.json`, 해당 소스와 시험 코드는 `SOURCE.zip`에 포함됩니다. Radeon에서 게임을 실행한 화질 검증은 수행하지 않았습니다.
+Windows에서 실제 production `After()`의 원본 descriptor 보존·callback 1회·예외 전달·참조 유지와 적용/복구 도구를 검증했습니다. 이번 설치 수정은 Windows PowerShell 5.1에서 기록이 없는 정상 설치·실패 복원·기록 부재로의 원복을 추가로 검증합니다. 구체적인 시험 기록은 `evidence`, 빌드 출처와 한계는 `BUILD_PROVENANCE.json`, ASI 소스는 `SOURCE.zip`, 이번 설치 도구 소스는 `INSTALLER_SOURCE.zip`에 포함됩니다. Radeon에서 게임을 실행한 화질 검증은 수행하지 않았습니다.
