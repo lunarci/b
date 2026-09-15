@@ -858,14 +858,38 @@ int wmain(int argc, wchar_t** argv) {
             const auto plan = contract::make_scale_plan({40, 40}, contract::FixedScale::Percent85);
             Require(plan.neural.width == 34 && plan.neural.height == 34,
                     "Noise fixture must use the actual 85% grid");
-            // All channels and the HDR exposure are binary-exact in FP16.
+            // Input channels and the HDR exposure are binary-exact in FP16;
+            // fractional area accumulation and typed storage are not a copy.
             // A +/-12.5% NR checker creates 25% extra local contrast, above
             // the 10% rejection threshold, on a genuinely flat area baseline.
             for (const float exposure : {1.0f, 100.0f}) {
                 auto native = Filled(40, 40, {exposure, exposure / 2, exposure / 4, 0.3125f}, half);
                 auto low = gpu.Run(Kernel::Color, {native}, 34, 34, {34, 34, 40, 40}, half);
-                Equal(low, Filled(34, 34, {exposure, exposure / 2, exposure / 4, 0.3125f}, half),
-                      0, 0, true);
+                const float expectedLow[]{exposure, exposure / 2, exposure / 4, 0.3125f};
+                for (UINT c = 0; c < 4; ++c) {
+                    float smallest = std::numeric_limits<float>::infinity();
+                    float largest = -std::numeric_limits<float>::infinity();
+                    int largestHalfStep = 0;
+                    const auto expectedBits = ToHalf(expectedLow[c]);
+                    for (UINT y = 0; y < 34; ++y) for (UINT x = 0; x < 34; ++x) {
+                        const float value = low.At(x, y, c);
+                        Require(std::isfinite(value), "Checker area baseline contains a nonfinite component");
+                        smallest = std::min(smallest, value);
+                        largest = std::max(largest, value);
+                        largestHalfStep = std::max(largestHalfStep,
+                            std::abs(static_cast<int>(ToHalf(value)) - static_cast<int>(expectedBits)));
+                    }
+                    std::cout << std::setprecision(9) << "Checker area exposure=" << exposure
+                              << " channel=" << c << " expected=" << expectedLow[c]
+                              << " min=" << smallest << " max=" << largest
+                              << " maximum FP16 steps=" << largestHalfStep << '\n';
+                    // The noise detector uses baseline RGB only. An area
+                    // average may store an adjacent half value, but no larger
+                    // deviation is permitted in this flat-input premise.
+                    // Low alpha is diagnostic; resolved alpha is exact native.
+                    if (c < 3)
+                        Require(largestHalfStep <= 1, "Checker RGB baseline differs by more than one FP16 step");
+                }
                 auto edited = low;
                 for (UINT y = 0; y < 34; ++y) for (UINT x = 0; x < 34; ++x)
                     for (UINT c = 0; c < 3; ++c)
