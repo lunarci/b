@@ -83,7 +83,15 @@ function Collect-MotionEvidence($Paths) {
         Add-Type -AssemblyName System.IO.Compression
         Add-Type -AssemblyName System.IO.Compression.FileSystem
         $zip=Join-Path $results ($name+'.zip')
-        [IO.Compression.ZipFile]::CreateFromDirectory($stage,$zip)
+        # .NET Framework may use backslashes for CreateFromDirectory entries.
+        # Use portable ZIP names that match inventory.json on every runtime.
+        $archive=[IO.Compression.ZipFile]::Open($zip,[IO.Compression.ZipArchiveMode]::Create)
+        try {
+            foreach ($file in @(Get-ChildItem -LiteralPath $stage -File -Recurse)) {
+                $entryName=$file.FullName.Substring($stage.Length+1).Replace('\','/')
+                $null=[IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive,$file.FullName,$entryName,[IO.Compression.CompressionLevel]::Optimal)
+            }
+        } finally { $archive.Dispose() }
         Write-Host ('Full logs and INIs saved: '+$zip)
         Write-Host 'This ZIP stays on your PC. It is not uploaded automatically.'
         return $zip
