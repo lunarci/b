@@ -280,7 +280,7 @@ try {
                 Assert-CompleteTest ($report.Contains($observation)) ('Unexpected numeric ratio observation for '+$literal)
                 Assert-CompleteSnapshot $f.Paths $before
             }
-            foreach ($flags in @(@('true','auto'),@('true','true'),@('auto','false'),@('false','false'))) {
+            foreach ($flags in @(@('true','true'),@('true','invalid'),@('auto','false'),@('false','false'))) {
                 $text=$original.Replace('UpscaleRatioOverrideValue=2.0','UpscaleRatioOverrideValue=2.000000').Replace('UpscaleRatioOverrideEnabled=true',('UpscaleRatioOverrideEnabled='+$flags[0])).Replace('QualityRatioOverrideEnabled=false',('QualityRatioOverrideEnabled='+$flags[1]))
                 Write-Text $ini $text
                 $before=Get-CompleteGameSnapshot $f.Paths
@@ -290,6 +290,42 @@ try {
                 Assert-CompleteSnapshot $f.Paths $before
             }
         } finally { [Threading.Thread]::CurrentThread.CurrentCulture=$priorCulture }
+    }
+    Run-CompleteCase 'ratio-check-interprets-auto-and-missing-per-preset-default-with-raw-evidence' {
+        param($f)
+        $ini=Join-Path $f.Paths.Bin 'OptiScaler.ini'
+        $original=[IO.File]::ReadAllText($ini).Replace('UpscaleRatioOverrideValue=2.0','UpscaleRatioOverrideValue=2.000000')
+        foreach ($case in @(
+            [pscustomobject]@{Raw='auto';Match=$true;Effective='false';Source='default_auto'},
+            [pscustomobject]@{Raw='AUTO';Match=$true;Effective='false';Source='default_auto'},
+            [pscustomobject]@{Raw=$null;Match=$true;Effective='false';Source='default_missing'},
+            [pscustomobject]@{Raw='false';Match=$true;Effective='false';Source='explicit'},
+            [pscustomobject]@{Raw='true';Match=$false;Effective='true';Source='explicit'},
+            [pscustomobject]@{Raw='invalid';Match=$false;Effective='unknown';Source='unrecognized'},
+            [pscustomobject]@{Raw='';Match=$false;Effective='unknown';Source='unrecognized'}
+        )) {
+            $replacement=if ($null -eq $case.Raw) { '' } else { 'QualityRatioOverrideEnabled='+$case.Raw }
+            Write-Text $ini ($original.Replace('QualityRatioOverrideEnabled=false',$replacement))
+            $before=Get-CompleteGameSnapshot $f.Paths
+            $report=Check-Complete $f.Paths
+            $observation='OverrideAll=true; Ratio=2.000000; PerPresetOverride='+$case.Raw+'; ExpectedRatio=2.0; MatchesRequested='+$case.Match+'; GameRuntimeVerified=false; PerPresetEffective='+$case.Effective+'; PerPresetSource='+$case.Source
+            Assert-CompleteTest ($report.Contains($observation)) ('Incorrect raw/default per-preset observation for '+$case.Source+' / '+$case.Raw)
+            Assert-CompleteSnapshot $f.Paths $before
+        }
+    }
+    Run-CompleteCase 'ratio-check-default-per-preset-retains-global-and-numeric-gates' {
+        param($f)
+        $ini=Join-Path $f.Paths.Bin 'OptiScaler.ini'
+        $original=[IO.File]::ReadAllText($ini).Replace('QualityRatioOverrideEnabled=false','QualityRatioOverrideEnabled=auto')
+        foreach ($case in @(@('auto','2.000000'),@('false','2.000000'),@('invalid','2.000000'),@('true','1.5'),@('true','2,0'),@('true','invalid'))) {
+            $all=[string]$case[0];$ratio=[string]$case[1]
+            Write-Text $ini ($original.Replace('UpscaleRatioOverrideEnabled=true',('UpscaleRatioOverrideEnabled='+$all)).Replace('UpscaleRatioOverrideValue=2.0',('UpscaleRatioOverrideValue='+$ratio)))
+            $before=Get-CompleteGameSnapshot $f.Paths
+            $report=Check-Complete $f.Paths
+            $observation='OverrideAll='+$all+'; Ratio='+$ratio+'; PerPresetOverride=auto; ExpectedRatio=2.0; MatchesRequested=False; GameRuntimeVerified=false; PerPresetEffective=false; PerPresetSource=default_auto'
+            Assert-CompleteTest ($report.Contains($observation)) 'Per-preset default bypassed the explicit global enable or numeric ratio check.'
+            Assert-CompleteSnapshot $f.Paths $before
+        }
     }
     Run-CompleteCase 'changed-runtime-and-old-weights-backed-up-and-restored' {
         param($f)

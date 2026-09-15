@@ -1,11 +1,13 @@
 name: Verify NR030 configured log evidence
 on:
   push:
-    branches: [nr030-configured-log-evidence]
+    branches: [nr030-configured-log-evidence, nr030-white-artifact-evidence-155642]
     paths:
       - nr030-matheus/package/**
       - nr030-matheus/opti-log-diagnostic/**
       - nr030-matheus/tools/Build-OptiLog-Package.py
+      - nr030-matheus/tools/Build-CurrentOptiEvidence-Package.py
+      - nr030-matheus/current-opti-evidence/**
       - .github/workflows/test-nr030-log-evidence.yml
   workflow_dispatch:
 permissions:
@@ -43,6 +45,30 @@ jobs:
           $ErrorActionPreference='Stop'
           $report=Get-Content nr030-matheus/package/test-results/opti-log-control-tests.json -Raw | ConvertFrom-Json
           if (-not $report.WindowsPowerShell51 -or -not $report.ParserCompatible -or $report.Failed -ne 0 -or $report.Passed -ne 8) { throw 'Windows parser and logging control verification was not completed.' }
+      - name: Verify configured ratio interpretation and original installer regressions
+        shell: powershell
+        run: |
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File nr030-matheus/package/Test-Complete-Package.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Ratio interpretation tests failed.' }
+      - name: Verify runtime binary collection and current log classification
+        shell: powershell
+        run: |
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File nr030-matheus/package/Test-Opti-RuntimeEvidence.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime evidence collector tests failed.' }
+      - name: Record exact verified source
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $root=Join-Path $env:GITHUB_WORKSPACE 'nr030-matheus'
+          $files=@{}
+          foreach ($file in Get-ChildItem $root -File -Recurse) {
+            $relative=$file.FullName.Substring($root.Length+1).Replace('\','/')
+            if ($relative.StartsWith('package/test-results/')) { continue }
+            if ($file.Extension -in @('.ps1','.py','.md','.json')) {
+              $files[$relative]=(Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+          }
+          @{SourceCommit=$env:GITHUB_SHA;RunId=$env:GITHUB_RUN_ID;Files=$files;GameRuntimeVerified=$false} | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 nr030-matheus/package/test-results/current-evidence-ci-context.json
       - name: Upload diagnostic test evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

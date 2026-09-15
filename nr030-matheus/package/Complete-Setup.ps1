@@ -546,11 +546,18 @@ function Check-Complete($Paths) {
             $ratio=Read-IniValue $text 'UpscaleRatio' 'UpscaleRatioOverrideValue'
             $perPreset=Read-IniValue $text 'QualityOverrides' 'QualityRatioOverrideEnabled'
             # OptiScaler can serialize 2.0 as 2.000000. Compare the invariant
-            # numeric value, while still requiring explicit override flags.
+            # numeric value. Global override must remain explicitly enabled.
+            # The documented per-preset default is false; keep its raw value
+            # separate from this configuration interpretation, not runtime proof.
+            $perPresetEffective='unknown';$perPresetSource='unrecognized'
+            if ($null -eq $perPreset) { $perPresetEffective='false';$perPresetSource='default_missing' }
+            elseif ($perPreset -ieq 'auto') { $perPresetEffective='false';$perPresetSource='default_auto' }
+            elseif ($perPreset -ieq 'false') { $perPresetEffective='false';$perPresetSource='explicit' }
+            elseif ($perPreset -ieq 'true') { $perPresetEffective='true';$perPresetSource='explicit' }
             $numericRatio=0.0
             $ratioParsed=[double]::TryParse($ratio,[Globalization.NumberStyles]::Float,[Globalization.CultureInfo]::InvariantCulture,[ref]$numericRatio)
-            $matchesRequested=($all -ieq 'true' -and $ratioParsed -and $numericRatio -eq 2.0 -and $perPreset -ieq 'false')
-            $lines.Add('OptiScaler configured ratio: '+$ini+'; OverrideAll='+$all+'; Ratio='+$ratio+'; PerPresetOverride='+$perPreset+'; ExpectedRatio=2.0; MatchesRequested='+$matchesRequested+'; GameRuntimeVerified=false')
+            $matchesRequested=($all -ieq 'true' -and $ratioParsed -and $numericRatio -eq 2.0 -and $perPresetEffective -ceq 'false')
+            $lines.Add('OptiScaler configured ratio: '+$ini+'; OverrideAll='+$all+'; Ratio='+$ratio+'; PerPresetOverride='+$perPreset+'; ExpectedRatio=2.0; MatchesRequested='+$matchesRequested+'; GameRuntimeVerified=false; PerPresetEffective='+$perPresetEffective+'; PerPresetSource='+$perPresetSource)
         } catch { $lines.Add('OptiScaler configured ratio: '+$ini+'; ExpectedRatio=2.0; NOT CONFIRMED - '+$_.Exception.Message) }
     }
     $lines.Add('The ratio check reads configuration only. Confirm actual input/output resolution in the new game session.')
