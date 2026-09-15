@@ -10,6 +10,7 @@ on:
       - nr030-complete-install
       - nr030-image-stability
       - nr030-luma-stability
+      - nr030-shadow-stability
     paths:
       - nr030-matheus/**
       - .github/workflows/build-matheus-nr030.yml

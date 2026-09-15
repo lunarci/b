@@ -17,6 +17,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 using Microsoft::WRL::ComPtr;
@@ -862,7 +863,7 @@ int wmain(int argc, wchar_t** argv) {
             // fractional area accumulation and typed storage are not a copy.
             // A +/-12.5% NR checker creates 25% extra local contrast, above
             // the 10% rejection threshold, on a genuinely flat area baseline.
-            for (const float exposure : {1.0f, 100.0f}) {
+            for (const float exposure : {1.0f / 1024, 1.0f / 64, 1.0f, 100.0f}) {
                 auto native = Filled(40, 40, {exposure, exposure / 2, exposure / 4, 0.3125f}, half);
                 auto low = gpu.Run(Kernel::Color, {native}, 34, 34, {34, 34, 40, 40}, half);
                 const float expectedLow[]{exposure, exposure / 2, exposure / 4, 0.3125f};
@@ -960,6 +961,130 @@ int wmain(int argc, wchar_t** argv) {
             // Edited is spatially constant: its local detail is zero, so this
             // is removal of input detail, not newly introduced NR contrast.
             Equal(on, off, 0, 0, true);
+        });
+        test("Luma stability retains beneficial contrast reversal at effect 50", [&] {
+            const auto half = DXGI_FORMAT_R16G16B16A16_FLOAT;
+            // A reversed low-grid detail is not automatically an artifact:
+            // with effect 50 it can cancel real native noise. Use the actual
+            // area baseline rather than assuming the native and low grids agree.
+            for (const float exposure : {1.0f / 1024, 1.0f / 64, 1.0f}) {
+                auto native = Filled(40, 40, {exposure, exposure / 2, exposure / 4, 0.375f}, half);
+                const float pattern[]{0.125f, 0.0f, -0.125f, 0.0f};
+                for (UINT y = 0; y < 40; ++y) for (UINT x = 0; x < 40; ++x)
+                    for (UINT c = 0; c < 3; ++c)
+                        native.At(x, y, c) *= 1.0f + pattern[x % 4];
+                auto low = gpu.Run(Kernel::Color, {native}, 34, 34, {34, 34, 40, 40}, half);
+                auto edited = low;
+                const float mean[]{exposure, exposure / 2, exposure / 4};
+                for (UINT y = 0; y < 34; ++y) for (UINT x = 0; x < 34; ++x)
+                    for (UINT c = 0; c < 3; ++c)
+                        edited.At(x, y, c) = 2.0f * mean[c] - low.At(x, y, c);
+                const auto off = gpu.Run(Kernel::Residual, {native, low, edited}, 40, 40,
+                                         {40, 40, 34, 34}, half, 1.0f, true, 0.5f, 0);
+                const auto on = gpu.Run(Kernel::Residual, {native, low, edited}, 40, 40,
+                                        {40, 40, 34, 34}, half, 1.0f, true, 0.5f, 100);
+                const auto rms = [&](const Image& image) {
+                    double sum = 0;
+                    for (UINT y = 2; y < 38; ++y) for (UINT x = 2; x < 38; ++x) {
+                        const double delta = (image.At(x, y, 0) - exposure) / exposure;
+                        sum += delta * delta;
+                    }
+                    return std::sqrt(sum / (36 * 36));
+                };
+                const double nativeRms = rms(native), correctedRms = rms(off);
+                std::cout << "Contrast reversal exposure=" << exposure
+                          << " native/corrected relative RMS=" << nativeRms << "/" << correctedRms << '\n';
+                Require(nativeRms > 0.08 && correctedRms < nativeRms * 0.65,
+                        "Contrast reversal fixture must improve the actual final output at effect 50");
+                Equal(on, off, 0, 0, true);
+                for (UINT y = 0; y < 40; ++y) for (UINT x = 0; x < 40; ++x)
+                    Require(on.At(x, y, 3) == 0.375f, "Contrast reversal changed alpha");
+            }
+        });
+        test("Luma stability fades weak RGB guidance on the actual 85 percent grid", [&] {
+            const auto half = DXGI_FORMAT_R16G16B16A16_FLOAT;
+            const auto plan = contract::make_scale_plan({40, 40}, contract::FixedScale::Percent85);
+            Require(plan.neural.width == 34 && plan.neural.height == 34,
+                    "Weak RGB fixture must use the actual 85 percent grid");
+            // The 2x2 native island becomes low (17,17). Compensation strips
+            // keep its four area-averaged neighbours near .1 as the island
+            // crosses their 75 percent relative-colour guide cutoff. This is
+            // a real production downsample, not a hand-edited low baseline.
+            std::vector<Image> native, off, on;
+            for (const float island : {0.0250f, 0.0251f}) {
+                auto input = Filled(40, 40, {0.1f, 0.1f, 0.1f, 0.625f}, half);
+                const float compensation = (0.1f - 0.7f * island) / 0.3f;
+                for (UINT y = 20; y <= 21; ++y) for (UINT x = 20; x <= 21; ++x)
+                    for (UINT c = 0; c < 3; ++c) input.At(x, y, c) = island;
+                for (UINT p = 20; p <= 21; ++p) for (UINT c = 0; c < 3; ++c) {
+                    input.At(22, p, c) = compensation;
+                    input.At(p, 22, c) = compensation;
+                }
+                for (auto& value : input.pixels) value = FromHalf(ToHalf(value));
+                auto low = gpu.Run(Kernel::Color, {input}, 34, 34, {34, 34, 40, 40}, half);
+                auto edited = low;
+                for (UINT c = 0; c < 3; ++c) edited.At(17, 17, c) *= 0.5f;
+                std::cout << std::setprecision(9) << "Weak RGB island=" << input.At(20, 20, 0)
+                          << " area center=" << low.At(17, 17, 0) << " cross="
+                          << low.At(16, 17, 0) << "," << low.At(18, 17, 0) << ","
+                          << low.At(17, 16, 0) << "," << low.At(17, 18, 0) << '\n';
+                Require(std::abs(low.At(17, 17, 0) - input.At(20, 20, 0)) < 0.00004f,
+                        "Weak RGB fixture did not retain its area-averaged island");
+                for (const auto& point : std::array<std::array<UINT, 2>, 4>{{
+                         {{16, 17}}, {{18, 17}}, {{17, 16}}, {{17, 18}}}})
+                    Require(std::abs(low.At(point[0], point[1], 0) - 0.1f) < 0.0002f,
+                            "Weak RGB fixture failed to hold its area neighbours near the guide cutoff");
+                off.push_back(gpu.Run(Kernel::Residual, {input, low, edited}, 40, 40,
+                                      {40, 40, 34, 34}, half, 1.0f, true, 0.5f, 0));
+                on.push_back(gpu.Run(Kernel::Residual, {input, low, edited}, 40, 40,
+                                     {40, 40, 34, 34}, half, 1.0f, true, 0.5f, 100));
+                native.push_back(std::move(input));
+            }
+            const float inputChange = std::abs(native[1].At(20, 20, 0) - native[0].At(20, 20, 0));
+            const float offChange = std::abs(off[1].At(20, 20, 0) - off[0].At(20, 20, 0));
+            const float onChange = std::abs(on[1].At(20, 20, 0) - on[0].At(20, 20, 0));
+            std::cout << "Weak RGB guide off=" << off[0].At(20, 20, 0) << "," << off[1].At(20, 20, 0)
+                      << " on=" << on[0].At(20, 20, 0) << "," << on[1].At(20, 20, 0)
+                      << " input/off/on changes=" << inputChange << "/" << offChange << "/" << onChange << '\n';
+            Require(inputChange > 0.00008f && inputChange < 0.00015f && offChange < 2 * inputChange,
+                    "Weak RGB fixture must start with a small source change and continuous original resolve");
+            Require(off[0].At(20, 20, 0) < native[0].At(20, 20, 0) - 0.004f,
+                    "Weak RGB fixture did not apply a material NR correction at effect 50");
+            Require(onChange <= 4.0f * std::max(inputChange, offChange),
+                    "Vanishing RGB guidance amplified a tiny source change into an NR correction jump");
+            for (const auto& value : on)
+                Require(value.At(20, 20, 3) == 0.625f, "Weak RGB guidance changed alpha");
+        });
+        test("Luma stability fades weak depth guidance without a correction jump", [&] {
+            // Full pixel (6,6) reads low (5,5) with .975^2 support. Its four
+            // low-grid neighbours map to distinct full-depth neighbours. The
+            // depth guide moves through its cutoff while the native image,
+            // actual area baseline and NR edit remain identical.
+            auto native = Filled(40, 40, {0.125f, 0.0625f, 0.03125f, 0.625f});
+            auto low = gpu.Run(Kernel::Color, {native}, 34, 34, {34, 34, 40, 40}, rgba);
+            auto edited = low;
+            for (UINT c = 0; c < 3; ++c) edited.At(5, 5, c) *= 1.25f;
+            std::vector<Image> off, on;
+            const float relativeDepth[]{0.0498f, 0.0502f};
+            for (UINT i = 0; i < 2; ++i) {
+                auto depth = Filled(40, 40, {0.5f / (1.0f - relativeDepth[i])}, DXGI_FORMAT_R32_FLOAT);
+                depth.At(6, 6, 0) = 0.5f;
+                off.push_back(gpu.Run(Kernel::Residual, {native, low, edited, depth}, 40, 40,
+                                      {40, 40, 34, 34}, rgba, 1.0f, true, 0.5f, 0));
+                on.push_back(gpu.Run(Kernel::Residual, {native, low, edited, depth}, 40, 40,
+                                     {40, 40, 34, 34}, rgba, 1.0f, true, 0.5f, 100));
+            }
+            const float offChange = std::abs(off[1].At(6, 6, 0) - off[0].At(6, 6, 0));
+            const float onChange = std::abs(on[1].At(6, 6, 0) - on[0].At(6, 6, 0));
+            std::cout << std::setprecision(9) << "Weak depth guide off=" << off[0].At(6, 6, 0)
+                      << "," << off[1].At(6, 6, 0) << " on=" << on[0].At(6, 6, 0)
+                      << "," << on[1].At(6, 6, 0) << " changes=" << offChange << "/" << onChange << '\n';
+            Require(off[0].At(6, 6, 0) > 0.13f && offChange < 0.0002f,
+                    "Weak-depth fixture must retain a real correction and a continuous original depth guard");
+            Require(onChange <= 2.0f * offChange + 0.00001f,
+                    "Vanishing depth guidance caused a disproportionate NR correction jump");
+            for (const auto& value : on)
+                Require(value.At(6, 6, 3) == 0.625f, "Weak depth guidance changed alpha");
         });
         test("Luma stability retains uniform HDR correction and RGB ratios", [&] {
             const auto half = DXGI_FORMAT_R16G16B16A16_FLOAT;
