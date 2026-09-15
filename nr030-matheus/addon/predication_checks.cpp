@@ -293,10 +293,21 @@ void MutatedSnapshotProof(Warp& warp, nr030::PredicationTracker& tracker, bool i
     warp.Reset();
     const auto source = warp.Upload(std::array<UINT64, 1>{Replacement});
     const auto initialValue = warp.Upload(std::array<UINT64, 1>{1});
-    const auto initial = warp.Upload(std::array<UINT64, 3>{Sentinel, Sentinel, Sentinel});
+    const auto initial = warp.Upload(std::array<UINT64, 7>{
+        Sentinel, Sentinel, Sentinel, Sentinel, Sentinel, Sentinel, Sentinel});
     const auto predicate = warp.Buffer(D3D12_HEAP_TYPE_DEFAULT, sizeof(UINT64), D3D12_RESOURCE_STATE_COPY_DEST);
-    const auto destination = warp.Buffer(D3D12_HEAP_TYPE_DEFAULT, 3 * sizeof(UINT64),
+    const auto activeSeparate = warp.Buffer(D3D12_HEAP_TYPE_DEFAULT, sizeof(UINT64), D3D12_RESOURCE_STATE_COPY_DEST);
+    const auto nullControl = warp.Buffer(D3D12_HEAP_TYPE_DEFAULT, sizeof(UINT64), D3D12_RESOURCE_STATE_COPY_DEST);
+    const auto wbiActive = warp.Buffer(D3D12_HEAP_TYPE_DEFAULT, sizeof(UINT64), D3D12_RESOURCE_STATE_COPY_DEST);
+    const auto wbiNull = warp.Buffer(D3D12_HEAP_TYPE_DEFAULT, sizeof(UINT64), D3D12_RESOURCE_STATE_COPY_DEST);
+    const auto destination = warp.Buffer(D3D12_HEAP_TYPE_DEFAULT, 7 * sizeof(UINT64),
         D3D12_RESOURCE_STATE_COPY_DEST);
+    D3D12_FEATURE_DATA_D3D12_OPTIONS3 options{};
+    ComPtr<ID3D12GraphicsCommandList2> commands2;
+    const bool wbiSupported = SUCCEEDED(warp.device->CheckFeatureSupport(
+        D3D12_FEATURE_D3D12_OPTIONS3, &options, sizeof(options))) &&
+        (options.WriteBufferImmediateSupportFlags & D3D12_COMMAND_LIST_SUPPORT_FLAG_DIRECT) != 0 &&
+        SUCCEEDED(warp.commands.As(&commands2));
     D3D12_QUERY_HEAP_DESC queryDescription{};
     queryDescription.Type = D3D12_QUERY_HEAP_TYPE_OCCLUSION;
     queryDescription.Count = 1;
@@ -307,7 +318,9 @@ void MutatedSnapshotProof(Warp& warp, nr030::PredicationTracker& tracker, bool i
     commands->BeginQuery(queries.Get(), queryType, 0);
     commands->EndQuery(queries.Get(), queryType, 0);
     commands->CopyBufferRegion(predicate.Get(), 0, initialValue.Get(), 0, sizeof(UINT64));
-    commands->CopyBufferRegion(destination.Get(), 0, initial.Get(), 0, 3 * sizeof(UINT64));
+    for (auto* control : {activeSeparate.Get(), nullControl.Get(), wbiActive.Get(), wbiNull.Get()})
+        commands->CopyBufferRegion(control, 0, initialValue.Get(), 0, sizeof(UINT64));
+    commands->CopyBufferRegion(destination.Get(), 0, initial.Get(), 0, 7 * sizeof(UINT64));
     D3D12_RESOURCE_BARRIER barrier{};
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     barrier.Transition.pResource = predicate.Get();
@@ -319,16 +332,20 @@ void MutatedSnapshotProof(Warp& warp, nr030::PredicationTracker& tracker, bool i
         ? D3D12_PREDICATION_OP_EQUAL_ZERO : D3D12_PREDICATION_OP_NOT_EQUAL_ZERO);
     commands->CopyBufferRegion(destination.Get(), 0, source.Get(), 0, sizeof(UINT64));
 
-    // ResolveQueryData and barriers are unpredicated. The query changes the
-    // source AFTER SetPredication has latched the initial 1: an empty occlusion
-    // query deterministically yields 0 for BOTH cases. NOT_EQUAL_ZERO initially
-    // skips, EQUAL_ZERO initially passes; rebinding either after this mutation
-    // would reverse its result. No timestamp value is assumed to be nonzero.
-    // Keep the buffer in COPY_SOURCE to also detect an invalid tuple rebind.
+    // ResolveQueryData is documented as unpredicated. Independently observe
+    // this runtime's actual behavior with the same completed query resolved
+    // into the bound buffer, an unrelated buffer under the active predicate,
+    // and an unrelated buffer after NULL. The mutation assertion stays strict.
+    // Keep the bound buffer in COPY_SOURCE to detect an invalid tuple rebind.
     barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PREDICATION;
     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
     commands->ResourceBarrier(1, &barrier);
     commands->ResolveQueryData(queries.Get(), queryType, 0, 1, predicate.Get(), 0);
+    commands->ResolveQueryData(queries.Get(), queryType, 0, 1, activeSeparate.Get(), 0);
+    if (wbiSupported) {
+        const D3D12_WRITEBUFFERIMMEDIATE_PARAMETER write{wbiActive->GetGPUVirtualAddress(), 0};
+        commands2->WriteBufferImmediate(1, &write, nullptr);
+    }
     barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
     commands->ResourceBarrier(1, &barrier);
@@ -338,15 +355,34 @@ void MutatedSnapshotProof(Warp& warp, nr030::PredicationTracker& tracker, bool i
     }
     commands->CopyBufferRegion(destination.Get(), sizeof(UINT64), source.Get(), 0, sizeof(UINT64));
     commands->SetPredication(nullptr, 0, D3D12_PREDICATION_OP_EQUAL_ZERO);
+    commands->ResolveQueryData(queries.Get(), queryType, 0, 1, nullControl.Get(), 0);
+    if (wbiSupported) {
+        const D3D12_WRITEBUFFERIMMEDIATE_PARAMETER write{wbiNull->GetGPUVirtualAddress(), 0};
+        commands2->WriteBufferImmediate(1, &write, nullptr);
+    }
     commands->CopyBufferRegion(destination.Get(), 2 * sizeof(UINT64), predicate.Get(), 0, sizeof(UINT64));
-    const auto actual = ReadCompleted<3>(warp, destination.Get());
+    UINT64 outputOffset = 3 * sizeof(UINT64);
+    for (auto* control : {activeSeparate.Get(), nullControl.Get(), wbiActive.Get(), wbiNull.Get()}) {
+        barrier.Transition.pResource = control;
+        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+        barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+        commands->ResourceBarrier(1, &barrier);
+        commands->CopyBufferRegion(destination.Get(), outputOffset, control, 0, sizeof(UINT64));
+        outputOffset += sizeof(UINT64);
+    }
+    const auto actual = ReadCompleted<7>(warp, destination.Get());
     const auto expected = initiallyPass ? Replacement : Sentinel;
     std::cout << "GPU snapshot evidence: initiallyPass=" << initiallyPass
               << " initialPredicate=1 expected=" << expected
               << " baseline=" << actual[0] << " guarded=" << actual[1]
-              << " mutatedPredicate=" << actual[2] << '\n';
+              << " mutatedPredicate=" << actual[2]
+              << " queryActiveSeparate=" << actual[3] << " queryNullControl=" << actual[4]
+              << " wbiSupported=" << wbiSupported << " wbiActive=" << actual[5]
+              << " wbiNullControl=" << actual[6] << '\n';
     Require(actual[0] == expected && actual[1] == expected,
         "Guard changed a latched predicate after its source buffer mutated");
+    Require(actual[4] == 0, "Unpredicated empty-query control did not produce the required zero result");
+    if (wbiSupported) Require(actual[6] == 0, "Unpredicated immediate-write control did not produce zero");
     Require(actual[2] == 0,
         "GPU query did not actually mutate the predicate source as intended");
 }
@@ -375,10 +411,19 @@ int wmain(int argc, wchar_t** argv) {
             }, tracker);
         const auto test = [&](const std::string& name, const std::function<void()>& work) {
             current = name;
-            work();
-            warp.CheckMessages();
-            passed.push_back(name);
-            std::cout << "PASS: " << name << '\n';
+            try {
+                work();
+                warp.CheckMessages();
+                passed.push_back(name);
+                std::cout << "PASS: " << name << '\n';
+            } catch (const std::exception& error) {
+                const auto detail = name + ": " + error.what();
+                if (!failure.empty()) failure += " | ";
+                failure += detail;
+                std::cerr << "FAIL: " << detail << '\n';
+                // Keep the suite failed and retain all assertions, but run
+                // independent cases so one failure cannot hide later evidence.
+            }
         };
         test("An already-recording unobserved list stays unknown and guard refuses admission", [&] {
             SameState(*tracker, warp.commands.Get(), nr030::PredicationState::Unknown);
