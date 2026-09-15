@@ -287,7 +287,7 @@ public:
     cmp::Extent2D admittedExtent{};
     std::atomic<UINT64> allocatedBytes{0};
     std::atomic<unsigned> allocatedSlots{0};
-    std::atomic<UINT64> seen{0}, scaled{0}, nrRecorded{0}, resolved{0}, fallback{0}, gpuCompleted{0};
+    std::atomic<UINT64> seen{0}, scaled{0}, nrRecorded{0}, resolved{0}, originalColorPassthrough{0}, fallback{0}, gpuCompleted{0};
     UINT64 admissionDeferred = 0;
     UINT64 retiredUses = 0, releasedBorrowedRefs = 0, trimmedSlots = 0, trimmedBytes = 0;
     UINT64 lastDiagnosticMs = 0;
@@ -378,6 +378,8 @@ public:
             " nr_recorded=" + std::to_string(nrRecorded.load()) + " resolved=" + std::to_string(resolved.load()) +
             " fallback=" + std::to_string(fallback.load()) + " gpu_completed=" + std::to_string(gpuCompleted.load()) +
             " allocated_bytes=" + std::to_string(allocatedBytes.load()) + " allocated_slots=" + std::to_string(allocatedSlots.load()));
+        Log("event=original_color_stats passthrough=" + std::to_string(originalColorPassthrough.load()) +
+            " seen=" + std::to_string(count) + " nr_recorded=" + std::to_string(nrRecorded.load()));
     }
     std::uint32_t Fallback(ffx::DispatchFn original, void** context, const ffx::UpscaleDispatch* desc,
                            const char* reason, bool direct = false) {
@@ -528,6 +530,13 @@ public:
             ++nrRecorded;
             try {
                 frame.slot->use->borrowed.emplace_back(Resource(corrected->color));
+                if (effectPercent == 0) {
+                    // Diagnostic comparison: NR capture/inference/wait still run,
+                    // but FSR receives the untouched ORIGINAL color resource.
+                    // Keep the NR output alive for its already-recorded GPU use.
+                    // Positive effects retain the existing resolve path below.
+                    ++originalColorPassthrough;
+                } else {
                 const auto constants = frame.plan.resolve_constants(colourPreservation / 100.0f,
                     depthProtection != 0, effectPercent / 100.0f, static_cast<std::uint32_t>(lumaStability));
                 const gpu::TextureBinding inputs[] = {
@@ -550,6 +559,7 @@ public:
                 dispatch.color = AdaptResource(frame.full.color, output.resource, frame.plan.input,
                                                ffx::FormatRgba16Float);
                 frame.slot->resolved = true; ++resolved;
+                }
             } catch (const std::exception& error) {
                 failed.store(true); ++fallback;
                 lastFallbackReason.store("resolve_record_failed");
@@ -722,6 +732,9 @@ DWORD WINAPI Worker(void*) {
         Log("event=resolve_config version=0.2.4 colour_preservation_percent=" + std::to_string(colour) +
             " depth_protection=" + std::to_string(depthProtect) + " effect_percent=" + std::to_string(effect) +
             " applies_to_scaled_path_only=true");
+        Log(std::string("event=effect_zero_handoff diagnostic_build=true mode=") +
+            (effect == 0 ? "original_color_passthrough" : "positive_effect_resolve_unchanged") +
+            " nr_execution_unchanged=true applies_to_scaled_path_only=true visual_verified=false");
         Log("event=pool_policy version=0.2.4 sweep_all_completed=1 idle_trim=" + std::to_string(trim) +
             " idle_ms=2000 warm_slots=2 diagnostics=" + std::to_string(diagnostic));
         Log("event=resolve_policy version=0.2.4 per_tap_guard_before_interpolation=1 temporal_filter=0");

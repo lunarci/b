@@ -79,3 +79,17 @@ endif()
 add_test(NAME nr030_input_checks
   COMMAND nr030_input_checks "${CMAKE_CURRENT_BINARY_DIR}/input_results.json")
 set_tests_properties(nr030_input_checks PROPERTIES TIMEOUT 30)
+
+# Include the production adapter in the test translation unit. This reaches the
+# actual private After() without exporting a test API or enabling any game hook.
+add_executable(nr030_handoff_checks handoff_checks.cpp lifetime.cpp)
+target_compile_features(nr030_handoff_checks PRIVATE cxx_std_17)
+target_compile_definitions(nr030_handoff_checks PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN
+  NR030_ENABLE_EXPERIMENTAL_RUNTIME=0)
+target_link_libraries(nr030_handoff_checks PRIVATE minhook nr030_shader_executor bcrypt)
+if(MSVC)
+  target_compile_options(nr030_handoff_checks PRIVATE /W4 /permissive- /utf-8 /fp:strict)
+endif()
+add_test(NAME nr030_handoff_checks
+  COMMAND nr030_handoff_checks "${CMAKE_CURRENT_BINARY_DIR}/handoff_results.json")
+set_tests_properties(nr030_handoff_checks PROPERTIES TIMEOUT 30)
