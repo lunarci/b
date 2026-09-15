@@ -117,6 +117,7 @@ function Get-CompleteResource($Paths,$Dependency,[string]$Stage,[scriptblock]$Do
                 Move-Item -LiteralPath $part -Destination $archive -Force
             } finally { if (Test-Path -LiteralPath $part -PathType Leaf) { Remove-Item -LiteralPath $part -Force } }
         }
+        Add-Type -AssemblyName System.IO.Compression
         Add-Type -AssemblyName System.IO.Compression.FileSystem
         $zip=[IO.Compression.ZipFile]::OpenRead($archive)
         $part=$cacheFile+'.'+[guid]::NewGuid().ToString('N')+'.part'

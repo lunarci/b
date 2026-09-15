@@ -11,6 +11,7 @@ $productionDependencies=$script:CompleteDependencies
 $fixtureRoot=Join-Path ([IO.Path]::GetTempPath()) ('MatheusNR030-CompleteTests-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $fixtureRoot | Out-Null
 $results=New-Object 'System.Collections.Generic.List[object]'
+Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 function Assert-CompleteTest([bool]$Condition,[string]$Message) { if (-not $Condition) { throw ('ASSERTION: '+$Message) } }
