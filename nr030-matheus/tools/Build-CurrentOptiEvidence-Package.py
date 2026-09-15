@@ -81,7 +81,7 @@ def main():
             require(report["Passed"] >= 33 and {
                 "ratio-check-interprets-auto-and-missing-per-preset-default-with-raw-evidence",
                 "ratio-check-default-per-preset-retains-global-and-numeric-gates"
-            }.issubset({case["Name"] for case in tests}), "Ratio regression cases missing")
+            }.issubset({case["Test"] for case in tests}), "Ratio regression cases missing")
         summaries[name] = report["Passed"]
         files["evidence/" + name] = data
     files["evidence/current-evidence-ci-context.json"] = context_bytes
