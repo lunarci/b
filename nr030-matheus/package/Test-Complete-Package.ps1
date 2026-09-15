@@ -403,7 +403,9 @@ try {
         Remove-Item -LiteralPath (Join-Path $f.Paths.Bin 'amdhip64_7.dll')
         $binaryHashes=@{}
         foreach ($path in @((Join-Path $f.Paths.Bin 'dxgi.dll'),(Join-Path $f.Paths.Bin 'libxell.dll'),(Join-Path $f.Paths.Plugins 'dlssnr_on_amd.asi'),(Join-Path $f.Paths.Plugins 'nvngx_dlssnr.dll'),(Join-Path $f.Paths.Plugins 'MatheusNR030.asi'))) { $binaryHashes[$path]=Get-Hash $path }
-        $messages=@(Recover-CompletePerformance $f.Paths 6>&1) | Out-String
+        # Preserve the original information records; Out-String can wrap them
+        # to the console width in Windows PowerShell 5.1, including file paths.
+        $messages=(@(Recover-CompletePerformance $f.Paths 6>&1) | ForEach-Object { [string]$_ }) -join "`n"
         foreach ($path in @($primary,$shadow)) {
             $updated=[IO.File]::ReadAllText($path)
             Assert-CompleteTest ((Read-IniValue $updated 'UpscaleRatio' 'UpscaleRatioOverrideEnabled') -ceq 'true') 'Recovery did not enable Override all.'
