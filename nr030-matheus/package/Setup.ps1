@@ -151,8 +151,16 @@ function Assert-SnapshotUnchanged($Paths,$Before) {
 function Assert-Base($Paths) {
     Assert-NoReparse $Paths.Root; Assert-NoReparse $Paths.Bin; Assert-NoReparse $Paths.Backup
     if (-not (Test-Path -LiteralPath $Paths.Plugins -PathType Container)) { throw ('The fixed ARK plugins folder is missing: '+$Paths.Plugins) }
-    $base=Read-Json $Paths.BaseState
-    if ((Get-Value $base 'Version') -ne 2 -or -not (Same-Path ([string](Get-Value $base 'PluginFolder')) $Paths.Plugins)) { throw 'The v1.4 base installation record does not match the fixed ARK path.' }
+    # Legacy base-installer metadata is optional: compatibility is established
+    # below from the installed NR hash and effective INI files. Never synthesize
+    # this record. The separate add-on ownership record remains mandatory when
+    # updating or removing existing add-on files.
+    $hasBaseState=Test-Path -LiteralPath $Paths.BaseState
+    if ($hasBaseState) {
+        Assert-NoReparse $Paths.BaseState
+        $base=Read-Json $Paths.BaseState
+        if ((Get-Value $base 'Version') -ne 2 -or -not (Same-Path ([string](Get-Value $base 'PluginFolder')) $Paths.Plugins)) { throw 'The v1.4 base installation record does not match the fixed ARK path.' }
+    }
     $nr=Join-Path $Paths.Plugins 'dlssnr_on_amd.asi'
     if (-not (Test-Path -LiteralPath $nr -PathType Leaf) -or (Get-Hash $nr) -cne $script:ExpectedNrHash) { throw 'The pinned NR 0.3.0 ASI SHA-256 does not match. No replacement is performed.' }
     $optiPaths=@(Join-Path $Paths.Bin 'OptiScaler.ini')
@@ -183,6 +191,7 @@ function Assert-Base($Paths) {
     }
     $shadowAsi=Join-Path $Paths.OldPlugins 'dlssnr_on_amd.asi'
     if ((Test-Path -LiteralPath $shadowAsi -PathType Leaf) -and (Get-Hash $shadowAsi) -cne $script:ExpectedNrHash) { throw 'The overwrite NR binary differs from the pinned base runtime.' }
+    if (-not $hasBaseState) { Write-Host 'Legacy base installation record is absent. Base compatibility was verified from the installed NR hash and INI settings.' }
     return Get-ProtectedSnapshot $Paths
 }
 function Read-AddonState($Paths) {

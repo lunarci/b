@@ -6,6 +6,7 @@ on:
       - nr030-matheus-presr
       - nr030-combined-color
       - nr030-map-recovery
+      - nr030-install-record-fix
     paths:
       - nr030-matheus/**
       - .github/workflows/build-matheus-nr030.yml
@@ -64,6 +65,6 @@ jobs:
         with:
           name: Matheus-NR030-install-package-${{ github.run_number }}
           path: |
-            build/nr030/deliverable/Matheus_NR030_Addon_0.2.1_MapRecovery.zip
+            build/nr030/deliverable/Matheus_NR030_Addon_0.2.1_MapRecovery_InstallFix.zip
           if-no-files-found: error
           retention-days: 14

@@ -21,8 +21,12 @@ if ($cache -notmatch ('(?m)^NR030_SOURCE_COMMIT:STRING='+[regex]::Escape($Source
 $testLog=Join-Path $BuildRoot 'Testing/Temporary/LastTest.log'
 if (-not (Test-Path -LiteralPath $testLog)) { throw 'Native test evidence is missing.' }
 $installerResults=Get-Content -LiteralPath (Join-Path $sourceRoot 'package/test-results/installer-tests.json') -Raw | ConvertFrom-Json
-if ($installerResults.WindowsPowerShell51 -ne $true -or $installerResults.Failed -ne 0 -or $installerResults.Passed -lt 28) {
+if ($installerResults.WindowsPowerShell51 -ne $true -or $installerResults.Failed -ne 0 -or $installerResults.Passed -lt 33) {
     throw 'Windows PowerShell 5.1 installer test gate is not satisfied.'
+}
+foreach ($name in @('missing-legacy-record-install-repeat-remove','missing-legacy-record-wrong-hash-blocked','missing-legacy-record-wrong-settings-blocked','conflicting-legacy-record-blocked','missing-legacy-record-does-not-bypass-addon-ownership')) {
+    $cases=@($installerResults.Tests | Where-Object { $_.Test -ceq $name })
+    if ($cases.Count -ne 1 -or $cases[0].Status -cne 'PASS') { throw ('Required installer regression did not pass: '+$name) }
 }
 $nativeResultPath=Join-Path $BuildRoot 'ctest-results.xml'
 [xml]$nativeResults=Get-Content -LiteralPath $nativeResultPath -Raw
@@ -52,7 +56,7 @@ if ($lifetime.passedCount -lt 13 -or $lifetime.failure -cne '' -or
     @($lifetime.passed).Count -ne $lifetime.passedCount -or $lifetime.amdGpuGameTested -ne $false) {
     throw 'Production lifetime queue/Reset validation is incomplete.'
 }
-$dist=Join-Path $BuildRoot 'deliverable/Matheus_NR030_Addon_0.2.1_MapRecovery'
+$dist=Join-Path $BuildRoot 'deliverable/Matheus_NR030_Addon_0.2.1_MapRecovery_InstallFix'
 if (Test-Path -LiteralPath $dist) { throw 'Refusing to overwrite an existing staged deliverable.' }
 New-Item -ItemType Directory -Path $dist | Out-Null
 foreach ($name in @('Setup.ps1','01_INSTALL_ADDON.cmd','02_REMOVE_ADDON.cmd','03_CHECK_ADDON.cmd','README_KO.md','protected-files.json')) {
@@ -86,7 +90,7 @@ if (Test-Path -LiteralPath (Join-Path $sourceRoot 'package/test-results')) {
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'package/test-results') -Destination (Join-Path $dist 'evidence/package-tests') -Recurse
 }
 $manifest=Get-Content -LiteralPath (Join-Path $sourceRoot 'package/package-manifest.json') -Raw | ConvertFrom-Json
-$manifest.addon_version='0.2.1-map-recovery-experimental'
+$manifest.addon_version='0.2.1-map-recovery-installfix1-experimental'
 $manifest.source_commit=$SourceCommit
 $manifest.build_run_id=$RunId
 $manifest.build_verified=$true
@@ -124,13 +128,18 @@ $provenance=[ordered]@{
     warp_checks_passed=$warp.passedCount
     installer_checks_passed=$installerResults.Passed
     installer_windows_powershell51=$installerResults.WindowsPowerShell51
+    installer_revision='installfix1'
+    legacy_base_record_required=$false
+    base_compatibility='Exact installed C7 ASI hash and existing NR / OptiScaler / XeFG INI settings; validate legacy metadata when present'
     amd_gpu_game_tested=$false
     performance_measured=$false
     baseline_files_changed=$false
 }
 $provenance | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $dist 'BUILD_PROVENANCE.json') -Encoding UTF8
 $status=@'
-# Matheus NR030 0.2.1 MapRecovery 실험용 설치 패키지
+# Matheus NR030 0.2.1 MapRecovery InstallFix 실험용 설치 패키지
+
+InstallFix1은 이전 설치기의 NR030_ARK_Backup/active-install.json이 없으면 설치가 중단되던 문제를 수정합니다. 실제 NR 해시와 기존 설정 검증을 통과하면 설치합니다. 옛 기록을 새로 만들지 않으며, 기록이 있으면 일치 여부를 검사합니다. 렌더링 코드는 0.2.1과 같고 실행 로그의 런타임 버전도 0.2.1입니다.
 
 맵 전환 뒤 회수 가능한 옛 GPU 자원이 남는 경로를 수정하고, 완료된 유휴 버퍼를 줄입니다. 실제 맵 복귀 FPS 회복 여부는 아직 검증하지 않았습니다. MAP_RECOVERY_KO.md에 원인 검토와 비교 절차가 있습니다.
 

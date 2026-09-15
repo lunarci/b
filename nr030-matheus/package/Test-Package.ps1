@@ -122,6 +122,63 @@ try {
         foreach ($path in @(Get-OwnedPaths $f.Paths)) { Assert-True (-not (Test-Path -LiteralPath $path)) 'Owned payload remains.' }
         Assert-SnapshotUnchanged $f.Paths $before
     }
+    Run-Case 'missing-legacy-record-install-repeat-remove' {
+        param($f)
+        Remove-Item -LiteralPath $f.Paths.BaseState
+        $legacyFolder=Split-Path -Parent $f.Paths.BaseState
+        Remove-Item -LiteralPath $legacyFolder
+        $before=Get-ProtectedSnapshot $f.Paths
+        Install-Addon $f.Paths
+        $state=Read-AddonState $f.Paths
+        Assert-True ($null -ne $state -and -not $state.OwnsBaseNr -and -not $state.RuntimeVerified) 'Add-on ownership was not recorded correctly.'
+        Assert-SnapshotUnchanged $f.Paths $before
+        Install-Addon $f.Paths
+        Assert-SnapshotUnchanged $f.Paths $before
+        Remove-Addon $f.Paths
+        Assert-SnapshotUnchanged $f.Paths $before
+        Assert-True (-not (Test-Path -LiteralPath $legacyFolder)) 'Legacy base record or folder was fabricated.'
+        Assert-True (-not (Test-Path -LiteralPath $f.Paths.State)) 'Add-on state remains after removal.'
+        foreach ($path in @(Get-OwnedPaths $f.Paths)) { Assert-True (-not (Test-Path -LiteralPath $path)) 'Owned payload remains.' }
+    }
+    Run-Case 'missing-legacy-record-wrong-hash-blocked' {
+        param($f)
+        Remove-Item -LiteralPath $f.Paths.BaseState
+        Write-Text (Join-Path $f.Paths.Plugins 'dlssnr_on_amd.asi') 'DIFFERENT NR BINARY'
+        $before=Get-ProtectedSnapshot $f.Paths
+        Assert-Throws { Install-Addon $f.Paths } 'pinned NR 0.3.0 ASI SHA-256'
+        Assert-True (-not (Test-Path -LiteralPath $f.Paths.Backup)) 'Missing metadata bypassed the pinned hash check.'
+        Assert-SnapshotUnchanged $f.Paths $before
+    }
+    Run-Case 'missing-legacy-record-wrong-settings-blocked' {
+        param($f)
+        Remove-Item -LiteralPath $f.Paths.BaseState
+        $ini=Join-Path $f.Paths.Bin 'OptiScaler.ini'
+        Write-Text $ini ([IO.File]::ReadAllText($ini).Replace('InterpolationCount=3','InterpolationCount=1'))
+        $before=Get-ProtectedSnapshot $f.Paths
+        Assert-Throws { Install-Addon $f.Paths } 'existing XeFG 4X setting'
+        Assert-True (-not (Test-Path -LiteralPath $f.Paths.Backup)) 'Missing metadata bypassed the settings check.'
+        Assert-SnapshotUnchanged $f.Paths $before
+    }
+    Run-Case 'conflicting-legacy-record-blocked' {
+        param($f)
+        Write-Json $f.Paths.BaseState ([pscustomobject]@{Version=2;PluginFolder=(Join-Path $f.Root 'other-plugins')})
+        $before=Get-ProtectedSnapshot $f.Paths
+        Assert-Throws { Install-Addon $f.Paths } 'base installation record does not match'
+        Assert-True (-not (Test-Path -LiteralPath $f.Paths.Backup)) 'Conflicting metadata was ignored.'
+        Assert-SnapshotUnchanged $f.Paths $before
+    }
+    Run-Case 'missing-legacy-record-does-not-bypass-addon-ownership' {
+        param($f)
+        Remove-Item -LiteralPath $f.Paths.BaseState
+        $path=Join-Path $f.Paths.Plugins 'MatheusNR030.asi'
+        Write-Text $path 'UNOWNED ADD-ON FILE'
+        $hash=Get-Hash $path
+        Assert-Throws { Install-Addon $f.Paths } 'Unowned add-on-named file'
+        Assert-Throws { Remove-Addon $f.Paths } 'No add-on ownership record exists'
+        Assert-True ((Get-Hash $path) -ceq $hash) 'Unowned add-on file was changed.'
+        Assert-True (-not (Test-Path -LiteralPath $f.Paths.Backup)) 'Add-on ownership was fabricated.'
+        Assert-True (-not (Test-Path -LiteralPath $f.Paths.BaseState)) 'Legacy ownership was fabricated.'
+    }
     Run-Case 'wrong-base-hash-no-write' {
         param($f)
         Write-Text (Join-Path $f.Paths.Plugins 'dlssnr_on_amd.asi') 'DIFFERENT NR BINARY'

@@ -2,6 +2,12 @@
 
 **Experimental adapter, version 0.2.1 MapRecovery. Install only a successfully built installation package. Actual AMD/Cyberpunk execution remains unverified.**
 
+InstallFix1 makes the legacy base-installation JSON optional. The installed C7
+NR hash and existing INI settings remain mandatory compatibility checks; an
+existing legacy record is validated and preserved. The add-on's own ownership
+record is still required to update/remove existing add-on files. Rendering
+sources and runtime version remain 0.2.1. Branch: `nr030-install-record-fix`.
+
 0.2.1 sweeps all proven-complete recording uses before admission/fallback, trims
 extra scratch slots idle for two seconds (two retained), and records read-only
 DXGI process memory observations. See MAP_RECOVERY_KO.md. This corrects a retained

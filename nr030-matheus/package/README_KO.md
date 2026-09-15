@@ -1,8 +1,10 @@
-# Matheus NR030 추가 모드 — 실험판 0.2.1 MapRecovery
+# Matheus NR030 추가 모드 — 실험판 0.2.1 MapRecovery InstallFix
+
+**InstallFix1:** 이전 설치기의 `NR030_ARK_Backup\active-install.json`이 없으면 중단되던 오류를 수정했습니다. 기존 NR 파일 해시와 설정으로 설치 가능 여부를 판단합니다. 옛 JSON을 직접 만들거나 기본 NR을 재설치할 필요가 없습니다. 게임·MO2를 종료한 뒤 이 ZIP을 풀고 `01_INSTALL_ADDON.cmd`를 실행하십시오. 렌더링 코드는 0.2.1 그대로이며 실행 로그의 버전도 0.2.1입니다.
 
 **0.2.1 수정:** 맵 전환 후 이미 끝난 GPU 자원을 계속 붙잡을 수 있는 경로를 고쳤습니다. 전체 완료 슬롯 정리, 유휴 추가 버퍼 축소, VRAM·처리 상태 로그를 추가했습니다. 원인 검토와 맵 전후 비교 방법은 `MAP_RECOVERY_KO.md`에 있습니다. 실제 FPS 회복은 아직 실기에서 확인하지 않았습니다.
 
-**이번 수정:** 기존 85% 입력 축소에 matiasLombo 방식의 원본 색 비율 보존과 Yuri 방식의 깊이 경계 보호를 통합했습니다. 기본값은 두 기능 모두 켬입니다. 비교·채택 범위는 `COMPARISON_KO.md`, 수정 소스는 `SOURCE.zip`에 있습니다. 실제 게임 화질 향상은 아직 검증되지 않았습니다.
+**0.2.0에서 추가한 기능:** 기존 85% 입력 축소에 matiasLombo 방식의 원본 색 비율 보존과 Yuri 방식의 깊이 경계 보호를 통합했습니다. 기본값은 두 기능 모두 켬입니다. 비교·채택 범위는 `COMPARISON_KO.md`, 수정 소스는 `SOURCE.zip`에 있습니다. 실제 게임 화질 향상은 아직 검증되지 않았습니다.
 
 **배포 형태와 실제 검증 범위부터 확인해 주세요.** 이 문서는 테스트 통과 증명이 아닙니다. 실제 완료한 검증과 미실시 항목은 동봉된 `BUILD_PROVENANCE.json`, `BUILD_STATUS_KO.md` 및 검증 결과를 기준으로 합니다. ASI가 없거나 manifest의 검증값이 false인 **소스 키트는 플레이용 설치본이 아니며, 아래 설치 명령도 차단됩니다.** Windows 빌드·WARP·Windows PowerShell 5.1 테스트는 해당 실행 결과에 통과가 명시된 경우에만 완료된 것입니다. Linux 교차 빌드나 PowerShell 7 실행은 이 Windows 검증을 대신하지 않습니다.
 
@@ -27,7 +29,7 @@
 
 추가되는 게임용 파일은 `MatheusNR030.asi`, `MatheusNR030.ini` 두 개입니다. 추가 모드가 실행되면 같은 폴더에 `MatheusNR030.log`를 기록합니다. MO2 실행 중 생성된 로그는 `overwrite\Root\bin\x64\plugins`에 보일 수도 있습니다.
 
-설치기는 기존 NR ASI의 SHA-256, v1.4 설치 기록, DLSS 입력→FFX 업스케일러와 XeFG 4X 설정을 먼저 확인합니다. 다르면 파일을 교체하거나 설정을 자동 수정하지 않고 이유를 표시하며 중단합니다. 기존 NR·모델·OptiScaler·Intel 파일 및 관련 INI는 설치 전후 해시로 보존 여부를 확인합니다.
+설치기는 기존 NR ASI의 SHA-256, DLSS 입력→FFX 업스케일러와 XeFG 4X 설정을 먼저 확인합니다. 이전 v1.4 설치 기록은 없어도 설치할 수 있으며, 있으면 형식과 대상 경로를 확인하고 원본을 보존합니다. 실제 파일이나 설정이 지원 구성과 다르면 이유를 표시하며 중단합니다. 기존 NR·모델·OptiScaler·Intel 파일 및 관련 INI는 설치 전후 해시로 보존 여부를 확인합니다. 추가 모드 자체의 설치 기록인 `Matheus_NR030_Addon_Backup\active-install.json`은 기존 추가 파일을 갱신·제거할 때 계속 필요합니다.
 
 ## 첫 비교 방법
 
