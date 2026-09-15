@@ -1,0 +1,15 @@
+cmake_minimum_required(VERSION 3.20)
+project(MatheusNR030Experiment LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+enable_testing()
+
+# Each component has its own source provenance and test target.
+add_subdirectory(components)
+if(WIN32)
+  enable_language(RC)
+  add_subdirectory(gpu_tests)
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/addon/CMakeLists.txt")
+    add_subdirectory(addon)
+  endif()
+endif()

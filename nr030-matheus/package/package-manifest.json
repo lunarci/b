@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "addon_name": "MatheusNR030",
+  "addon_version": "draft-unverified",
+  "base_nr_sha256": "c7aad08f555bb8a7650f084c3e35aa188587060754ba0ac6538a5152c0a9f2de",
+  "source_commit": "",
+  "build_run_id": "",
+  "build_verified": false,
+  "abi_verified": false,
+  "build_evidence": "",
+  "abi_evidence": "",
+  "game_runtime_verified": false,
+  "runtime_log_schema": null,
+  "files": [
+    { "name": "MatheusNR030.asi", "sha256": "", "size": 0 },
+    { "name": "MatheusNR030.ini", "sha256": "", "size": 0 }
+  ]
+}

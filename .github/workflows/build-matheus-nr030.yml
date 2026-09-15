@@ -1,0 +1,64 @@
+name: Build Matheus NR030 integration experiment
+
+on:
+  push:
+    branches:
+      - nr030-matheus-presr
+    paths:
+      - nr030-matheus/**
+      - .github/workflows/build-matheus-nr030.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: matheus-nr030-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out integration sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Configure Windows x64 Release
+        run: cmake -S nr030-matheus -B build/nr030 -A x64 -DNR030_ENABLE_EXPERIMENTAL_RUNTIME=OFF -DNR030_SOURCE_COMMIT="$env:GITHUB_SHA"
+      - name: Build component tests and available adapter
+        run: cmake --build build/nr030 --config Release --parallel 4
+      - name: Run native component and WARP tests
+        run: ctest --test-dir build/nr030 -C Release --output-on-failure --output-junit ctest-results.xml
+      - name: Validate file ownership and rollback in Windows PowerShell 5.1
+        run: |
+          if (Test-Path nr030-matheus/package/Test-Package.ps1) {
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File nr030-matheus/package/Test-Package.ps1
+            if ($LASTEXITCODE -ne 0) { throw "Package fixture tests failed: $LASTEXITCODE" }
+          }
+      - name: Upload build and test evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: Matheus-NR030-development-evidence-${{ github.run_number }}
+          path: |
+            build/nr030/Testing/Temporary/
+            build/nr030/ctest-results.xml
+            build/nr030/**/*.log
+            build/nr030/gpu_tests/warp_results.json
+            nr030-matheus/package/test-results/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload disabled adapter for development inspection
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: Matheus-NR030-DISABLED-DEVELOPMENT-ONLY-${{ github.run_number }}
+          path: |
+            build/nr030/addon/Release/MatheusNR030.asi
+            build/nr030/addon/Release/MatheusNR030.pdb
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "protected_extensions": [".dll", ".asi", ".ini", ".bin"],
+  "description": "Inventory actual top-level files in ARK bin/plugins and overwrite bin/plugins. Do not guess the renamed OptiScaler proxy filename or replace any Intel/FFX DLL.",
+  "known_v14_names": ["OptiScaler.ini", "dlssnr_on_amd.asi", "dlssnr_on_amd.ini", "nvngx_dlssnr.dll", "dlssnr_on_amd_weights.bin", "XeFGUnlock.asi"],
+  "addon_owned_names": ["MatheusNR030.asi", "MatheusNR030.ini"],
+  "base_state_read_only": "NR030_ARK_Backup/active-install.json"
+}

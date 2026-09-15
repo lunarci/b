@@ -1,0 +1,29 @@
+SPDX-License-Identifier: GPL-3.0-only
+
+Derived GPU components from:
+  Repository: MatheusGViana/dlss-5-amd-project
+  Commit: 7b9dcb9c3864fc82fd4e0f7473a6f27c459a0707
+  Path: OptiScaler-DLSSNR-PreSR-Multipass-main/OptiScaler/dlssnr/amd/AmdPreSr.cpp
+  Git blob: c3b9156551691a4230b65123060ef6291d096329
+  Source URL: https://github.com/MatheusGViana/dlss-5-amd-project/blob/7b9dcb9c3864fc82fd4e0f7473a6f27c459a0707/OptiScaler-DLSSNR-PreSR-Multipass-main/OptiScaler/dlssnr/amd/AmdPreSr.cpp
+
+Attribution: MatheusGViana and the upstream OptiScaler project/contributors.
+The original source file has no individual copyright header. Its enclosing
+project supplies GNU GPL version 3; that license is reproduced in LICENSE.
+This extraction does not assert ownership of the original algorithms.
+
+Changes in this extraction (2026-09-15):
+- Split CopyShader, ResolveShader, DepthShader and MotionShader into HLSL files.
+- Renamed entry points to MainCS and documented the buffer/guide contract.
+- Area weighting and nearest-depth/raw-MV sampling retain upstream semantics.
+- Resolve preserves a finite original exactly for zero residual, including
+  negative scene-linear values, instead of clamping that identity case.
+- Resolve rejects non-finite low-resolution RGB edits per output pixel.
+- For malformed non-finite native input, non-finite components become zero;
+  finite components and finite alpha are preserved on that fallback path.
+- Added a fixed-scale C++ contract, CPU mathematical checks and a Windows-only
+  shader compiler. These are not a DLSS/NR model or a game integration.
+
+No NVIDIA/Daniel runtime, neural model, HIP kernel, fixed-RVA call, injector,
+OptiScaler replacement, frame-generation code or game installer is included.
+

@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: GPL-3.0-only
+cmake_minimum_required(VERSION 3.20)
+project(Matheus030GpuComponents LANGUAGES CXX)
+add_library(matheus030_component_contract INTERFACE)
+target_include_directories(matheus030_component_contract INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_features(matheus030_component_contract INTERFACE cxx_std_17)
+add_executable(nr_component_math_checks tests/math_checks.cpp)
+target_link_libraries(nr_component_math_checks PRIVATE matheus030_component_contract)
+if(MSVC)
+  target_compile_options(nr_component_math_checks PRIVATE /W4 /WX /fp:strict)
+else()
+  target_compile_options(nr_component_math_checks PRIVATE -Wall -Wextra -Werror -pedantic)
+endif()
+enable_testing()
+add_test(NAME nr_component_math_checks COMMAND nr_component_math_checks)
+if(WIN32)
+  add_executable(compile_nr_components tools/compile_shaders.cpp)
+  target_compile_features(compile_nr_components PRIVATE cxx_std_17)
+  target_link_libraries(compile_nr_components PRIVATE d3dcompiler)
+  add_custom_target(nr_component_shaders ALL
+    COMMAND compile_nr_components "${CMAKE_CURRENT_SOURCE_DIR}/shaders"
+                                  "${CMAKE_CURRENT_BINARY_DIR}/shaders"
+    DEPENDS compile_nr_components
+    VERBATIM)
+endif()
+
