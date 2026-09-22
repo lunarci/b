@@ -9,13 +9,11 @@ root=args.source_dir/'OptiScaler'/'proxies'
 tmp=Path(tempfile.mkdtemp(prefix='xefg-safety-'))
 for name in ('XeFGUnlock.h','XeLLUnLock.h','XeFGPacing.h'):
     shutil.copy2(root/name,tmp/name)
-(tmp/'intrin.h').write_text('''#pragma once
-#ifdef _MSC_VER
-extern "C" void* _ReturnAddress(void);
-#pragma intrinsic(_ReturnAddress)
-#else
+if os.name != 'nt':
+    # MSVC's standard library also includes intrin.h; do not shadow its real
+    # SIMD declarations on Windows. Linux only needs this stand-in intrinsic.
+    (tmp/'intrin.h').write_text('''#pragma once
 inline void* _ReturnAddress(){return nullptr;}
-#endif
 ''')
 (tmp/'Logger.h').write_text('#pragma once\n#define LOG_INFO(...) ((void)0)\n#define LOG_WARN(...) ((void)0)\n#define LOG_ERROR(...) ((void)0)\n')
 (tmp/'Config.h').write_text('''#pragma once

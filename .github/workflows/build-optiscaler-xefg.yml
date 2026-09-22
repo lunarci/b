@@ -40,6 +40,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Source preparation failed.' }
           python builder/optiscaler-xefg/check_prepared.py upstream
           if ($LASTEXITCODE -ne 0) { throw 'Prepared source verification failed.' }
+      - name: Run the source regression suites
+        run: |
+          python builder/optiscaler-xefg/tests/run.py upstream
+          if ($LASTEXITCODE -ne 0) { throw 'Source regression tests failed.' }
       - name: Compile optimized Windows x64 DLL and matching symbols
         run: |
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
@@ -47,10 +51,6 @@ jobs:
           if (-not $msbuild) { throw 'VS2022 MSBuild not found.' }
           & $msbuild upstream/OptiScaler.sln /m:2 /p:Configuration=Release /p:Platform=x64 /verbosity:minimal /bl:optiscaler-build.binlog
           if ($LASTEXITCODE -ne 0) { throw 'OptiScaler Windows build failed.' }
-      - name: Run the source regression suites
-        run: |
-          python builder/optiscaler-xefg/tests/run.py upstream
-          if ($LASTEXITCODE -ne 0) { throw 'Source regression tests failed.' }
       - name: Verify DLL exports, build identity and matching PDB
         run: |
           python builder/optiscaler-xefg/package.py upstream artifacts
