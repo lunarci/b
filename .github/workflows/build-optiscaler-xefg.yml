@@ -1,0 +1,76 @@
+name: Build JaeYun XeFG6x r1
+
+on:
+  push:
+    branches: [codex/optiscaler-xefg-20260922]
+    paths: [optiscaler-xefg/**, .github/workflows/build-optiscaler-xefg.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: optiscaler-xefg-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows-build:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out the build harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: builder
+          persist-credentials: false
+      - name: Check out the pinned XeFG source and dependencies
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Coldwood1026/OptiScalerDp4aUnlock
+          ref: 9eea95bba9fda7121f214d2eba358423be598d7e
+          path: upstream
+          submodules: recursive
+          persist-credentials: false
+      - name: Verify the source lock and prepare the reviewed patch
+        run: |
+          python builder/optiscaler-xefg/prepare.py upstream
+          if ($LASTEXITCODE -ne 0) { throw 'Source preparation failed.' }
+          python builder/optiscaler-xefg/check_prepared.py upstream
+          if ($LASTEXITCODE -ne 0) { throw 'Prepared source verification failed.' }
+      - name: Compile optimized Windows x64 DLL and matching symbols
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $msbuild = & $vswhere -latest -products '*' -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
+          if (-not $msbuild) { throw 'VS2022 MSBuild not found.' }
+          & $msbuild upstream/OptiScaler.sln /m:2 /p:Configuration=Release /p:Platform=x64 /verbosity:minimal /bl:optiscaler-build.binlog
+          if ($LASTEXITCODE -ne 0) { throw 'OptiScaler Windows build failed.' }
+      - name: Run the source regression suites
+        run: |
+          python builder/optiscaler-xefg/tests/run.py upstream
+          if ($LASTEXITCODE -ne 0) { throw 'Source regression tests failed.' }
+      - name: Verify DLL exports, build identity and matching PDB
+        run: |
+          python builder/optiscaler-xefg/package.py upstream artifacts
+          if ($LASTEXITCODE -ne 0) { throw 'Core verification or packaging failed.' }
+      - name: Upload verified core and source evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: OptiScaler-JaeYun-XeFG6x-r1
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: OptiScaler-JaeYun-XeFG6x-r1-failure
+          path: |
+            optiscaler-build.binlog
+            upstream/JAEYUN_PREPARED.json
+            upstream/JAEYUN_TEST_RESULTS.json
+          if-no-files-found: ignore
+          retention-days: 7

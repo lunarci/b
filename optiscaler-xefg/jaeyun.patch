@@ -1,0 +1,1437 @@
+diff --git a/OptiScaler/Source.def b/OptiScaler/Source.def
+index da6f1fe..63cb0c0 100644
+--- a/OptiScaler/Source.def
++++ b/OptiScaler/Source.def
+@@ -17,18 +17,27 @@ D3D12PIXReportCounter = _D3D12PIXReportCounter @115 PRIVATE
+ D3D12SerializeRootSignature = _D3D12SerializeRootSignatureExport @116 PRIVATE
+ D3D12SerializeVersionedRootSignature = _D3D12SerializeVersionedRootSignatureExport @117 PRIVATE
+ 
+-EXPORTS  
++EXPORTS
+ CreateDXGIFactory = _CreateDXGIFactory
+ CreateDXGIFactory1 = _CreateDXGIFactory1
+-CreateDXGIFactory2 = _CreateDXGIFactory2 
+-DXGIDeclareAdapterRemovalSupport = _DXGIDeclareAdapterRemovalSupport 
+-DXGIGetDebugInterface1 = _DXGIGetDebugInterface1 
++CreateDXGIFactory2 = _CreateDXGIFactory2
++DXGIDeclareAdapterRemovalSupport = _DXGIDeclareAdapterRemovalSupport
++DXGIGetDebugInterface1 = _DXGIGetDebugInterface1
+ ApplyCompatResolutionQuirking = _ApplyCompatResolutionQuirking
+ CompatString = _CompatString
+ CompatValue = _CompatValue
+ DXGIDisableVBlankVirtualization = _DXGIDisableVBlankVirtualization
++DXGIDumpJournal = _DXGIDumpJournal
+ DXGIReportAdapterConfiguration = _DXGIReportAdapterConfiguration
+-DXGIDumpJournal =_DXGIDumpJournal
++DXGID3D10CreateDevice = _DXGID3D10CreateDevice
++DXGID3D10CreateLayeredDevice = _DXGID3D10CreateLayeredDevice
++DXGID3D10GetLayeredDeviceSize = _DXGID3D10GetLayeredDeviceSize
++DXGID3D10RegisterLayers = _DXGID3D10RegisterLayers
++PIXBeginCapture = _PIXBeginCapture
++PIXEndCapture = _PIXEndCapture
++PIXGetCaptureState = _PIXGetCaptureState
++SetAppCompatStringPointer = _SetAppCompatStringPointer
++UpdateHMDEmulationStatus = _UpdateHMDEmulationStatus
+ 
+ EXPORTS
+ AppCacheCheckManifest = _AppCacheCheckManifest
+diff --git a/OptiScaler/exports/dxgi.h b/OptiScaler/exports/dxgi.h
+index f02210c..b61659e 100644
+--- a/OptiScaler/exports/dxgi.h
++++ b/OptiScaler/exports/dxgi.h
+@@ -9,160 +9,230 @@ struct dxgi_dll
+ {
+     HMODULE dll = nullptr;
+ 
+-    FARPROC ApplyCompatResolutionQuirking = nullptr;
+-    FARPROC CompatString = nullptr;
+-    FARPROC CompatValue = nullptr;
+-    FARPROC D3D10CreateDevice = nullptr;
+-    FARPROC D3D10CreateLayeredDevice = nullptr;
+-    FARPROC D3D10GetLayeredDeviceSize = nullptr;
+-    FARPROC D3D10RegisterLayers = nullptr;
+-    FARPROC D3D10ETWRundown = nullptr;
+-    FARPROC DumpJournal = nullptr;
+-    FARPROC ReportAdapterConfiguration = nullptr;
+-    FARPROC PIXBeginCapture = nullptr;
+-    FARPROC PIXEndCapture = nullptr;
+-    FARPROC PIXGetCaptureState = nullptr;
+-    FARPROC SetAppCompatStringPointer = nullptr;
+-    FARPROC UpdateHMDEmulationStatus = nullptr;
+-    FARPROC DisableVBlankVirtualization = nullptr;
++    using PFN_ApplyCompatResolutionQuirking = HRESULT(WINAPI*)(void* p1, void* p2);
++    using PFN_CompatString = BOOL(WINAPI*)(LPCSTR szName, ULONG* pSize, LPSTR lpData, bool flag);
++    using PFN_CompatValue = BOOL(WINAPI*)(LPCSTR szName, UINT64* pValue);
++    using PFN_DXGIDisableVBlankVirtualization = HRESULT(WINAPI*)();
++    using PFN_DXGIDumpJournal = HRESULT(WINAPI*)(ULONG_PTR p1);
++    using PFN_DXGIReportAdapterConfiguration = HRESULT(WINAPI*)(ULONG_PTR p1);
++    using PFN_DXGID3D10CreateDevice = HRESULT(WINAPI*)(HMODULE hModule, IDXGIFactory* pFactory, IDXGIAdapter* pAdapter,
++                                                       UINT flags, void* pUnknown, void** ppDevice);
++    using PFN_DXGID3D10CreateLayeredDevice = HRESULT(WINAPI*)(IDXGIAdapter* pAdapter, UINT flags, void* pUnknown,
++                                                              REFIID riid, void** ppDevice);
++    using PFN_DXGID3D10GetLayeredDeviceSize = SIZE_T(WINAPI*)(const void* pLayers, UINT numLayers);
++    using PFN_DXGID3D10RegisterLayers = HRESULT(WINAPI*)(const void* pLayers, UINT numLayers);
++    using PFN_DXGID3D10ETWRundown = void(WINAPI*)();
++    using PFN_PIXBeginCapture = HRESULT(WINAPI*)(DWORD captureFlags, const void* captureParameters);
++    using PFN_PIXEndCapture = HRESULT(WINAPI*)(BOOL discard);
++    using PFN_PIXGetCaptureState = DWORD(WINAPI*)();
++    using PFN_SetAppCompatStringPointer = HRESULT(WINAPI*)(ULONG_PTR p1, ULONG_PTR p2);
++    using PFN_UpdateHMDEmulationStatus = HRESULT(WINAPI*)(ULONG_PTR p1);
++
++    PFN_ApplyCompatResolutionQuirking ApplyCompatResolutionQuirking = nullptr;
++    PFN_CompatString CompatString = nullptr;
++    PFN_CompatValue CompatValue = nullptr;
++
++    PFN_DXGID3D10CreateDevice D3D10CreateDevice = nullptr;
++    PFN_DXGID3D10CreateLayeredDevice D3D10CreateLayeredDevice = nullptr;
++    PFN_DXGID3D10GetLayeredDeviceSize D3D10GetLayeredDeviceSize = nullptr;
++    PFN_DXGID3D10RegisterLayers D3D10RegisterLayers = nullptr;
++    PFN_DXGID3D10ETWRundown D3D10ETWRundown = nullptr;
++
++    PFN_DXGIDumpJournal DumpJournal = nullptr;
++    PFN_DXGIReportAdapterConfiguration ReportAdapterConfiguration = nullptr;
++
++    PFN_PIXBeginCapture PIXBeginCapture = nullptr;
++    PFN_PIXEndCapture PIXEndCapture = nullptr;
++    PFN_PIXGetCaptureState PIXGetCaptureState = nullptr;
++
++    PFN_SetAppCompatStringPointer SetAppCompatStringPointer = nullptr;
++    PFN_UpdateHMDEmulationStatus UpdateHMDEmulationStatus = nullptr;
++
++    PFN_DXGIDisableVBlankVirtualization DisableVBlankVirtualization = nullptr;
+ 
+     void LoadOriginalLibrary(HMODULE module)
+     {
+         dll = module;
+ 
+-        ApplyCompatResolutionQuirking = KernelBaseProxy::GetProcAddress_()(module, "ApplyCompatResolutionQuirking");
+-        CompatString = KernelBaseProxy::GetProcAddress_()(module, "CompatString");
+-        CompatValue = KernelBaseProxy::GetProcAddress_()(module, "CompatValue");
+-        D3D10CreateDevice = KernelBaseProxy::GetProcAddress_()(module, "DXGID3D10CreateDevice");
+-        D3D10CreateLayeredDevice = KernelBaseProxy::GetProcAddress_()(module, "DXGID3D10CreateLayeredDevice");
+-        D3D10GetLayeredDeviceSize = KernelBaseProxy::GetProcAddress_()(module, "DXGID3D10GetLayeredDeviceSize");
+-        D3D10RegisterLayers = KernelBaseProxy::GetProcAddress_()(module, "DXGID3D10RegisterLayers");
+-        D3D10ETWRundown = KernelBaseProxy::GetProcAddress_()(module, "DXGID3D10ETWRundown");
+-        DumpJournal = KernelBaseProxy::GetProcAddress_()(module, "DXGIDumpJournal");
+-        ReportAdapterConfiguration = KernelBaseProxy::GetProcAddress_()(module, "DXGIReportAdapterConfiguration");
+-        PIXBeginCapture = KernelBaseProxy::GetProcAddress_()(module, "PIXBeginCapture");
+-        PIXEndCapture = KernelBaseProxy::GetProcAddress_()(module, "PIXEndCapture");
+-        PIXGetCaptureState = KernelBaseProxy::GetProcAddress_()(module, "PIXGetCaptureState");
+-        SetAppCompatStringPointer = KernelBaseProxy::GetProcAddress_()(module, "SetAppCompatStringPointer");
+-        UpdateHMDEmulationStatus = KernelBaseProxy::GetProcAddress_()(module, "UpdateHMDEmulationStatus");
+-        DisableVBlankVirtualization = KernelBaseProxy::GetProcAddress_()(module, "DXGIDisableVBlankVirtualization");
++        ApplyCompatResolutionQuirking = reinterpret_cast<PFN_ApplyCompatResolutionQuirking>(
++            KernelBaseProxy::GetProcAddress_()(module, "ApplyCompatResolutionQuirking"));
++        CompatString = reinterpret_cast<PFN_CompatString>(KernelBaseProxy::GetProcAddress_()(module, "CompatString"));
++        CompatValue = reinterpret_cast<PFN_CompatValue>(KernelBaseProxy::GetProcAddress_()(module, "CompatValue"));
++        D3D10CreateDevice = reinterpret_cast<PFN_DXGID3D10CreateDevice>(
++            KernelBaseProxy::GetProcAddress_()(module, "DXGID3D10CreateDevice"));
++        D3D10CreateLayeredDevice = reinterpret_cast<PFN_DXGID3D10CreateLayeredDevice>(
++            KernelBaseProxy::GetProcAddress_()(module, "DXGID3D10CreateLayeredDevice"));
++        D3D10GetLayeredDeviceSize = reinterpret_cast<PFN_DXGID3D10GetLayeredDeviceSize>(
++            KernelBaseProxy::GetProcAddress_()(module, "DXGID3D10GetLayeredDeviceSize"));
++        D3D10RegisterLayers = reinterpret_cast<PFN_DXGID3D10RegisterLayers>(
++            KernelBaseProxy::GetProcAddress_()(module, "DXGID3D10RegisterLayers"));
++        D3D10ETWRundown = reinterpret_cast<PFN_DXGID3D10ETWRundown>(
++            KernelBaseProxy::GetProcAddress_()(module, "DXGID3D10ETWRundown"));
++        DumpJournal =
++            reinterpret_cast<PFN_DXGIDumpJournal>(KernelBaseProxy::GetProcAddress_()(module, "DXGIDumpJournal"));
++        ReportAdapterConfiguration = reinterpret_cast<PFN_DXGIReportAdapterConfiguration>(
++            KernelBaseProxy::GetProcAddress_()(module, "DXGIReportAdapterConfiguration"));
++        PIXBeginCapture =
++            reinterpret_cast<PFN_PIXBeginCapture>(KernelBaseProxy::GetProcAddress_()(module, "PIXBeginCapture"));
++        PIXEndCapture =
++            reinterpret_cast<PFN_PIXEndCapture>(KernelBaseProxy::GetProcAddress_()(module, "PIXEndCapture"));
++        PIXGetCaptureState =
++            reinterpret_cast<PFN_PIXGetCaptureState>(KernelBaseProxy::GetProcAddress_()(module, "PIXGetCaptureState"));
++        SetAppCompatStringPointer = reinterpret_cast<PFN_SetAppCompatStringPointer>(
++            KernelBaseProxy::GetProcAddress_()(module, "SetAppCompatStringPointer"));
++        UpdateHMDEmulationStatus = reinterpret_cast<PFN_UpdateHMDEmulationStatus>(
++            KernelBaseProxy::GetProcAddress_()(module, "UpdateHMDEmulationStatus"));
++        DisableVBlankVirtualization = reinterpret_cast<PFN_DXGIDisableVBlankVirtualization>(
++            KernelBaseProxy::GetProcAddress_()(module, "DXGIDisableVBlankVirtualization"));
+     }
+ } dxgi;
+ 
+-HRESULT _CreateDXGIFactory(REFIID riid, IDXGIFactory** ppFactory)
++HRESULT WINAPI _CreateDXGIFactory(REFIID riid, IDXGIFactory** ppFactory)
+ {
+     return DxgiProxy::CreateDxgiFactory_()(riid, ppFactory);
+ }
+ 
+-HRESULT _CreateDXGIFactory1(REFIID riid, IDXGIFactory1** ppFactory)
++HRESULT WINAPI _CreateDXGIFactory1(REFIID riid, IDXGIFactory1** ppFactory)
+ {
+     return DxgiProxy::CreateDxgiFactory1_()(riid, ppFactory);
+ }
+ 
+-HRESULT _CreateDXGIFactory2(UINT Flags, REFIID riid, IDXGIFactory2** ppFactory)
++HRESULT WINAPI _CreateDXGIFactory2(UINT flags, REFIID riid, IDXGIFactory2** ppFactory)
+ {
+-    return DxgiProxy::CreateDxgiFactory2_Hooked()(Flags, riid, ppFactory);
++    return DxgiProxy::CreateDxgiFactory2_Hooked()(flags, riid, ppFactory);
+ }
+ 
+-HRESULT _DXGIDeclareAdapterRemovalSupport() { return DxgiProxy::DeclareAdepterRemovalSupport_()(); }
++HRESULT WINAPI _DXGIDeclareAdapterRemovalSupport() { return DxgiProxy::DeclareAdepterRemovalSupport_()(); }
+ 
+-HRESULT _DXGIGetDebugInterface1(UINT Flags, REFIID riid, void** pDebug)
++HRESULT WINAPI _DXGIGetDebugInterface1(UINT flags, REFIID riid, void** pDebug)
+ {
+-    return DxgiProxy::GetDebugInterface_()(Flags, riid, pDebug);
++    return DxgiProxy::GetDebugInterface_()(flags, riid, pDebug);
+ }
+ 
+-void _DXGIDisableVBlankVirtualization()
++HRESULT WINAPI _DXGIDisableVBlankVirtualization()
+ {
+-    LOG_FUNC();
+-    dxgi.DisableVBlankVirtualization();
++    if (dxgi.DisableVBlankVirtualization == nullptr)
++        return E_NOTIMPL;
++
++    return dxgi.DisableVBlankVirtualization();
+ }
+ 
+-void _ApplyCompatResolutionQuirking()
++HRESULT WINAPI _ApplyCompatResolutionQuirking(void* p1, void* p2)
+ {
+-    LOG_FUNC();
+-    dxgi.ApplyCompatResolutionQuirking();
++    if (dxgi.ApplyCompatResolutionQuirking == nullptr)
++        return E_NOTIMPL;
++
++    return dxgi.ApplyCompatResolutionQuirking(p1, p2);
+ }
+ 
+-void _CompatString()
++BOOL WINAPI _CompatString(LPCSTR szName, ULONG* pSize, LPSTR lpData, bool flag)
+ {
+-    LOG_FUNC();
+-    dxgi.CompatString();
++    if (dxgi.CompatString == nullptr)
++        return FALSE;
++
++    return dxgi.CompatString(szName, pSize, lpData, flag);
+ }
+ 
+-void _CompatValue()
++BOOL WINAPI _CompatValue(LPCSTR szName, UINT64* pValue)
+ {
+-    LOG_FUNC();
+-    dxgi.CompatValue();
++    if (dxgi.CompatValue == nullptr)
++        return FALSE;
++
++    return dxgi.CompatValue(szName, pValue);
+ }
+ 
+-void _DXGID3D10CreateDevice()
++HRESULT WINAPI _DXGID3D10CreateDevice(HMODULE hModule, IDXGIFactory* pFactory, IDXGIAdapter* pAdapter, UINT flags,
++                                      void* pUnknown, void** ppDevice)
+ {
+-    LOG_FUNC();
+-    dxgi.D3D10CreateDevice();
++    if (dxgi.D3D10CreateDevice == nullptr)
++        return E_NOTIMPL;
++
++    return dxgi.D3D10CreateDevice(hModule, pFactory, pAdapter, flags, pUnknown, ppDevice);
+ }
+ 
+-void _DXGID3D10CreateLayeredDevice()
++HRESULT WINAPI _DXGID3D10CreateLayeredDevice(IDXGIAdapter* pAdapter, UINT flags, void* pUnknown, REFIID riid,
++                                             void** ppDevice)
+ {
+-    LOG_FUNC();
+-    dxgi.D3D10CreateLayeredDevice();
++    if (dxgi.D3D10CreateLayeredDevice == nullptr)
++        return E_NOTIMPL;
++
++    return dxgi.D3D10CreateLayeredDevice(pAdapter, flags, pUnknown, riid, ppDevice);
+ }
+ 
+-void _DXGID3D10GetLayeredDeviceSize()
++SIZE_T WINAPI _DXGID3D10GetLayeredDeviceSize(const void* pLayers, UINT numLayers)
+ {
+-    LOG_FUNC();
+-    dxgi.D3D10GetLayeredDeviceSize();
++    if (dxgi.D3D10GetLayeredDeviceSize == nullptr)
++        return 0;
++
++    return dxgi.D3D10GetLayeredDeviceSize(pLayers, numLayers);
+ }
+ 
+-void _DXGID3D10RegisterLayers()
++HRESULT WINAPI _DXGID3D10RegisterLayers(const void* pLayers, UINT numLayers)
+ {
+-    LOG_FUNC();
+-    dxgi.D3D10RegisterLayers();
++    if (dxgi.D3D10RegisterLayers == nullptr)
++        return E_NOTIMPL;
++
++    return dxgi.D3D10RegisterLayers(pLayers, numLayers);
+ }
+ 
+-void _DXGID3D10ETWRundown()
++void WINAPI _DXGID3D10ETWRundown()
+ {
+-    LOG_FUNC();
+-    dxgi.D3D10ETWRundown();
++    if (dxgi.D3D10ETWRundown != nullptr)
++        dxgi.D3D10ETWRundown();
+ }
+ 
+-void _DXGIDumpJournal()
++HRESULT WINAPI _DXGIDumpJournal(ULONG_PTR p1)
+ {
+-    LOG_FUNC();
+-    dxgi.DumpJournal();
++    if (dxgi.DumpJournal == nullptr)
++        return E_NOTIMPL;
++
++    return dxgi.DumpJournal(p1);
+ }
+ 
+-void _DXGIReportAdapterConfiguration()
++HRESULT WINAPI _DXGIReportAdapterConfiguration(ULONG_PTR p1)
+ {
+-    LOG_FUNC();
+-    dxgi.ReportAdapterConfiguration();
++    if (dxgi.ReportAdapterConfiguration == nullptr)
++        return E_NOTIMPL;
++
++    return dxgi.ReportAdapterConfiguration(p1);
+ }
+ 
+-void _PIXBeginCapture()
++HRESULT WINAPI _PIXBeginCapture(DWORD captureFlags, const void* captureParameters)
+ {
+-    LOG_FUNC();
+-    dxgi.PIXBeginCapture();
++    if (dxgi.PIXBeginCapture == nullptr)
++        return E_NOTIMPL;
++
++    return dxgi.PIXBeginCapture(captureFlags, captureParameters);
+ }
+ 
+-void _PIXEndCapture()
++HRESULT WINAPI _PIXEndCapture(BOOL discard)
+ {
+-    LOG_FUNC();
+-    dxgi.PIXEndCapture();
++    if (dxgi.PIXEndCapture == nullptr)
++        return E_NOTIMPL;
++
++    return dxgi.PIXEndCapture(discard);
+ }
+ 
+-void _PIXGetCaptureState()
++DWORD WINAPI _PIXGetCaptureState()
+ {
+-    LOG_FUNC();
+-    dxgi.PIXGetCaptureState();
++    if (dxgi.PIXGetCaptureState == nullptr)
++        return 0;
++
++    return dxgi.PIXGetCaptureState();
+ }
+ 
+-void _SetAppCompatStringPointer()
++HRESULT WINAPI _SetAppCompatStringPointer(ULONG_PTR p1, ULONG_PTR p2)
+ {
+-    LOG_FUNC();
+-    dxgi.SetAppCompatStringPointer();
++    if (dxgi.SetAppCompatStringPointer == nullptr)
++        return E_NOTIMPL;
++
++    return dxgi.SetAppCompatStringPointer(p1, p2);
+ }
+ 
+-void _UpdateHMDEmulationStatus()
++HRESULT WINAPI _UpdateHMDEmulationStatus(ULONG_PTR p1)
+ {
+-    LOG_FUNC();
+-    dxgi.UpdateHMDEmulationStatus();
++    if (dxgi.UpdateHMDEmulationStatus == nullptr)
++        return E_NOTIMPL;
++
++    return dxgi.UpdateHMDEmulationStatus(p1);
+ }
+diff --git a/OptiScaler/framegen/xefg/XeFG_Dx12.cpp b/OptiScaler/framegen/xefg/XeFG_Dx12.cpp
+index 1dbb383..5635d4c 100644
+--- a/OptiScaler/framegen/xefg/XeFG_Dx12.cpp
++++ b/OptiScaler/framegen/xefg/XeFG_Dx12.cpp
+@@ -1646,6 +1646,7 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+         }
+ 
+         xefg_swapchain_d3d12_resource_data_t resourceParam = GetResourceData(type, fIndex);
++        bool restoreCopySource = false;
+ 
+         // SDK version 2.1.1 fixes those issues
+         if (version < feature_version { 1, 2, 2 })
+@@ -1661,8 +1662,15 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+             // https://github.com/intel/xess/issues/47
+             if (inputResource->state == D3D12_RESOURCE_STATE_COPY_SOURCE)
+             {
++                if (inputResource->cmdList == nullptr)
++                {
++                    LOG_ERROR("Legacy XeFG COPY_SOURCE workaround requires a command list");
++                    return false;
++                }
++
+                 ResourceBarrier(inputResource->cmdList, inputResource->resource, inputResource->state,
+                                 D3D12_RESOURCE_STATE_COPY_DEST);
++                restoreCopySource = true;
+ 
+                 resourceParam.incomingState = D3D12_RESOURCE_STATE_COPY_DEST;
+             }
+@@ -1672,33 +1680,35 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+         if (indexDiff < 0)
+             indexDiff += BUFFER_COUNT;
+ 
++        auto tagResult = XEFG_SWAPCHAIN_RESULT_SUCCESS;
++
+         // We will us UI color later with Render UI
+         if (type != FG_ResourceType::UIColor ||
+             (XeFGProxy::SetUiCompositionState() != nullptr || Config::Instance()->FGDrawUIOverFG.value_or_default()))
+         {
+             auto frameId = static_cast<uint32_t>(_frameCount - indexDiff);
+-            auto result =
++            tagResult =
+                 XeFGProxy::D3D12TagFrameResource()(_swapChainContext, fResource->cmdList, frameId, &resourceParam);
+             LOG_DEBUG("D3D12TagFrameResource, frameId: {}, type: {} result: {} ({})", frameId,
+-                      magic_enum::enum_name(type), magic_enum::enum_name(result), (int32_t) result);
+-
+-            if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+-            {
+-                State::Instance().fgChanged = true;
+-                UpdateTarget();
+-                Deactivate();
+-
+-                return false;
+-            }
++                      magic_enum::enum_name(type), magic_enum::enum_name(tagResult), (int32_t) tagResult);
+         }
+ 
+-        // Potentially we don't need to restore but do it just to be safe
+-        if (inputResource->state == D3D12_RESOURCE_STATE_COPY_SOURCE)
++        // Restore only the transition emitted above, including when resource tagging failed.
++        if (restoreCopySource)
+         {
+             ResourceBarrier(inputResource->cmdList, inputResource->resource, D3D12_RESOURCE_STATE_COPY_DEST,
+                             inputResource->state);
+         }
+ 
++        if (tagResult != XEFG_SWAPCHAIN_RESULT_SUCCESS)
++        {
++            State::Instance().fgChanged = true;
++            UpdateTarget();
++            Deactivate();
++
++            return false;
++        }
++
+         SetResourceReady(type, fIndex);
+     }
+ 
+diff --git a/OptiScaler/menu/input/input_system.cpp b/OptiScaler/menu/input/input_system.cpp
+index ab0bc50..891f9fa 100644
+--- a/OptiScaler/menu/input/input_system.cpp
++++ b/OptiScaler/menu/input/input_system.cpp
+@@ -57,6 +57,12 @@ DirectInputDeviceRelease_t o_DirectInputDeviceRelease = nullptr;
+ 
+ thread_local int bypassHookDepth = 0;
+ 
++std::mutex& GetDetourTransactionMutex()
++{
++    static std::mutex mutex;
++    return mutex;
++}
++
+ bool ShouldApplyBlockingPolicyLocked() { return bypassHookDepth == 0 && _state.MenuVisible && _state.Focused; }
+ 
+ bool ShouldBlockKeyboardInputLocked() { return ShouldApplyBlockingPolicyLocked() && _state.BlockKeyboard; }
+@@ -100,6 +106,24 @@ void HandleBlockingFocusLossLocked()
+ 
+ namespace
+ {
++std::mutex optionalInputIntegrationMutex;
++
++void UpdateOptionalInputIntegrations()
++{
++    std::scoped_lock integrationLock(optionalInputIntegrationMutex);
++
++    {
++        std::unique_lock stateLock(_state.Mutex);
++
++        if (!_state.Initialized || !_state.HooksInstalled)
++            return;
++    }
++
++    UpdateGameInputIntegration();
++    UpdateXInputIntegration();
++    UpdateDirectInputIntegration();
++}
++
+ const char* YesNo(bool value) { return value ? "yes" : "no"; }
+ 
+ const char* AcquisitionModeName(InputAcquisitionMode mode)
+@@ -802,23 +826,23 @@ bool Initialize(const InitializeOptions& options)
+         {
+             LOG_WARN("Initialize re-entry retrying incomplete Win32 hook installation");
+             _state.HooksInstalled = InstallHooks();
+-
+-            if (_state.HooksInstalled)
+-            {
+-                UpdateGameInputIntegrationLocked();
+-                UpdateXInputIntegrationLocked();
+-                UpdateDirectInputIntegrationLocked();
+-            }
+         }
+ 
++        const bool hooksInstalled = _state.HooksInstalled;
++
+         LOG_DEBUG(
+             "Initialize re-entry state target:{} targetPid:{} input:{} inputPid:{} externalTarget:{} subclassed:{} "
+             "hooksInstalled:{}",
+             static_cast<void*>(_state.TargetHwnd), _state.TargetProcessId, static_cast<void*>(_state.InputHwnd),
+             _state.InputProcessId, _state.ExternalTargetProcess ? 1 : 0, _state.WndProcSubclassed ? 1 : 0,
+-            _state.HooksInstalled ? 1 : 0);
++            hooksInstalled ? 1 : 0);
+ 
+-        return _state.HooksInstalled;
++        lock.unlock();
++
++        if (hooksInstalled)
++            UpdateOptionalInputIntegrations();
++
++        return hooksInstalled;
+     }
+ 
+     _state.Initialized = true;
+@@ -839,12 +863,10 @@ bool Initialize(const InitializeOptions& options)
+              static_cast<void*>(_state.InputHwnd), _state.InputProcessId, _state.ExternalTargetProcess ? 1 : 0,
+              _state.WndProcSubclassed ? 1 : 0);
+ 
++    lock.unlock();
++
+     if (hooksInstalled)
+-    {
+-        UpdateGameInputIntegrationLocked();
+-        UpdateXInputIntegrationLocked();
+-        UpdateDirectInputIntegrationLocked();
+-    }
++        UpdateOptionalInputIntegrations();
+ 
+     return hooksInstalled;
+ }
+@@ -1098,6 +1120,8 @@ void ResetStateAfterShutdown()
+ 
+ void Shutdown()
+ {
++    // Keep optional integration install/remove operations mutually exclusive.
++    std::unique_lock integrationLock(optionalInputIntegrationMutex);
+     std::unique_lock lock(_state.Mutex);
+ 
+     // Restore cursor confinement and clear the blocking policy before any hook teardown
+@@ -1148,11 +1172,6 @@ static void BeginFrameLocked(HWND targetHwnd, HWND inputHwnd, bool hasInputHwnd,
+     ValidateInputWindowLocked();
+     ValidateWindowSubclassLocked();
+ 
+-    // Optional input APIs may be loaded after OptiInput initialization.
+-    UpdateGameInputIntegrationLocked();
+-    UpdateXInputIntegrationLocked();
+-    UpdateDirectInputIntegrationLocked();
+-
+     UpdateFocusState(_state.TargetHwnd);
+     EnsureExternalRawInputSinkLocked();
+     UpdateExternalMouseHookLocked();
+@@ -1165,9 +1184,19 @@ void BeginFrame(HWND targetHwnd, bool isUwp)
+     std::unique_lock lock(_state.Mutex);
+ 
+     if (!_state.Initialized)
++    {
++        lock.unlock();
+         Initialize(targetHwnd, isUwp);
++        lock.lock();
++    }
+ 
+-    BeginFrameLocked(targetHwnd, nullptr, false, isUwp);
++    if (_state.Initialized)
++        BeginFrameLocked(targetHwnd, nullptr, false, isUwp);
++
++    lock.unlock();
++
++    // Module/export resolution can wait on the loader
++    UpdateOptionalInputIntegrations();
+ }
+ 
+ void BeginFrame(HWND targetHwnd, HWND inputHwnd, bool isUwp)
+@@ -1175,9 +1204,19 @@ void BeginFrame(HWND targetHwnd, HWND inputHwnd, bool isUwp)
+     std::unique_lock lock(_state.Mutex);
+ 
+     if (!_state.Initialized)
++    {
++        lock.unlock();
+         Initialize(targetHwnd, inputHwnd, isUwp);
++        lock.lock();
++    }
++
++    if (_state.Initialized)
++        BeginFrameLocked(targetHwnd, inputHwnd, inputHwnd != nullptr, isUwp);
++
++    lock.unlock();
+ 
+-    BeginFrameLocked(targetHwnd, inputHwnd, inputHwnd != nullptr, isUwp);
++    // Module/export resolution can wait on the loader
++    UpdateOptionalInputIntegrations();
+ }
+ 
+ void FeedImGui(bool menuVisible)
+diff --git a/OptiScaler/menu/input/input_system_directinput.cpp b/OptiScaler/menu/input/input_system_directinput.cpp
+index b0539db..67656d1 100644
+--- a/OptiScaler/menu/input/input_system_directinput.cpp
++++ b/OptiScaler/menu/input/input_system_directinput.cpp
+@@ -1,6 +1,8 @@
+ #include "pch.h"
+ #include "input_system_internal.h"
+ 
++#include <hooks/Kernel_Hooks.h>
++
+ #include <detours/detours.h>
+ 
+ #include <cstring>
+@@ -392,19 +394,24 @@ bool HookDirectInputDeviceLocked(void* device, DirectInputDeviceKind kind)
+         return completeCoverage;
+     }
+ 
+-    DetourTransactionBegin();
+-    DetourUpdateThread(GetCurrentThread());
++    LONG result = NO_ERROR;
+ 
+-    if (attachRelease)
+-        DetourAttach(reinterpret_cast<PVOID*>(&releaseHook->Trampoline), hkDirectInputDeviceRelease);
++    {
++        std::scoped_lock detourLock(GetDetourTransactionMutex());
++        DetourTransactionBegin();
++        DetourUpdateThread(GetCurrentThread());
+ 
+-    if (attachGetDeviceState)
+-        DetourAttach(reinterpret_cast<PVOID*>(&getDeviceStateHook->Trampoline), hkDirectInputGetDeviceState);
++        if (attachRelease)
++            DetourAttach(reinterpret_cast<PVOID*>(&releaseHook->Trampoline), hkDirectInputDeviceRelease);
+ 
+-    if (attachGetDeviceData)
+-        DetourAttach(reinterpret_cast<PVOID*>(&getDeviceDataHook->Trampoline), hkDirectInputGetDeviceData);
++        if (attachGetDeviceState)
++            DetourAttach(reinterpret_cast<PVOID*>(&getDeviceStateHook->Trampoline), hkDirectInputGetDeviceState);
+ 
+-    const LONG result = DetourTransactionCommit();
++        if (attachGetDeviceData)
++            DetourAttach(reinterpret_cast<PVOID*>(&getDeviceDataHook->Trampoline), hkDirectInputGetDeviceData);
++
++        result = DetourTransactionCommit();
++    }
+ 
+     if (result != NO_ERROR)
+     {
+@@ -468,11 +475,15 @@ bool HookDirectInputInterfaceLocked(void* directInput, bool wide)
+         // implementation through one detour so a shared A/W implementation is
+         // never attached twice. The interface's vtable identifies the correct
+         // per-target trampoline at call time.
+-        DetourTransactionBegin();
+-        DetourUpdateThread(GetCurrentThread());
+-        DetourAttach(reinterpret_cast<PVOID*>(&slot->Trampoline), hkDirectInputCreateDeviceA);
++        LONG result = NO_ERROR;
+ 
+-        const LONG result = DetourTransactionCommit();
++        {
++            std::scoped_lock detourLock(GetDetourTransactionMutex());
++            DetourTransactionBegin();
++            DetourUpdateThread(GetCurrentThread());
++            DetourAttach(reinterpret_cast<PVOID*>(&slot->Trampoline), hkDirectInputCreateDeviceA);
++            result = DetourTransactionCommit();
++        }
+ 
+         if (result != NO_ERROR)
+         {
+@@ -541,25 +552,43 @@ void HandleLegacyDirectInputCreatedLocked(void** out, bool wide)
+     HookDirectInputInterfaceLocked(*out, wide);
+ }
+ 
+-bool InstallDirectInputExportHookLocked(HMODULE module, const char* exportName, void** original, void* hook,
+-                                        bool* installed)
++bool InstallDirectInputExportHook(HMODULE module, const char* exportName, void** original, void* hook, bool* installed)
+ {
+     if (module == nullptr || exportName == nullptr || original == nullptr || hook == nullptr || installed == nullptr)
+         return false;
+ 
+-    if (*installed)
+-        return true;
++    {
++        std::unique_lock lock(_state.Mutex);
+ 
+-    *original = reinterpret_cast<void*>(GetProcAddress(module, exportName));
++        if (*installed)
++            return true;
++    }
++
++    void* resolved = reinterpret_cast<void*>(KernelBaseProxy::GetProcAddress_()(module, exportName));
+ 
+-    if (*original == nullptr)
++    if (resolved == nullptr)
+         return false;
+ 
+-    DetourTransactionBegin();
+-    DetourUpdateThread(GetCurrentThread());
+-    DetourAttach(reinterpret_cast<PVOID*>(original), hook);
++    {
++        std::unique_lock lock(_state.Mutex);
+ 
+-    const LONG result = DetourTransactionCommit();
++        if (*installed)
++            return true;
++
++        *original = resolved;
++    }
++
++    LONG result = NO_ERROR;
++
++    {
++        std::scoped_lock detourLock(GetDetourTransactionMutex());
++        DetourTransactionBegin();
++        DetourUpdateThread(GetCurrentThread());
++        DetourAttach(reinterpret_cast<PVOID*>(original), hook);
++        result = DetourTransactionCommit();
++    }
++
++    std::unique_lock lock(_state.Mutex);
+ 
+     if (result != NO_ERROR)
+     {
+@@ -584,22 +613,28 @@ HRESULT CallDirectInputCreateDeviceOriginal(DirectInputCreateDevice_t original,
+ }
+ } // namespace
+ 
+-void UpdateDirectInputIntegrationLocked()
++void UpdateDirectInputIntegration()
+ {
++    // Module discovery can enter the loader. Do it before publishing state or installing hooks.
+     HMODULE module8 = FindLoadedDirectInput8Module();
+     HMODULE legacyModule = FindLoadedDirectInputLegacyModule();
+ 
+-    _state.DirectInputModule = module8;
+-    _state.DirectInputLegacyModule = legacyModule;
+-    _state.DirectInputModuleLoaded = module8 != nullptr || legacyModule != nullptr;
+-    _state.DirectInputLegacyModuleLoaded = legacyModule != nullptr;
++    {
++        std::unique_lock lock(_state.Mutex);
++        _state.DirectInputModule = module8;
++        _state.DirectInputLegacyModule = legacyModule;
++        _state.DirectInputModuleLoaded = module8 != nullptr || legacyModule != nullptr;
++        _state.DirectInputLegacyModuleLoaded = legacyModule != nullptr;
++    }
+ 
+     if (module8 != nullptr)
+     {
+-        if (!InstallDirectInputExportHookLocked(module8, DirectInput8CreateExportName,
+-                                                reinterpret_cast<void**>(&o_DirectInput8Create), hkDirectInput8Create,
+-                                                &_state.DirectInput8CreateHookInstalled))
++        if (!InstallDirectInputExportHook(module8, DirectInput8CreateExportName,
++                                          reinterpret_cast<void**>(&o_DirectInput8Create), hkDirectInput8Create,
++                                          &_state.DirectInput8CreateHookInstalled))
+         {
++            std::unique_lock lock(_state.Mutex);
++
+             if (o_DirectInput8Create == nullptr)
+             {
+                 OPTIINPUT_LOG_VERBOSE("DirectInput8Create export was not found module:{}", static_cast<void*>(module8));
+@@ -609,17 +644,17 @@ void UpdateDirectInputIntegrationLocked()
+ 
+     if (legacyModule != nullptr)
+     {
+-        InstallDirectInputExportHookLocked(legacyModule, DirectInputCreateAExportName,
+-                                           reinterpret_cast<void**>(&o_DirectInputCreateA), hkDirectInputCreateA,
+-                                           &_state.DirectInputCreateAHookInstalled);
++        InstallDirectInputExportHook(legacyModule, DirectInputCreateAExportName,
++                                     reinterpret_cast<void**>(&o_DirectInputCreateA), hkDirectInputCreateA,
++                                     &_state.DirectInputCreateAHookInstalled);
+ 
+-        InstallDirectInputExportHookLocked(legacyModule, DirectInputCreateWExportName,
+-                                           reinterpret_cast<void**>(&o_DirectInputCreateW), hkDirectInputCreateW,
+-                                           &_state.DirectInputCreateWHookInstalled);
++        InstallDirectInputExportHook(legacyModule, DirectInputCreateWExportName,
++                                     reinterpret_cast<void**>(&o_DirectInputCreateW), hkDirectInputCreateW,
++                                     &_state.DirectInputCreateWHookInstalled);
+ 
+-        InstallDirectInputExportHookLocked(legacyModule, DirectInputCreateExExportName,
+-                                           reinterpret_cast<void**>(&o_DirectInputCreateEx), hkDirectInputCreateEx,
+-                                           &_state.DirectInputCreateExHookInstalled);
++        InstallDirectInputExportHook(legacyModule, DirectInputCreateExExportName,
++                                     reinterpret_cast<void**>(&o_DirectInputCreateEx), hkDirectInputCreateEx,
++                                     &_state.DirectInputCreateExHookInstalled);
+     }
+ }
+ 
+diff --git a/OptiScaler/menu/input/input_system_gameinput.cpp b/OptiScaler/menu/input/input_system_gameinput.cpp
+index f0f96ab..d89fe2c 100644
+--- a/OptiScaler/menu/input/input_system_gameinput.cpp
++++ b/OptiScaler/menu/input/input_system_gameinput.cpp
+@@ -1,6 +1,8 @@
+ #include "pch.h"
+ #include "input_system_internal.h"
+ 
++#include <hooks/Kernel_Hooks.h>
++
+ #include <detours/detours.h>
+ 
+ namespace OptiInput
+@@ -12,53 +14,47 @@ constexpr wchar_t WindowsGamingInputModuleName[] = L"Windows.Gaming.Input.dll";
+ constexpr char GameInputCreateExportName[] = "GameInputCreate";
+ 
+ HMODULE GetAlreadyLoadedModule(const wchar_t* moduleName) { return GetModuleHandleW(moduleName); }
++} // namespace
+ 
+-void RefreshGameInputModuleStateLocked()
++void UpdateGameInputIntegration()
+ {
+-    _state.GameInputModule = GetAlreadyLoadedModule(GameInputModuleName);
+-    _state.WindowsGamingInputModule = GetAlreadyLoadedModule(WindowsGamingInputModuleName);
++    // A module may be mapped before its DllMain has completed
++    HMODULE gameInputModule = GetAlreadyLoadedModule(GameInputModuleName);
++    HMODULE windowsGamingInputModule = GetAlreadyLoadedModule(WindowsGamingInputModuleName);
++    FARPROC gameInputCreate = nullptr;
+ 
+-    _state.GameInputModuleLoaded = _state.GameInputModule != nullptr;
+-    _state.WindowsGamingInputModuleLoaded = _state.WindowsGamingInputModule != nullptr;
++    if (gameInputModule != nullptr)
++        gameInputCreate = KernelBaseProxy::GetProcAddress_()(gameInputModule, GameInputCreateExportName);
+ 
+-    if (!_state.GameInputModuleLoaded)
+     {
+-        _state.GameInputCreateExportFound = false;
+-        return;
+-    }
++        std::unique_lock lock(_state.Mutex);
+ 
+-    _state.GameInputCreateExportFound = GetProcAddress(_state.GameInputModule, GameInputCreateExportName) != nullptr;
+-}
++        _state.GameInputModule = gameInputModule;
++        _state.WindowsGamingInputModule = windowsGamingInputModule;
++        _state.GameInputModuleLoaded = gameInputModule != nullptr;
++        _state.WindowsGamingInputModuleLoaded = windowsGamingInputModule != nullptr;
++        _state.GameInputCreateExportFound = gameInputCreate != nullptr;
+ 
+-bool InstallGameInputCreateHookLocked()
+-{
+-    if (_state.GameInputCreateHookInstalled)
+-        return true;
+-
+-    if (_state.GameInputCreateHookAttempted)
+-        return false;
++        if (_state.GameInputCreateHookInstalled || _state.GameInputCreateHookAttempted || gameInputCreate == nullptr)
++        {
++            return;
++        }
+ 
+-    if (_state.GameInputModule == nullptr)
+-        return false;
++        _state.GameInputCreateHookAttempted = true;
++        o_GameInputCreate = reinterpret_cast<GameInputCreate_t>(gameInputCreate);
++    }
+ 
+-    FARPROC proc = GetProcAddress(_state.GameInputModule, GameInputCreateExportName);
++    LONG result = NO_ERROR;
+ 
+-    if (proc == nullptr)
+     {
+-        _state.GameInputCreateExportFound = false;
+-        return false;
++        std::scoped_lock detourLock(GetDetourTransactionMutex());
++        DetourTransactionBegin();
++        DetourUpdateThread(GetCurrentThread());
++        DetourAttach(reinterpret_cast<PVOID*>(&o_GameInputCreate), hkGameInputCreate);
++        result = DetourTransactionCommit();
+     }
+ 
+-    _state.GameInputCreateExportFound = true;
+-    _state.GameInputCreateHookAttempted = true;
+-    o_GameInputCreate = reinterpret_cast<GameInputCreate_t>(proc);
+-
+-    DetourTransactionBegin();
+-    DetourUpdateThread(GetCurrentThread());
+-    DetourAttach(reinterpret_cast<PVOID*>(&o_GameInputCreate), hkGameInputCreate);
+-
+-    const LONG result = DetourTransactionCommit();
+-
++    std::unique_lock lock(_state.Mutex);
+     _state.GameInputCreateHookInstalled = result == NO_ERROR;
+ 
+     if (!_state.GameInputCreateHookInstalled)
+@@ -66,17 +62,6 @@ bool InstallGameInputCreateHookLocked()
+         LOG_WARN("GameInputCreate hook installation failed result:{}", result);
+         o_GameInputCreate = nullptr;
+     }
+-
+-    return _state.GameInputCreateHookInstalled;
+-}
+-} // namespace
+-
+-void UpdateGameInputIntegrationLocked()
+-{
+-    RefreshGameInputModuleStateLocked();
+-
+-    if (_state.GameInputModuleLoaded && _state.GameInputCreateExportFound)
+-        InstallGameInputCreateHookLocked();
+ }
+ 
+ bool RemoveGameInputHooksLocked()
+diff --git a/OptiScaler/menu/input/input_system_internal.h b/OptiScaler/menu/input/input_system_internal.h
+index 98eb88c..f3c3532 100644
+--- a/OptiScaler/menu/input/input_system_internal.h
++++ b/OptiScaler/menu/input/input_system_internal.h
+@@ -477,18 +477,21 @@ class ScopedHookBypass
+     ScopedHookBypass& operator=(ScopedHookBypass&&) = delete;
+ };
+ 
++// Dynamic input hook installation may run without the state mutex
++std::mutex& GetDetourTransactionMutex();
++
+ // Lifecycle
+ bool InstallHooks();
+ bool RemoveHooks();
+ bool ReleaseTrackedWindowsHooksLocked();
+ 
+ // GameInput / Windows.Gaming.Input
+-void UpdateGameInputIntegrationLocked();
++void UpdateGameInputIntegration();
+ bool RemoveGameInputHooksLocked();
+ HRESULT WINAPI hkGameInputCreate(void** gameInput);
+ 
+ // XInput
+-void UpdateXInputIntegrationLocked();
++void UpdateXInputIntegration();
+ bool RemoveXInputHooksLocked();
+ void DrainXInputKeystrokesLocked();
+ DWORD WINAPI hkXInputGetState(DWORD userIndex, XINPUT_STATE* state);
+@@ -497,7 +500,7 @@ DWORD WINAPI hkXInputGetKeystroke(DWORD userIndex, DWORD reserved, PXINPUT_KEYST
+ DWORD WINAPI hkXInputSetState(DWORD userIndex, XINPUT_VIBRATION* vibration);
+ 
+ // DirectInput
+-void UpdateDirectInputIntegrationLocked();
++void UpdateDirectInputIntegration();
+ bool RemoveDirectInputHooksLocked();
+ void DrainDirectInputBufferedDataLocked();
+ HRESULT WINAPI hkDirectInput8Create(HINSTANCE instance, DWORD version, REFIID riid, LPVOID* out, LPUNKNOWN outer);
+diff --git a/OptiScaler/menu/input/input_system_xinput.cpp b/OptiScaler/menu/input/input_system_xinput.cpp
+index 44369f1..2b9778c 100644
+--- a/OptiScaler/menu/input/input_system_xinput.cpp
++++ b/OptiScaler/menu/input/input_system_xinput.cpp
+@@ -1,6 +1,8 @@
+ #include "pch.h"
+ #include "input_system_internal.h"
+ 
++#include <hooks/Kernel_Hooks.h>
++
+ #include <detours/detours.h>
+ 
+ namespace OptiInput
+@@ -56,66 +58,83 @@ void ClearXInputHookPointersLocked()
+     _state.XInputSetStateHookInstalled = false;
+ }
+ 
+-bool ResolveXInputExportsLocked(HMODULE module)
+-{
+-    if (module == nullptr)
+-        return false;
+-
+-    if (o_XInputGetState == nullptr)
+-        o_XInputGetState = reinterpret_cast<XInputGetState_t>(GetProcAddress(module, XInputGetStateExportName));
+-
+-    if (o_XInputGetStateEx == nullptr)
+-        o_XInputGetStateEx = reinterpret_cast<XInputGetState_t>(GetProcAddress(module, MAKEINTRESOURCEA(100)));
+-
+-    if (o_XInputGetKeystroke == nullptr)
+-        o_XInputGetKeystroke =
+-            reinterpret_cast<XInputGetKeystroke_t>(GetProcAddress(module, XInputGetKeystrokeExportName));
+-
+-    if (o_XInputSetState == nullptr)
+-        o_XInputSetState = reinterpret_cast<XInputSetState_t>(GetProcAddress(module, XInputSetStateExportName));
+-
+-    return o_XInputGetState != nullptr || o_XInputGetStateEx != nullptr || o_XInputGetKeystroke != nullptr ||
+-           o_XInputSetState != nullptr;
+-}
+ } // namespace
+ 
+-void UpdateXInputIntegrationLocked()
++void UpdateXInputIntegration()
+ {
+-    if (_state.XInputGetStateHookInstalled || _state.XInputGetStateExHookInstalled ||
+-        _state.XInputGetKeystrokeHookInstalled || _state.XInputSetStateHookInstalled)
+     {
+-        return;
++        std::unique_lock lock(_state.Mutex);
++
++        if (_state.XInputGetStateHookInstalled || _state.XInputGetStateExHookInstalled ||
++            _state.XInputGetKeystrokeHookInstalled || _state.XInputSetStateHookInstalled)
++        {
++            return;
++        }
+     }
+ 
++    // A mapped XInput DLL can still be inside loader initialization
+     HMODULE module = FindLoadedXInputModule();
+-    _state.XInputModule = module;
+-    _state.XInputModuleLoaded = module != nullptr;
++    XInputGetState_t getState = nullptr;
++    XInputGetState_t getStateEx = nullptr;
++    XInputGetKeystroke_t getKeystroke = nullptr;
++    XInputSetState_t setState = nullptr;
+ 
+-    if (module == nullptr)
+-        return;
++    if (module != nullptr)
++    {
++        getState =
++            reinterpret_cast<XInputGetState_t>(KernelBaseProxy::GetProcAddress_()(module, XInputGetStateExportName));
++        getStateEx =
++            reinterpret_cast<XInputGetState_t>(KernelBaseProxy::GetProcAddress_()(module, MAKEINTRESOURCEA(100)));
++        getKeystroke = reinterpret_cast<XInputGetKeystroke_t>(
++            KernelBaseProxy::GetProcAddress_()(module, XInputGetKeystrokeExportName));
++        setState =
++            reinterpret_cast<XInputSetState_t>(KernelBaseProxy::GetProcAddress_()(module, XInputSetStateExportName));
++    }
+ 
+-    if (!ResolveXInputExportsLocked(module))
+     {
+-        LOG_WARN("XInput module loaded but no supported exports found module:{}", static_cast<void*>(module));
+-        return;
++        std::unique_lock lock(_state.Mutex);
++
++        _state.XInputModule = module;
++        _state.XInputModuleLoaded = module != nullptr;
++
++        if (module == nullptr)
++            return;
++
++        if (getState == nullptr && getStateEx == nullptr && getKeystroke == nullptr && setState == nullptr)
++        {
++            LOG_WARN("XInput module loaded but no supported exports found module:{}", static_cast<void*>(module));
++            return;
++        }
++
++        o_XInputGetState = getState;
++        o_XInputGetStateEx = getStateEx;
++        o_XInputGetKeystroke = getKeystroke;
++        o_XInputSetState = setState;
+     }
+ 
+-    DetourTransactionBegin();
+-    DetourUpdateThread(GetCurrentThread());
++    LONG result = NO_ERROR;
+ 
+-    if (o_XInputGetState != nullptr)
+-        DetourAttach(reinterpret_cast<PVOID*>(&o_XInputGetState), hkXInputGetState);
++    {
++        std::scoped_lock detourLock(GetDetourTransactionMutex());
++        DetourTransactionBegin();
++        DetourUpdateThread(GetCurrentThread());
+ 
+-    if (o_XInputGetStateEx != nullptr)
+-        DetourAttach(reinterpret_cast<PVOID*>(&o_XInputGetStateEx), hkXInputGetStateEx);
++        if (o_XInputGetState != nullptr)
++            DetourAttach(reinterpret_cast<PVOID*>(&o_XInputGetState), hkXInputGetState);
+ 
+-    if (o_XInputGetKeystroke != nullptr)
+-        DetourAttach(reinterpret_cast<PVOID*>(&o_XInputGetKeystroke), hkXInputGetKeystroke);
++        if (o_XInputGetStateEx != nullptr)
++            DetourAttach(reinterpret_cast<PVOID*>(&o_XInputGetStateEx), hkXInputGetStateEx);
+ 
+-    if (o_XInputSetState != nullptr)
+-        DetourAttach(reinterpret_cast<PVOID*>(&o_XInputSetState), hkXInputSetState);
++        if (o_XInputGetKeystroke != nullptr)
++            DetourAttach(reinterpret_cast<PVOID*>(&o_XInputGetKeystroke), hkXInputGetKeystroke);
+ 
+-    const LONG result = DetourTransactionCommit();
++        if (o_XInputSetState != nullptr)
++            DetourAttach(reinterpret_cast<PVOID*>(&o_XInputSetState), hkXInputSetState);
++
++        result = DetourTransactionCommit();
++    }
++
++    std::unique_lock lock(_state.Mutex);
+ 
+     if (result != NO_ERROR)
+     {
+diff --git a/OptiScaler/proxies/XeFGPacing.h b/OptiScaler/proxies/XeFGPacing.h
+index 1a2761e..f5acbeb 100644
+--- a/OptiScaler/proxies/XeFGPacing.h
++++ b/OptiScaler/proxies/XeFGPacing.h
+@@ -807,6 +807,10 @@ inline void* TsDetour(void* a1, int64_t* out, void* lookup, void* timing, uint32
+ {
+     void* const result = g_tsNative(a1, out, lookup, timing, index, countPlus1);
+ 
++    // A partially installed or rolled-back hook must remain a pure forwarder.
++    if (!g_enabled)
++        return result;
++
+     // index 0 is the real frame and never reaches the provider's tail; the
+     // provider caps the multiplier at 6X, so index 5 is the ceiling.
+     if (out == nullptr || timing == nullptr || index == 0 || index > 5 || countPlus1 < 2)
+@@ -910,6 +914,8 @@ inline bool HookThunk(uint8_t* base, uint32_t rva, uint32_t targetRva, const uin
+     if (!WriteVerified(thunk, replacement, PresentThunkSize))
+     {
+         LOG_WARN("XeFG pacing: failed to write the thunk at {:#x}", rva);
++        if (!WriteVerified(thunk, expected, PresentThunkSize))
++            LOG_ERROR("XeFG pacing: failed to restore thunk at {:#x}; restart the game", rva);
+         return false;
+     }
+ 
+@@ -935,6 +941,16 @@ inline bool Install(uint8_t* base)
+         return false;
+     }
+ 
++    // This helper is called only after XeFGUnlock accepted the exact provider
++    // build. Check all three hook sites before writing any of them.
++    if (memcmp(base + PresentThunkRva, PresentThunkExpected, PresentThunkSize) != 0 ||
++        memcmp(base + SchedThunkRva, SchedThunkExpected, PresentThunkSize) != 0 ||
++        memcmp(base + TimestampThunkRva, TimestampThunkExpected, PresentThunkSize) != 0)
++    {
++        LOG_WARN("XeFG pacing: provider thunk preflight failed, provider unchanged");
++        return false;
++    }
++
+     QueryPerformanceFrequency(&g_freq);
+ 
+     if (g_freq.QuadPart <= 0)
+@@ -975,21 +991,33 @@ inline bool Install(uint8_t* base)
+ 
+     void* native = nullptr;
+ 
+-    if (!HookThunk(base, PresentThunkRva, NativePresentRva, PresentThunkExpected, &Detour, &native))
+-        return false;
+-
+-    g_native = reinterpret_cast<PresentFn>(native);
++    // Publish forwarding targets before any detour can become reachable.
++    g_native = reinterpret_cast<PresentFn>(base + NativePresentRva);
++    g_schedNative = reinterpret_cast<SchedFn>(base + SchedFnRva);
++    g_tsNative = reinterpret_cast<TimestampFn>(base + TimestampFnRva);
+     g_ringSnapshot = reinterpret_cast<RingSnapshotFn>(base + RingSnapshotFnRva);
+ 
+-    g_enabled = true;
++    const auto rollback = [&]() {
++        g_enabled = false;
++        bool restored = WriteVerified(base + TimestampThunkRva, TimestampThunkExpected, PresentThunkSize);
++        restored = WriteVerified(base + SchedThunkRva, SchedThunkExpected, PresentThunkSize) && restored;
++        restored = WriteVerified(base + PresentThunkRva, PresentThunkExpected, PresentThunkSize) && restored;
++        if (restored)
++            LOG_INFO("XeFG pacing: hook installation rolled back");
++        else
++            LOG_ERROR("XeFG pacing: rollback verification failed; restart the game before using frame generation");
++    };
+ 
+-    LOG_INFO("XeFG pacing: generated frames are paced above 2X (thunk {:#x} -> {:#x})", PresentThunkRva,
+-             reinterpret_cast<uint64_t>(&Detour));
++    if (!HookThunk(base, PresentThunkRva, NativePresentRva, PresentThunkExpected, &Detour, &native))
++    {
++        rollback();
++        return false;
++    }
+ 
+     // The scheduler is reached through its thunk rather than called at
+     // 0x21EE30 directly, so that the provider's own call for the burst's
+-    // last frame flows through the same path. If the thunk is not what it
+-    // should be, the pacing falls back to the wall clock - non-fatal.
++    // last frame flows through the same path. Installation is transactional:
++    // an unexpected failure restores the other thunks before returning false.
+     //
+     // The native pointer is set from the RVA before the thunk is written,
+     // so that the forwarder can never observe the thunk live and the
+@@ -1002,20 +1030,26 @@ inline bool Install(uint8_t* base)
+                  SchedThunkRva);
+     else
+     {
+-        g_schedNative = nullptr;
+-        LOG_WARN("XeFG pacing: no scheduler, falling back to the wall clock");
++        rollback();
++        return false;
+     }
+ 
+-    // Last, because it is the one that changes the arithmetic rather than
+-    // the calls: without a scheduler there is nothing computing deadlines to
+-    // correct, so this is only worth arming if the scheduler is live.
++    // Install deadline correction last and enable pacing only when all three
++    // hooks are ready. Until then the detours only forward their original calls.
+     g_tsNative = reinterpret_cast<TimestampFn>(base + TimestampFnRva);
+ 
+     if (g_schedNative != nullptr &&
+         HookThunk(base, TimestampThunkRva, TimestampFnRva, TimestampThunkExpected, &TsDetour, &native))
+         LOG_INFO("XeFG pacing: deadlines come from the burst's own frame interval (thunk {:#x})", TimestampThunkRva);
+     else
+-        g_tsNative = nullptr;
++    {
++        rollback();
++        return false;
++    }
++
++    g_enabled = true;
++    LOG_INFO("XeFG pacing: generated frames are paced above 2X (thunk {:#x} -> {:#x})", PresentThunkRva,
++             reinterpret_cast<uint64_t>(&Detour));
+ 
+     return true;
+ }
+diff --git a/OptiScaler/proxies/XeFGUnlock.h b/OptiScaler/proxies/XeFGUnlock.h
+index 18b6c09..ab3313d 100644
+--- a/OptiScaler/proxies/XeFGUnlock.h
++++ b/OptiScaler/proxies/XeFGUnlock.h
+@@ -73,8 +73,11 @@ class XeFGUnlock
+         }
+ 
+         if (nt->FileHeader.TimeDateStamp != KnownBuildStamp || nt->OptionalHeader.SizeOfImage != KnownSizeOfImage)
+-            LOG_WARN("XeFG unlock: unrecognised provider build {:#010x}/{:#x}, relying on per-byte checks",
++        {
++            LOG_WARN("XeFG unlock: unrecognised provider build {:#010x}/{:#x}, skipping",
+                      nt->FileHeader.TimeDateStamp, nt->OptionalHeader.SizeOfImage);
++            return false;
++        }
+         else
+             LOG_INFO("XeFG unlock: recognised provider build {:#010x}", KnownBuildStamp);
+ 
+@@ -119,6 +122,18 @@ class XeFGUnlock
+         int32_t appliedCount = 0;
+         int32_t skipped = 0;
+ 
++        // Validate the entire known provider before changing its first instruction.
++        for (const auto& patch : patches)
++        {
++            if (patch.enabled &&
++                (!Contains(text, patch.rva, patch.size) ||
++                 memcmp(base + patch.rva, patch.expected, patch.size) != 0))
++            {
++                LOG_WARN("XeFG unlock: preflight failed for {} at {:#x}, provider unchanged", patch.name, patch.rva);
++                return false;
++            }
++        }
++
+         for (const auto& patch : patches)
+         {
+             if (!patch.enabled)
+@@ -157,6 +172,10 @@ class XeFGUnlock
+                 replacement = buffer;
+             }
+ 
++            // Include this site in rollback even if a partial write fails verification.
++            applied[appliedCount] = { dst, patch.expected, patch.size };
++            appliedCount++;
++
+             if (!WriteVerified(dst, replacement, patch.size))
+             {
+                 LOG_WARN("XeFG unlock: {} at {:#x} failed write verification, aborting", patch.name, patch.rva);
+@@ -164,23 +183,23 @@ class XeFGUnlock
+                 return false;
+             }
+ 
+-            applied[appliedCount] = { dst, patch.expected, patch.size };
+-            appliedCount++;
+-
+             LOG_INFO("XeFG unlock: {} patched at {:#x} -> {}", patch.name, patch.rva, ToHex(dst, patch.size));
+         }
+ 
+-        _applied = true;
++        // The provider emits every generated frame of a burst back to back above
++        // 2X, which is only reachable now that the multi frame path is unlocked.
++        // If requested pacing cannot be installed, leave the stock MFG gate in
++        // place instead of silently enabling an unpaced high multiplier.
++        if (unlock && Config::Instance()->FGXeFGExtraPacing.value_or_default() && !XeFGPacing::Install(base))
++        {
++            Rollback(applied, appliedCount);
++            return false;
++        }
+ 
++        _applied = true;
+         LOG_INFO("XeFG unlock: {} of {} patches applied ({} skipped), MFG enabled up to {}X", appliedCount, PatchCount,
+                  skipped, maxInterp + 1);
+ 
+-        // The provider emits every generated frame of a burst back to back above
+-        // 2X, which is only reachable now that the multi frame path is unlocked.
+-        // Independent of the patches above, and harmless if it fails.
+-        if (unlock && Config::Instance()->FGXeFGExtraPacing.value_or_default())
+-            XeFGPacing::Install(base);
+-
+         return true;
+     }
+ 
+@@ -250,10 +269,10 @@ class XeFGUnlock
+ 
+     static bool Contains(const IMAGE_SECTION_HEADER* section, uint32_t rva, uint32_t size)
+     {
+-        uint32_t start = section->VirtualAddress;
+-        uint32_t end = start + section->Misc.VirtualSize;
++        const uint64_t start = section->VirtualAddress;
++        const uint64_t end = start + section->Misc.VirtualSize;
+ 
+-        return rva >= start && rva + size <= end;
++        return rva >= start && static_cast<uint64_t>(rva) + size <= end;
+     }
+ 
+     static void WriteRaw(uint8_t* dst, const uint8_t* bytes, uint32_t size)
+@@ -282,10 +301,14 @@ class XeFGUnlock
+             return;
+ 
+         // Undo newest first so the image ends up exactly as the provider shipped it.
++        bool restored = true;
+         for (int32_t i = count - 1; i >= 0; i--)
+-            WriteRaw(applied[i].dst, applied[i].original, applied[i].size);
++            restored = WriteVerified(applied[i].dst, applied[i].original, applied[i].size) && restored;
+ 
+-        LOG_INFO("XeFG unlock: rolled back {} patch(es)", count);
++        if (restored)
++            LOG_INFO("XeFG unlock: rolled back {} patch(es)", count);
++        else
++            LOG_ERROR("XeFG unlock: rollback verification failed; restart the game before using frame generation");
+     }
+ 
+     static std::string ToHex(const uint8_t* bytes, uint32_t size)
+diff --git a/OptiScaler/proxies/XeLLUnLock.h b/OptiScaler/proxies/XeLLUnLock.h
+index 18b9aba..ef7f01d 100644
+--- a/OptiScaler/proxies/XeLLUnLock.h
++++ b/OptiScaler/proxies/XeLLUnLock.h
+@@ -146,6 +146,10 @@ class XeLLUnlock
+                 return false;
+             }
+ 
++            // Include this site in rollback even if a partial write fails verification.
++            applied[appliedCount] = { dst, patch.expected, patch.size };
++            appliedCount++;
++
+             if (!WriteVerified(dst, patch.replacement, patch.size))
+             {
+                 LOG_WARN("XeLL unlock: {} at {:#x} failed write verification, aborting", patch.name, patch.rva);
+@@ -153,9 +157,6 @@ class XeLLUnlock
+                 return false;
+             }
+ 
+-            applied[appliedCount] = { dst, patch.expected, patch.size };
+-            appliedCount++;
+-
+             LOG_INFO("XeLL unlock: {} patched at {:#x} -> {}", patch.name, patch.rva, ToHex(dst, patch.size));
+         }
+ 
+@@ -246,10 +247,10 @@ class XeLLUnlock
+ 
+     static bool Contains(const IMAGE_SECTION_HEADER* section, uint32_t rva, uint32_t size)
+     {
+-        uint32_t start = section->VirtualAddress;
+-        uint32_t end = start + section->Misc.VirtualSize;
++        const uint64_t start = section->VirtualAddress;
++        const uint64_t end = start + section->Misc.VirtualSize;
+ 
+-        return rva >= start && rva + size <= end;
++        return rva >= start && static_cast<uint64_t>(rva) + size <= end;
+     }
+ 
+     static void WriteRaw(uint8_t* dst, const uint8_t* bytes, uint32_t size)
+@@ -278,10 +279,14 @@ class XeLLUnlock
+             return;
+ 
+         // Undo newest first so the image ends up exactly as the provider shipped it.
++        bool restored = true;
+         for (int32_t i = count - 1; i >= 0; i--)
+-            WriteRaw(applied[i].dst, applied[i].original, applied[i].size);
++            restored = WriteVerified(applied[i].dst, applied[i].original, applied[i].size) && restored;
+ 
+-        LOG_INFO("XeLL unlock: rolled back {} patch(es)", count);
++        if (restored)
++            LOG_INFO("XeLL unlock: rolled back {} patch(es)", count);
++        else
++            LOG_ERROR("XeLL unlock: rollback verification failed; restart the game before using frame generation");
+     }
+ 
+     static std::string ToHex(const uint8_t* bytes, uint32_t size)
+diff --git a/OptiScaler/upscalers/IFeature.cpp b/OptiScaler/upscalers/IFeature.cpp
+index 8164ca1..890b1ff 100644
+--- a/OptiScaler/upscalers/IFeature.cpp
++++ b/OptiScaler/upscalers/IFeature.cpp
+@@ -263,7 +263,7 @@ float IFeature::GetSharpness(const NVSDK_NGX_Parameter* InParameters)
+     return sharpness;
+ }
+ 
+-void IFeature::TickFrozenCheck()
++void IFeature::TickFrozenCheck(uint32_t presentPerEval)
+ {
+     static long updatesWithoutFramecountChange = 0;
+ 
+@@ -278,7 +278,7 @@ void IFeature::TickFrozenCheck()
+ 
+         lastFrameCount = _frameCount;
+ 
+-        _featureFrozen = updatesWithoutFramecountChange > 10;
++        _featureFrozen = updatesWithoutFramecountChange > (10 * presentPerEval);
+     }
+ }
+ 
+diff --git a/OptiScaler/upscalers/IFeature.h b/OptiScaler/upscalers/IFeature.h
+index 262a5c1..828ff29 100644
+--- a/OptiScaler/upscalers/IFeature.h
++++ b/OptiScaler/upscalers/IFeature.h
+@@ -123,7 +123,7 @@ class IFeature
+ 
+     virtual size_t JitterCount() { return _jitterInfo.size(); }
+ 
+-    virtual void TickFrozenCheck();
++    virtual void TickFrozenCheck(uint32_t presentPerEval = 1);
+     virtual bool IsFrozen() { return _featureFrozen; };
+     virtual bool UpdateOutputResolution(const NVSDK_NGX_Parameter* InParameters);
+     virtual unsigned int DisplayWidth() { return _displayWidth; };
+diff --git a/OptiScaler/upscalers/IFeature_Dx11wDx12.h b/OptiScaler/upscalers/IFeature_Dx11wDx12.h
+index 61f8b19..044dad1 100644
+--- a/OptiScaler/upscalers/IFeature_Dx11wDx12.h
++++ b/OptiScaler/upscalers/IFeature_Dx11wDx12.h
+@@ -94,10 +94,10 @@ class IFeature_Dx11wDx12 : public virtual IFeature_Dx11
+         return CallFeature([](auto f) { return f->JitterCount(); }, size_t {});
+     }
+ 
+-    void TickFrozenCheck() override
++    void TickFrozenCheck(uint32_t presentPerEval = 1) override
+     {
+         if (auto feature = dx12Feature.get(); feature)
+-            return feature->TickFrozenCheck();
++            return feature->TickFrozenCheck(presentPerEval);
+     };
+ 
+     bool IsFrozen() override
+diff --git a/OptiScaler/upscalers/IFeature_VkwDx12.h b/OptiScaler/upscalers/IFeature_VkwDx12.h
+index 2ed05a8..bb92f13 100644
+--- a/OptiScaler/upscalers/IFeature_VkwDx12.h
++++ b/OptiScaler/upscalers/IFeature_VkwDx12.h
+@@ -158,10 +158,10 @@ class IFeature_VkwDx12 : public virtual IFeature_Vk
+         return CallFeature([](auto f) { return f->JitterCount(); }, size_t {});
+     }
+ 
+-    void TickFrozenCheck() override
++    void TickFrozenCheck(uint32_t presentPerEval = 1) override
+     {
+         if (auto feature = dx12Feature.get(); feature)
+-            return feature->TickFrozenCheck();
++            return feature->TickFrozenCheck(presentPerEval);
+     };
+ 
+     bool IsFrozen() override
+diff --git a/OptiScaler/wrapped/wrapped_swapchain.cpp b/OptiScaler/wrapped/wrapped_swapchain.cpp
+index 597ce8f..72858ff 100644
+--- a/OptiScaler/wrapped/wrapped_swapchain.cpp
++++ b/OptiScaler/wrapped/wrapped_swapchain.cpp
+@@ -482,7 +482,12 @@ static HRESULT LocalPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT
+     {
+         // Tick feature to let it know if it's frozen
+         if (auto currentFeature = State::Instance().currentFeature; currentFeature != nullptr)
+-            currentFeature->TickFrozenCheck();
++        {
++            if (auto currentFg = State::Instance().currentFG; currentFg != nullptr)
++                currentFeature->TickFrozenCheck(currentFg->GetInterpolatedFrameCount());
++            else
++                currentFeature->TickFrozenCheck();
++        }
+ 
+         // Draw overlay
+         MenuOverlayDx::Present(pSwapChain, SyncInterval, Flags, pPresentParameters, pDevice, hWnd, isUWP);

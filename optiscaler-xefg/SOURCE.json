@@ -1,0 +1,91 @@
+{
+  "repository": "https://github.com/Coldwood1026/OptiScalerDp4aUnlock",
+  "commit": "9eea95bba9fda7121f214d2eba358423be598d7e",
+  "patch_sha256": "8132ad4381f7c83d6a837bf7e5a5475d4b0a28e7d4fdec74a514158b8805e80d",
+  "files": {
+    "OptiScaler/Source.def": {
+      "before_sha256": "e4f5f8afe9fef5d69a7f9acb72c166cb4392b0b83fea5e5ab395b73987ee3ecf",
+      "after_sha256": "4843536ecbaabe2b77b02a02ccd0879e5b74e53efbea9eb7090ed918bfe464d5"
+    },
+    "OptiScaler/exports/dxgi.h": {
+      "before_sha256": "b3a214063eefe998e4d642c89c60a9776e3999574d1f079671c4515d91e79bfb",
+      "after_sha256": "9c681bf085d6ca0517d40a7850406f4b87dc7f8a5852d9bfcd5361202986a1d6"
+    },
+    "OptiScaler/framegen/xefg/XeFG_Dx12.cpp": {
+      "before_sha256": "9ea89da71cd336ff85b7b41a7b119cdf4a4c892b7478fb37d618bd5ef3f151e9",
+      "after_sha256": "fda10b8eb46e35f573f8441edca9082f384ba6ca62e238a0cd7ae7d052e68308"
+    },
+    "OptiScaler/menu/input/input_system.cpp": {
+      "before_sha256": "4dc21002f9d5ef6a0996dbf423395661dbcda0a567a446327fdaa50822ef3451",
+      "after_sha256": "ac156a3374bb42ff875ec27d634731dd1d5b5c81dec31648dde71c8b6812b5e7"
+    },
+    "OptiScaler/menu/input/input_system_directinput.cpp": {
+      "before_sha256": "d7ec50553463ef28d344d4b3ed1b37f209ecd50a8af37dc549281c5430fd4623",
+      "after_sha256": "619c7d7e7550b5c3f0f6c341c53a1c75b47a1827642481682f38cc3bb284acc4"
+    },
+    "OptiScaler/menu/input/input_system_gameinput.cpp": {
+      "before_sha256": "fa343124ec1b76a9a652a2b6e99d549170023acd87832abc014e7037b09d28f6",
+      "after_sha256": "2ac46f129bb665586fe0330edc6678ba9160b94262c66b431bddde0366aa73c1"
+    },
+    "OptiScaler/menu/input/input_system_internal.h": {
+      "before_sha256": "37c787b817ef930ac1d499517a625cd49c0ff3cd1d56a1c2a20d3fa39b8418cd",
+      "after_sha256": "8f50a817b6c058f23c01cf1734930c026b1cef0fcd63973d9db62ec462d5d311"
+    },
+    "OptiScaler/menu/input/input_system_xinput.cpp": {
+      "before_sha256": "cf233db23c3860a182522d643ce71a378e0fdb0fe7266b5cb0541298d3f7a6df",
+      "after_sha256": "e2e8f4fce286081bec3bda61c70823322307615bffe6b83c6782be2e8a4cf724"
+    },
+    "OptiScaler/proxies/XeFGPacing.h": {
+      "before_sha256": "453270a4cd3f7944b4f1259f54727f76d5d256c81675b92d1059ab14cc92a507",
+      "after_sha256": "be205dc2602cd37ba97cd41ad1d165c783a3eefeda1aa59f9a5a296845c2c99b"
+    },
+    "OptiScaler/proxies/XeFGUnlock.h": {
+      "before_sha256": "b0ffad609f3a9c1ba85d8c60eba482eb34012ba96f8933dec2f5984f58d545b9",
+      "after_sha256": "96032aa374bc6800317d72cb44ac14b7b803b8ca2e00e800bb55b0d80e5cf762"
+    },
+    "OptiScaler/proxies/XeLLUnLock.h": {
+      "before_sha256": "88dcad868b53a69455d14f82ca3d0938632b34e9297a22973b851f036e25cafd",
+      "after_sha256": "fab080cf89e34472dbc2e50f6afdd3918717b8b6231bf62b29658e69300480bf"
+    },
+    "OptiScaler/upscalers/IFeature.cpp": {
+      "before_sha256": "2a81595bdbe92f77985ce7a274c454d69a2ec6e9e1dd15508b2c7454c9544255",
+      "after_sha256": "802d3189560300c45a8546f1a3e48922a3fb8e3b69aaaa9c86f0e475fcd42b23"
+    },
+    "OptiScaler/upscalers/IFeature.h": {
+      "before_sha256": "5f96652e11abb9603a5f4212c8e845eea6f19aa2c52e7ea5797a326d41bdca10",
+      "after_sha256": "a0136ad7ad243cccd36fdd471434b34af048ce4a3d0573a04fb962d54677f82b"
+    },
+    "OptiScaler/upscalers/IFeature_Dx11wDx12.h": {
+      "before_sha256": "994b88059949a8ca04fcfd7a0ae6b5397c8ca569078f024d7243edbfd31460b2",
+      "after_sha256": "7e8a9ffc161fcb309d9c13a1d2eff19e93e0204150e0018dc5042d87f2db110e"
+    },
+    "OptiScaler/upscalers/IFeature_VkwDx12.h": {
+      "before_sha256": "be56e217557302dfe3dcfc2f8afa2df8a1c1c353fafa4cec8e93b021b6e9f915",
+      "after_sha256": "4fe92a7783aebcc7ca5668a1787b4571b6568591db93c4130ea9c752eb98de1b"
+    },
+    "OptiScaler/wrapped/wrapped_swapchain.cpp": {
+      "before_sha256": "c833fd10d09e3cfdbe0a94d68632f5f00c9fd66e7cb07a7fbd47f11520498473",
+      "after_sha256": "dbcfc71244eddc21a0a5cb2ca485bcfc709234ef2a2b2c20a81c7981f2b58867"
+    }
+  },
+  "upstream_commits": [
+    "42dc02af3718b510c86a815eed8c9793cb6d95ca",
+    "b0dd6b02ce00cd2197493f358b127ec61579ee84",
+    "04bf0b08d0253b02e2820b5c406cef49d704d04d",
+    "d794b18d1046090fd922abea295c2512910cd12a"
+  ],
+  "custom_changes": [
+    "XeFG resource transition restore only after an emitted transition; restore on tagging failure",
+    "Transactional exact-provider MFG unlock and pacing hook rollback"
+  ],
+  "profile": {
+    "fg_output": "XeFG",
+    "interpolation_count": 2,
+    "maximum_interpolated_frames": 5,
+    "maximum_output_multiplier": 6,
+    "upscale_ratio": 1.5,
+    "baseline_amd_upscaler_sha256": "0dd77d9c78d1ef9bc330cf4697ab3ffe24bc1aa7850e4130263dc922107fbd75",
+    "intel_fg_sha256": "ec5e0c65e075570c6ede72618bb666d0be0c2e10b2ea9762c0fe8cb8e375ab27",
+    "intel_xell_sha256": "d2030dcd694fda8f2ec7e044b13e6db8f0b56d4ba9113a5efad334e3f3ded8c7"
+  }
+}
