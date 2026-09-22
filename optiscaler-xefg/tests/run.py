@@ -37,6 +37,10 @@ def main():
     suites = [
         ("XeFG resource state guard: 96 production-code scenarios", here / "barrier/test_resource_guard.py"),
         ("MFG unlock: 11 fault scenarios and real Intel DLL patch sites", here / "unlock/run.py"),
+        ("Game-facing capability initialization and configured maximum", here / "capabilities/run.py"),
+        ("Pacing epochs, fresh estimates and input-time priority", here / "pacing/run.py"),
+        ("History reset handoff and valid runtime motion metadata", here / "history/run.py"),
+        ("FFX input, exposure and copy resource-state guards", here / "exposure/run.py"),
     ]
     report = {"passed": False, "gpu_game_tested": False, "tests": []}
     try:

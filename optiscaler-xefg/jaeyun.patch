@@ -1,3 +1,72 @@
+diff --git a/OptiScaler/Config.cpp b/OptiScaler/Config.cpp
+index ea38b30..2a102df 100644
+--- a/OptiScaler/Config.cpp
++++ b/OptiScaler/Config.cpp
+@@ -1013,9 +1013,9 @@ bool Config::SaveIni()
+         ini.SetValue("XeFG", "IgnoreInitChecks",
+                      GetBoolValue(Instance()->FGXeFGIgnoreInitChecks.value_for_config()).c_str());
+         ini.SetValue("XeFG", "UIComposition", GetBoolValue(Instance()->FGXeFGUIComposition.value_for_config()).c_str());
+-        ini.SetValue("XeFG", "DepthInverted", GetBoolValue(Instance()->FGXeFGDepthInverted.value_for_config()).c_str());
+-        ini.SetValue("XeFG", "JitteredMV", GetBoolValue(Instance()->FGXeFGJitteredMV.value_for_config()).c_str());
+-        ini.SetValue("XeFG", "HighResMV", GetBoolValue(Instance()->FGXeFGHighResMV.value_for_config()).c_str());
++        ini.SetValue("XeFG", "DepthInverted", GetBoolValue(Instance()->FGXeFGDepthInverted.persistent_value()).c_str());
++        ini.SetValue("XeFG", "JitteredMV", GetBoolValue(Instance()->FGXeFGJitteredMV.persistent_value()).c_str());
++        ini.SetValue("XeFG", "HighResMV", GetBoolValue(Instance()->FGXeFGHighResMV.persistent_value()).c_str());
+         ini.SetValue("XeFG", "DebugView", GetBoolValue(Instance()->FGXeFGDebugView.value_for_config()).c_str());
+         ini.SetValue("XeFG", "ForceBorderless",
+                      GetBoolValue(Instance()->FGXeFGForceBorderless.value_for_config()).c_str());
+@@ -1612,9 +1612,9 @@ bool Config::SaveIni()
+ 
+ bool Config::SaveXeFG()
+ {
+-    ini.SetValue("XeFG", "DepthInverted", GetBoolValue(Instance()->FGXeFGDepthInverted.value_for_config()).c_str());
+-    ini.SetValue("XeFG", "JitteredMV", GetBoolValue(Instance()->FGXeFGJitteredMV.value_for_config()).c_str());
+-    ini.SetValue("XeFG", "HighResMV", GetBoolValue(Instance()->FGXeFGHighResMV.value_for_config()).c_str());
++    ini.SetValue("XeFG", "DepthInverted", GetBoolValue(Instance()->FGXeFGDepthInverted.persistent_value()).c_str());
++    ini.SetValue("XeFG", "JitteredMV", GetBoolValue(Instance()->FGXeFGJitteredMV.persistent_value()).c_str());
++    ini.SetValue("XeFG", "HighResMV", GetBoolValue(Instance()->FGXeFGHighResMV.persistent_value()).c_str());
+ 
+     auto pathWStr = absoluteFileName.wstring();
+     LOG_INFO("Trying to save ini to: {0}", wstring_to_string(pathWStr));
+diff --git a/OptiScaler/Config.h b/OptiScaler/Config.h
+index b01e2cf..071b120 100644
+--- a/OptiScaler/Config.h
++++ b/OptiScaler/Config.h
+@@ -46,6 +46,20 @@ template <class T, HasDefaultValue defaultState = WithDefault> class CustomOptio
+         std::optional<T>::operator=(value);
+     }
+ 
++    // Runtime learning must not replace an explicit INI/menu choice, including
++    // a choice equal to the default (which value_for_config may omit).
++    constexpr bool has_persistent_value() const
++    {
++        return _volatile ? _configIni.has_value() : this->has_value();
++    }
++
++    // Some auto-detected settings must preserve even an explicit default across
++    // Save Settings/restart. Volatile observations must never be serialized.
++    constexpr std::optional<T> persistent_value() const
++    {
++        return _volatile ? _configIni : static_cast<const std::optional<T>&>(*this);
++    }
++
+     // Use this when first setting a CustomOptional
+     constexpr void set_from_config(const std::optional<T>& opt)
+     {
+diff --git a/OptiScaler/NVNGX_Parameter.cpp b/OptiScaler/NVNGX_Parameter.cpp
+index 453565e..f23e462 100644
+--- a/OptiScaler/NVNGX_Parameter.cpp
++++ b/OptiScaler/NVNGX_Parameter.cpp
+@@ -817,7 +817,8 @@ void InitNGXParameters(NVSDK_NGX_Parameter* InParams, API api)
+             countMax = Nvngx_FG::getMaxFakeFramesCount();
+         else if (State::Instance().activeFgOutput == FGOutput::XeFG)
+         {
+-            countMax = MaxInterpolationCountForGame(Config::XeFGMaxInterpolations);
++            countMax = MaxInterpolationCountForGame(
++                Config::Instance()->FGXeFGMaxInterpolatedFrames.value_or_default());
+ 
+             // Only on change, this can be called on every NGX parameter query
+             static int lastReported = 0;
 diff --git a/OptiScaler/Source.def b/OptiScaler/Source.def
 index da6f1fe..63cb0c0 100644
 --- a/OptiScaler/Source.def
@@ -35,6 +104,42 @@ index da6f1fe..63cb0c0 100644
  
  EXPORTS
  AppCacheCheckManifest = _AppCacheCheckManifest
+diff --git a/OptiScaler/State.h b/OptiScaler/State.h
+index 0a1b962..9b7f5ed 100644
+--- a/OptiScaler/State.h
++++ b/OptiScaler/State.h
+@@ -569,17 +569,25 @@ class ScopedCreatingD3DDevice
+ // Highest number of interpolated frames the game is told it may ask for. Everything that is not
+ // OptiScaler's own XeFG backend has always been reported as 1, which is what keeps the game's frame
+ // generation setting collapsed to a plain on/off toggle. XeFG knows its own ceiling, so report that and
+-// let the game offer the matching multipliers. While the XeFG swapchain does not exist yet - which is
+-// what happens when the game asks for the capabilities early - the caller supplied value is used.
+-inline int MaxInterpolationCountForGame(int fallback)
++// let the game offer the matching multipliers. The caller supplies the configured
++// initialization limit, not the hard implementation ceiling. An allocated FG
++// object can still have its placeholder maximum of one before initialization.
++inline int MaxInterpolationCountForGame(int configuredLimit)
+ {
+     const auto& state = State::Instance();
+ 
+     if (state.activeFgOutput != FGOutput::XeFG)
+         return 1;
+ 
+-    if (state.currentFG != nullptr)
+-        return state.currentFG->GetMaxInterpolationCount();
++    const int limit = configuredLimit > 0 ? configuredLimit : 1;
+ 
+-    return fallback;
++    if (state.currentFG != nullptr && state.currentFG->FrameGenerationContext() != nullptr)
++    {
++        const int providerLimit = state.currentFG->GetMaxInterpolationCount();
++        if (providerLimit > 0)
++            return providerLimit < limit ? providerLimit : limit;
++        return 1;
++    }
++
++    return limit;
+ }
 diff --git a/OptiScaler/exports/dxgi.h b/OptiScaler/exports/dxgi.h
 index f02210c..b61659e 100644
 --- a/OptiScaler/exports/dxgi.h
@@ -357,11 +462,262 @@ index f02210c..b61659e 100644
 +
 +    return dxgi.UpdateHMDEmulationStatus(p1);
  }
+diff --git a/OptiScaler/framegen/IFGFeature.cpp b/OptiScaler/framegen/IFGFeature.cpp
+index 3cb12cf..0685c61 100644
+--- a/OptiScaler/framegen/IFGFeature.cpp
++++ b/OptiScaler/framegen/IFGFeature.cpp
+@@ -193,6 +193,9 @@ void IFGFeature::SetFrameCount(UINT64 frameId)
+     //    LOG_TRACE("Prevented setting frame count! Old: {}, New: {}", _frameCount, frameId);
+     //}
+ 
++    if (frameId < _frameCount)
++        _historyReset.RebasePending(frameId);
++
+     _frameCount = frameId;
+ }
+ 
+@@ -255,6 +258,15 @@ void IFGFeature::SetReset(UINT reset, int index)
+     _reset[index] = reset;
+ }
+ 
++void IFGFeature::RequestHistoryReset() { _historyReset.Request(_frameCount); }
++
++UINT64 IFGFeature::PendingHistoryResetToken(UINT64 dispatchFrame) const
++{
++    return _historyReset.PendingToken(dispatchFrame);
++}
++
++void IFGFeature::AcknowledgeHistoryReset(UINT64 token) { _historyReset.Acknowledge(token); }
++
+ void IFGFeature::SetInterpolationRect(UINT64 width, UINT height, int index)
+ {
+     if (index < 0)
+diff --git a/OptiScaler/framegen/IFGFeature.h b/OptiScaler/framegen/IFGFeature.h
+index 1a64bab..e74391f 100644
+--- a/OptiScaler/framegen/IFGFeature.h
++++ b/OptiScaler/framegen/IFGFeature.h
+@@ -3,6 +3,7 @@
+ #include <OwnedMutex.h>
+ #include <dxgi1_6.h>
+ #include <flag-set-cpp/flag_set.hpp>
++#include "IFGFeature_Reset.h"
+ 
+ enum class FG_Flags : uint64_t
+ {
+@@ -66,6 +67,7 @@ class IFGFeature
+     std::optional<UINT> _interpolationLeft[BUFFER_COUNT];
+     std::optional<UINT> _interpolationTop[BUFFER_COUNT];
+     UINT _reset[BUFFER_COUNT] = {};
++    FGHistoryResetLatch _historyReset;
+ 
+     UINT64 _frameCount = 0;
+     UINT64 _lastDispatchedFrame = 0;
+@@ -142,6 +144,9 @@ class IFGFeature
+                        int index = -1);
+     void SetFrameTimeDelta(double delta, int index = -1);
+     void SetReset(UINT reset, int index = -1);
++    void RequestHistoryReset();
++    UINT64 PendingHistoryResetToken(UINT64 dispatchFrame) const;
++    void AcknowledgeHistoryReset(UINT64 token);
+     void SetInterpolationRect(UINT64 width, UINT height, int index = -1);
+     void GetInterpolationRect(UINT64& width, UINT& height, int index = -1);
+     void SetInterpolationPos(UINT left, UINT top, int index = -1);
+diff --git a/OptiScaler/framegen/IFGFeature_Reset.h b/OptiScaler/framegen/IFGFeature_Reset.h
+new file mode 100644
+index 0000000..8bee2d9
+--- /dev/null
++++ b/OptiScaler/framegen/IFGFeature_Reset.h
+@@ -0,0 +1,61 @@
++#pragma once
++
++#include <atomic>
++#include <cstdint>
++#include <mutex>
++
++// A reset survives paused frames and failed dispatches. Only the dispatch that
++// observed a request may acknowledge it; a newer request must remain pending.
++class FGHistoryResetLatch
++{
++    std::atomic<bool> _pending { false };
++    mutable std::mutex _mutex;
++    uint64_t _generation = 0;
++    uint64_t _requestFrame = 0;
++
++  public:
++    void Request(uint64_t frame)
++    {
++        std::lock_guard lock(_mutex);
++        ++_generation;
++        _requestFrame = frame;
++        _pending.store(true, std::memory_order_release);
++    }
++
++    uint64_t PendingToken(uint64_t dispatchFrame) const
++    {
++        if (!_pending.load(std::memory_order_acquire))
++            return 0;
++
++        std::lock_guard lock(_mutex);
++        if (!_pending.load(std::memory_order_relaxed) || dispatchFrame < _requestFrame)
++            return 0;
++
++        return _generation;
++    }
++
++    void RebasePending(uint64_t frame)
++    {
++        if (!_pending.load(std::memory_order_acquire))
++            return;
++
++        std::lock_guard lock(_mutex);
++        if (_pending.load(std::memory_order_relaxed) && _requestFrame > frame)
++        {
++            // Incoming frame IDs can restart. Preserve an existing request in
++            // the new frame domain without letting an old dispatch clear it.
++            ++_generation;
++            _requestFrame = frame;
++        }
++    }
++
++    void Acknowledge(uint64_t token)
++    {
++        if (token == 0)
++            return;
++
++        std::lock_guard lock(_mutex);
++        if (token == _generation)
++            _pending.store(false, std::memory_order_release);
++    }
++};
 diff --git a/OptiScaler/framegen/xefg/XeFG_Dx12.cpp b/OptiScaler/framegen/xefg/XeFG_Dx12.cpp
-index 1dbb383..5635d4c 100644
+index 1dbb383..0781783 100644
 --- a/OptiScaler/framegen/xefg/XeFG_Dx12.cpp
 +++ b/OptiScaler/framegen/xefg/XeFG_Dx12.cpp
-@@ -1646,6 +1646,7 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -73,6 +73,8 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
+         }
+ 
+         LOG_INFO("XeFG context created");
++        XeFGPacing::RequestReset();
++        RequestHistoryReset();
+         result = XeFGProxy::SetLoggingCallback()(_swapChainContext, XEFG_SWAPCHAIN_LOGGING_LEVEL_DEBUG, xefgLogCallback,
+                                                  nullptr);
+ 
+@@ -182,6 +184,8 @@ bool XeFG_Dx12::DestroySwapchainContext()
+ 
+     if (_swapChainContext != nullptr && !State::Instance().isShuttingDown)
+     {
++        XeFGPacing::RequestReset();
++        RequestHistoryReset();
+         auto context = _swapChainContext;
+         _swapChainContext = nullptr;
+ 
+@@ -664,6 +668,8 @@ void XeFG_Dx12::Activate()
+         (IsLowResMV() || nativeAA || (State::Instance().gameQuirks & GameQuirk::ForceFGRenderSizeMVs) ||
+          Config::Instance()->FGXeFGIgnoreInitChecks.value_or_default()))
+     {
++        XeFGPacing::RequestReset();
++        RequestHistoryReset();
+         auto result = XeFGProxy::SetEnabled()(_swapChainContext, true);
+ 
+         if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
+@@ -682,6 +688,8 @@ void XeFG_Dx12::Deactivate()
+ 
+     if (_isActive)
+     {
++        XeFGPacing::RequestReset();
++        RequestHistoryReset();
+         auto fIndex = GetIndex();
+         if (_uiCommandListResetted[fIndex])
+         {
+@@ -819,21 +827,24 @@ bool XeFG_Dx12::Dispatch()
+         {
+             LOG_INFO("Interpolation count changed {} -> {}", _framesToInterpolate, targetCount);
+ 
+-            state.WAR_xefgRequestFGToggle = true;
+-
+ #ifndef DONT_USE_XMX
+             ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
+ #endif // !DONT_USE_XMX
+ 
+             auto intResult = XeFGProxy::SetNumInterpolatedFrames()(_swapChainContext, targetCount);
+ 
+-            _framesToInterpolate = targetCount;
+-
+             if (intResult != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+             {
+                 LOG_ERROR("SetNumInterpolatedFrames error: {} ({})", magic_enum::enum_name(intResult),
+                           (UINT) intResult);
+             }
++            else
++            {
++                _framesToInterpolate = targetCount;
++                state.WAR_xefgRequestFGToggle = true;
++                XeFGPacing::RequestReset();
++                RequestHistoryReset();
++            }
+         }
+     }
+ 
+@@ -956,37 +967,19 @@ bool XeFG_Dx12::Dispatch()
+     constData.motionVectorScaleX = _mvScaleX[fIndex];
+     constData.motionVectorScaleY = _mvScaleY[fIndex];
+ 
++    const auto historyResetToken = PendingHistoryResetToken(willDispatchFrame);
+     if (!Config::Instance()->FGSkipReset.value_or_default())
+-        constData.resetHistory = _reset[fIndex];
++        constData.resetHistory = _reset[fIndex] || historyResetToken != 0;
+     else
+         constData.resetHistory = false;
+ 
+-    // xefg_swapchain.h documents frameRenderTime as "time that was required to
+-    // render current frame in milliseconds", and the provider drives its generated
+-    // frame pacing with it.
+-    //
+-    // The value that should never be used for it is state.lastFGFrameTime, the
+-    // present to present delta (see FG_Hooks.cpp). It brackets the whole of the
+-    // previous present, the pacing included, so above 2X - where the provider
+-    // really does space the generated frames - it is self-referential: the frames
+-    // are asked to fill a period that only exists because they were asked to fill
+-    // it, and the real frame period settles at renderTime * (count + 1) rather
+-    // than coming down towards the time the game actually spends rendering. That
+-    // is where the input latency came from. XeFGPacing measures its own blocking,
+-    // so it can hand over the period with that taken back out.
+-    //
+-    // _ftDelta used to be tried first, on the understanding that nothing fills it
+-    // on this backend. Something does: Upscaler_Inputs_Dx12.cpp sets it to
+-    // State::Instance().lastFGFrameTime, so it is not a second source at all -
+-    // it is the same self-referential number under another name. Tried first, it
+-    // always won, RenderTimeMs() was never reached, and the report showed it:
+-    // `fed` came out equal to `real frame` on every line while `render-est` sat
+-    // far below both. Asking the pacing first is the whole fix; _ftDelta stays as
+-    // the fallback for any path that fills it with something else.
+-    auto frameRenderTime = XeFGPacing::RenderTimeMs();
++    // Preserve the input's frame time when available. The pacing estimate
++    // subtracts only part of the provider's waits and is a fallback, not a
++    // replacement for the input's timing. Lifecycle resets invalidate it.
++    auto frameRenderTime = _ftDelta[fIndex];
+ 
+     if (!(frameRenderTime > 0.0))
+-        frameRenderTime = _ftDelta[fIndex];
++        frameRenderTime = XeFGPacing::RenderTimeMs();
+ 
+     if (!(frameRenderTime > 0.0))
+         frameRenderTime = state.lastFGFrameTime;
+@@ -1087,9 +1080,13 @@ bool XeFG_Dx12::Dispatch()
+             state.fgChanged = true;
+             UpdateTarget();
+             Deactivate();
++            return false;
+         }
+     }
+ 
++    if (constData.resetHistory)
++        AcknowledgeHistoryReset(historyResetToken);
++
+     LOG_DEBUG("Result: Ok");
+ 
+     return true;
+@@ -1646,6 +1643,7 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
          }
  
          xefg_swapchain_d3d12_resource_data_t resourceParam = GetResourceData(type, fIndex);
@@ -369,7 +725,7 @@ index 1dbb383..5635d4c 100644
  
          // SDK version 2.1.1 fixes those issues
          if (version < feature_version { 1, 2, 2 })
-@@ -1661,8 +1662,15 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1661,8 +1659,15 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
              // https://github.com/intel/xess/issues/47
              if (inputResource->state == D3D12_RESOURCE_STATE_COPY_SOURCE)
              {
@@ -385,7 +741,7 @@ index 1dbb383..5635d4c 100644
  
                  resourceParam.incomingState = D3D12_RESOURCE_STATE_COPY_DEST;
              }
-@@ -1672,33 +1680,35 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1672,33 +1677,35 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
          if (indexDiff < 0)
              indexDiff += BUFFER_COUNT;
  
@@ -434,6 +790,138 @@ index 1dbb383..5635d4c 100644
          SetResourceReady(type, fIndex);
      }
  
+diff --git a/OptiScaler/hooks/Streamline_Hooks.cpp b/OptiScaler/hooks/Streamline_Hooks.cpp
+index 52b9868..a35c15f 100644
+--- a/OptiScaler/hooks/Streamline_Hooks.cpp
++++ b/OptiScaler/hooks/Streamline_Hooks.cpp
+@@ -309,7 +309,8 @@ sl::Result StreamlineHooks::hkslGetFeatureVersion(sl::Feature feature, sl::Featu
+ // Same answer as the shared helper, logged once per change so the log shows what the game was told
+ static uint32_t GameFacingInterpolationCountMax()
+ {
+-    const uint32_t maxCount = (uint32_t) MaxInterpolationCountForGame(Config::XeFGMaxInterpolations);
++    const uint32_t maxCount = (uint32_t) MaxInterpolationCountForGame(
++        Config::Instance()->FGXeFGMaxInterpolatedFrames.value_or_default());
+ 
+     // Only on change, this is called whenever the game asks about the FG state
+     static uint32_t lastReported = 0;
+diff --git a/OptiScaler/inputs/FG/Streamline_Inputs_Dx12.cpp b/OptiScaler/inputs/FG/Streamline_Inputs_Dx12.cpp
+index 1015c6e..d03ab02 100644
+--- a/OptiScaler/inputs/FG/Streamline_Inputs_Dx12.cpp
++++ b/OptiScaler/inputs/FG/Streamline_Inputs_Dx12.cpp
+@@ -4,6 +4,22 @@
+ #include <resource_tracking/ResTrack_dx12.h>
+ #include <magic_enum.hpp>
+ 
++namespace
++{
++bool ApplyStreamlineAutoFlag(CustomOptional<bool>& option, sl::Boolean value, bool currentFrame)
++{
++    // eInvalid is neither false nor true. Preserve the user's explicit setting
++    // or the last valid runtime value, and never persist inferred metadata.
++    if (currentFrame && !option.has_persistent_value() &&
++        (value == sl::Boolean::eTrue || value == sl::Boolean::eFalse))
++    {
++        option.set_volatile_value(value == sl::Boolean::eTrue);
++    }
++
++    return option.value_or_default();
++}
++} // namespace
++
+ void Sl_Inputs_Dx12::CheckForFrame(IFGFeature_Dx12* fg, uint32_t frameId)
+ {
+     std::scoped_lock lock(_frameBoundaryMutex);
+@@ -51,6 +67,12 @@ int Sl_Inputs_Dx12::IndexForFrameId(uint32_t frameId) const
+     return -1;
+ }
+ 
++bool Sl_Inputs_Dx12::IsCurrentConstantsFrame(uint32_t frameId)
++{
++    std::scoped_lock lock(_frameBoundaryMutex);
++    return frameId == 0 || frameId == _currentFrameId;
++}
++
+ bool Sl_Inputs_Dx12::setConstants(const sl::Constants& values, uint32_t frameId)
+ {
+     auto fgOutput = State::Instance().currentFG;
+@@ -84,6 +106,28 @@ bool Sl_Inputs_Dx12::setConstants(const sl::Constants& values, uint32_t frameId)
+     if (dataFound)
+     {
+         auto config = Config::Instance();
++        const bool currentConstantsFrame = IsCurrentConstantsFrame(frameId);
++
++        // The application may send a one-frame camera-cut reset while FG is
++        // paused. Keep it until a successful XeFG dispatch acknowledges it.
++        if (currentConstantsFrame && data.reset == sl::Boolean::eTrue)
++            fgOutput->RequestHistoryReset();
++
++        bool depthInverted = data.depthInverted == sl::Boolean::eTrue;
++        bool jitteredMV = data.motionVectorsJittered == sl::Boolean::eTrue;
++        bool highResMV = data.motionVectorsDilated == sl::Boolean::eTrue;
++
++        if (State::Instance().activeFgOutput == FGOutput::XeFG)
++        {
++            depthInverted = ApplyStreamlineAutoFlag(config->FGXeFGDepthInverted, data.depthInverted,
++                                                   currentConstantsFrame);
++            jitteredMV = ApplyStreamlineAutoFlag(config->FGXeFGJitteredMV, data.motionVectorsJittered,
++                                                currentConstantsFrame);
++            highResMV = ApplyStreamlineAutoFlag(config->FGXeFGHighResMV, data.motionVectorsDilated,
++                                               currentConstantsFrame);
++            // Use the same depth convention when reconstructing camera planes.
++            data.depthInverted = depthInverted ? sl::Boolean::eTrue : sl::Boolean::eFalse;
++        }
+ 
+         // FG Evaluate part
+         FG_Constants fgConstants {};
+@@ -97,13 +141,13 @@ bool Sl_Inputs_Dx12::setConstants(const sl::Constants& values, uint32_t frameId)
+         // if ()
+         //     fgConstants.flags |= FG_Flags::Hdr;
+ 
+-        if (data.depthInverted)
++        if (depthInverted)
+             fgConstants.flags |= FG_Flags::InvertedDepth;
+ 
+-        if (data.motionVectorsJittered)
++        if (jitteredMV)
+             fgConstants.flags |= FG_Flags::JitteredMVs;
+ 
+-        if (data.motionVectorsDilated)
++        if (highResMV)
+             fgConstants.flags |= FG_Flags::DisplayResolutionMVs;
+ 
+         if (config->FGAsync.value_or_default())
+@@ -112,19 +156,6 @@ bool Sl_Inputs_Dx12::setConstants(const sl::Constants& values, uint32_t frameId)
+         if (infiniteDepth)
+             fgConstants.flags |= FG_Flags::InfiniteDepth;
+ 
+-        if (config->FGXeFGDepthInverted.value_or_default() != (data.depthInverted == sl::Boolean::eTrue) ||
+-            config->FGXeFGJitteredMV.value_or_default() != (data.motionVectorsJittered == sl::Boolean::eTrue) ||
+-            config->FGXeFGHighResMV.value_or_default() != (data.motionVectorsDilated == sl::Boolean::eTrue))
+-        {
+-            config->FGXeFGDepthInverted = (data.depthInverted == sl::Boolean::eTrue);
+-            config->FGXeFGJitteredMV = (data.motionVectorsJittered == sl::Boolean::eTrue);
+-            config->FGXeFGHighResMV = (data.motionVectorsDilated == sl::Boolean::eTrue);
+-            LOG_DEBUG("XeFG DepthInverted: {}", config->FGXeFGDepthInverted.value_or_default());
+-            LOG_DEBUG("XeFG JitteredMV: {}", config->FGXeFGJitteredMV.value_or_default());
+-            LOG_DEBUG("XeFG HighResMV: {}", config->FGXeFGHighResMV.value_or_default());
+-            config->SaveXeFG();
+-        }
+-
+         fgOutput->EvaluateState(State::Instance().currentD3D12Device, fgConstants);
+ 
+         if (!config->FGEnabled.value_or_default())
+diff --git a/OptiScaler/inputs/FG/Streamline_Inputs_Dx12.h b/OptiScaler/inputs/FG/Streamline_Inputs_Dx12.h
+index 2f669ea..aa3c262 100644
+--- a/OptiScaler/inputs/FG/Streamline_Inputs_Dx12.h
++++ b/OptiScaler/inputs/FG/Streamline_Inputs_Dx12.h
+@@ -22,6 +22,7 @@ class Sl_Inputs_Dx12
+ 
+     void CheckForFrame(IFGFeature_Dx12* fg, uint32_t frameId);
+     int IndexForFrameId(uint32_t frameId) const;
++    bool IsCurrentConstantsFrame(uint32_t frameId);
+ 
+   public:
+     bool setConstants(const sl::Constants& constants, uint32_t frameId);
 diff --git a/OptiScaler/menu/input/input_system.cpp b/OptiScaler/menu/input/input_system.cpp
 index ab0bc50..891f9fa 100644
 --- a/OptiScaler/menu/input/input_system.cpp
@@ -1064,10 +1552,183 @@ index 44369f1..2b9778c 100644
      if (result != NO_ERROR)
      {
 diff --git a/OptiScaler/proxies/XeFGPacing.h b/OptiScaler/proxies/XeFGPacing.h
-index 1a2761e..f5acbeb 100644
+index 1a2761e..3c08693 100644
 --- a/OptiScaler/proxies/XeFGPacing.h
 +++ b/OptiScaler/proxies/XeFGPacing.h
-@@ -807,6 +807,10 @@ inline void* TsDetour(void* a1, int64_t* out, void* lookup, void* timing, uint32
+@@ -56,6 +56,7 @@
+ // then removed, see 08-PACING.md §7.7 for the measurements that killed it.
+ 
+ #include <intrin.h>
++#include <atomic>
+ #include "SysUtils.h"
+ #include "Logger.h"
+ #include "Config.h"
+@@ -299,13 +300,22 @@ inline int64_t g_lastMultiplier = 0;
+ // Blocking the current burst has cost so far, and what is left of the period
+ // once that is taken back out of it. See RenderTimeMs.
+ inline int64_t g_burstBlockQpc = 0;
+-inline int64_t g_renderTimeNs = 0;
++inline std::atomic<int64_t> g_renderTimeNs { 0 };
++
++// Lifecycle calls run on the game's thread; measurements belong to the
++// provider's present thread. A request invalidates the published estimate
++// immediately, but only a provider callback may clear the working state.
++inline std::atomic<uint64_t> g_requestedEpoch { 0 };
++inline std::atomic<uint64_t> g_publishedEpoch { 0 };
++inline uint64_t g_measurementEpoch = 0;
++
++inline void RequestReset() { g_requestedEpoch.fetch_add(1, std::memory_order_acq_rel); }
+ 
+ // What the provider was handed as `frameRenderTime`, in milliseconds.
+ // XeFG_Dx12.cpp is the only caller. Recorded rather than returned because the
+ // pacing report is where it needs to be visible, next to the period it came
+ // out of - that pairing is the entire point of the change.
+-inline double g_fedFrameTimeMs = 0.0;
++inline std::atomic<double> g_fedFrameTimeMs { 0.0 };
+ 
+ constexpr int32_t SchedLogLimit = 12;
+ 
+@@ -371,6 +381,48 @@ inline void ResetStats(int64_t nowQpc)
+     g_statsDeadline = nowQpc + QpcFromNs(StatsWindowNs);
+ }
+ 
++// Called only before hooks become reachable, or by the provider's present
++// callbacks. Do not call this from Activate/Deactivate or the game's thread.
++inline void ResetMeasurements(uint64_t epoch)
++{
++    g_lastBurstQpc = 0;
++    g_periodNs = 0;
++    g_intervalQpc = 0;
++    g_targetQpc = 0;
++    g_sampleCount = 0;
++    g_samplePos = 0;
++    g_pacedFrames = 0;
++    g_pacedBursts = 0;
++    g_loggedFirstBurst = false;
++    g_lastPacedQpc = 0;
++    g_schedLogged = 0;
++    g_schedLastIndex = ~0ull;
++    g_schedCalls = 0;
++    g_schedRefused = 0;
++    g_schedWaitQpc = 0;
++    g_lastMultiplier = 0;
++    g_burstBlockQpc = 0;
++    g_renderTimeNs.store(0, std::memory_order_relaxed);
++    g_ring = nullptr;
++    g_nextDeadlineNs = 0;
++    g_burstStepNs = 0;
++    g_lastTsIndex = 0;
++    g_lastTsCountPlus1 = 0;
++    g_tsCalls = 0;
++    g_tsRebased = 0;
++    g_tsClamped = 0;
++    ResetStats(0);
++    g_measurementEpoch = epoch;
++    g_publishedEpoch.store(epoch, std::memory_order_release);
++}
++
++inline void ConsumeResetRequest()
++{
++    const auto requested = g_requestedEpoch.load(std::memory_order_acquire);
++    if (requested != g_measurementEpoch)
++        ResetMeasurements(requested);
++}
++
+ // The burst's spacing only exists on screen if the frames actually arrive
+ // apart, so report what was measured rather than what was intended. One line
+ // every few seconds: if `avg` tracks `target` and max stays near it, the
+@@ -403,7 +455,8 @@ inline void ReportStats(int64_t multiplier)
+              multiplier, g_periodNs / 1000000.0, g_periodNs > 0 ? 1e9 / g_periodNs : 0.0, MsFromQpc(g_intervalQpc),
+              MsFromQpc(g_gapSumQpc / g_gapCount), MsFromQpc(g_gapMinQpc), MsFromQpc(g_gapMaxQpc), g_gapCount,
+              g_schedCalls, g_schedRefused, g_schedCalls > 0 ? MsFromQpc(g_schedWaitQpc / g_schedCalls) : 0.0, g_tsCalls,
+-             g_tsRebased, g_tsClamped, g_renderTimeNs / 1000000.0, g_fedFrameTimeMs);
++             g_tsRebased, g_tsClamped, g_renderTimeNs.load(std::memory_order_relaxed) / 1000000.0,
++             g_fedFrameTimeMs.load(std::memory_order_relaxed));
+ }
+ 
+ // What the frames actually did, as opposed to what the pacing asked them to
+@@ -481,28 +534,16 @@ inline void NoteFrame(uint64_t index, uint64_t count, int64_t nowQpc)
+     if (g_lastBurstQpc != 0)
+         PushPeriod(NsFromQpc(nowQpc - g_lastBurstQpc));
+ 
+-    // The period just measured is taken at the present, so it contains the
+-    // blocking the pacing itself did. Handing that back to the provider is
+-    // what locks the real frame rate: it is asked to fill a period that only
+-    // exists because it was asked to fill it, and the fixed point is
+-    //
+-    //     period = renderTime + period * count / (count + 1)
+-    //
+-    // so the higher the multiplier, the longer the "real" frame gets. Taking
+-    // the block back out leaves the part of the frame the game actually got
+-    // to spend rendering - the quantity the provider means by
+-    // `frameRenderTime` and sizes the generated interval from.
+-    //
+-    // It is an upper bound on that quantity, not an equality: the provider's
+-    // own wait on the burst's last frame happens inside this window too and
+-    // is not measured here. Under-reporting would be the dangerous direction
+-    // (it would ask for a burst shorter than the frames can be produced in),
+-    // over-reporting only leaves some of the lock in place.
++    // Retain the donor's estimate as a fallback when input timing is absent.
++    // This is not a GPU render-time measurement: the median covers recent
++    // bursts while blockNs covers only the last burst's scheduler calls.
++    // Wall-clock waits and the provider's last-frame wait are not subtracted.
+     if (g_periodNs > 0)
+     {
+         const int64_t blockNs = NsFromQpc(g_burstBlockQpc);
+ 
+-        g_renderTimeNs = g_periodNs > blockNs ? g_periodNs - blockNs : 0;
++        g_renderTimeNs.store(g_periodNs > blockNs ? g_periodNs - blockNs : 0, std::memory_order_relaxed);
++        g_publishedEpoch.store(g_measurementEpoch, std::memory_order_release);
+     }
+ 
+     g_burstBlockQpc = 0;
+@@ -513,12 +554,23 @@ inline void NoteFrame(uint64_t index, uint64_t count, int64_t nowQpc)
+         g_intervalQpc = QpcFromNs(g_periodNs / (static_cast<int64_t>(count) + 1));
+ }
+ 
+-// Milliseconds of frame the game actually got to render, i.e. the measured
+-// period with this burst's blocking taken back out. Zero until a burst has
+-// been measured, which is the caller's signal to keep its own fallback.
+-inline double RenderTimeMs() { return g_renderTimeNs > 0 ? g_renderTimeNs / 1000000.0 : 0.0; }
++// Estimated milliseconds after subtracting the measured scheduler blocking.
++// Return zero until a new epoch has usable timing, so lifecycle transitions
++// cannot feed a stale estimate back to the provider.
++inline double RenderTimeMs()
++{
++    const auto requested = g_requestedEpoch.load(std::memory_order_acquire);
++    if (g_publishedEpoch.load(std::memory_order_acquire) != requested)
++        return 0.0;
++
++    const auto ns = g_renderTimeNs.load(std::memory_order_relaxed);
++    if (g_requestedEpoch.load(std::memory_order_acquire) != requested)
++        return 0.0;
++
++    return ns > 0 ? ns / 1000000.0 : 0.0;
++}
+ 
+-inline void NoteFedFrameTime(double ms) { g_fedFrameTimeMs = ms; }
++inline void NoteFedFrameTime(double ms) { g_fedFrameTimeMs.store(ms, std::memory_order_relaxed); }
+ 
+ // The provider runs this on the swapchain present thread, so the wait has to
+ // be cheap and must not overshoot by much. Sleep(1) is deliberately avoided:
+@@ -772,6 +824,7 @@ inline int64_t Detour(void* ctx, uint32_t a2, uint32_t a3, uint64_t a4, void* ar
+ {
+     if (g_enabled)
+     {
++        ConsumeResetRequest();
+         auto* caller = reinterpret_cast<uint8_t*>(_ReturnAddress());
+ 
+         if (caller == g_base + PacedCallerRva)
+@@ -787,6 +840,8 @@ inline int64_t Detour(void* ctx, uint32_t a2, uint32_t a3, uint64_t a4, void* ar
+ // this thunk, so it has to keep working. Nothing to add: go on through.
+ inline bool SchedForwarder(void* ctx, void* burst, uint8_t gate, void* timing, uint32_t index)
+ {
++    if (g_enabled)
++        ConsumeResetRequest();
+     return g_schedNative != nullptr && g_schedNative(ctx, burst, gate, timing, index);
+ }
+ 
+@@ -807,11 +862,21 @@ inline void* TsDetour(void* a1, int64_t* out, void* lookup, void* timing, uint32
  {
      void* const result = g_tsNative(a1, out, lookup, timing, index, countPlus1);
  
@@ -1078,7 +1739,18 @@ index 1a2761e..f5acbeb 100644
      // index 0 is the real frame and never reaches the provider's tail; the
      // provider caps the multiplier at 6X, so index 5 is the ceiling.
      if (out == nullptr || timing == nullptr || index == 0 || index > 5 || countPlus1 < 2)
-@@ -910,6 +914,8 @@ inline bool HookThunk(uint8_t* base, uint32_t rva, uint32_t targetRva, const uin
+         return result;
+ 
++    // A lifecycle reset can arrive between generated frames. Let the
++    // provider finish that partial burst; only index 1 supplies a fresh
++    // anchor for our deadline sequence.
++    if (g_lastTsIndex == 0 && index != 1)
++        return result;
++
+     const int64_t median = *reinterpret_cast<const int64_t*>(reinterpret_cast<const uint8_t*>(timing) + 8);
+     const int64_t unit = median / static_cast<int64_t>(countPlus1);
+ 
+@@ -910,6 +975,8 @@ inline bool HookThunk(uint8_t* base, uint32_t rva, uint32_t targetRva, const uin
      if (!WriteVerified(thunk, replacement, PresentThunkSize))
      {
          LOG_WARN("XeFG pacing: failed to write the thunk at {:#x}", rva);
@@ -1087,7 +1759,7 @@ index 1a2761e..f5acbeb 100644
          return false;
      }
  
-@@ -935,6 +941,16 @@ inline bool Install(uint8_t* base)
+@@ -935,6 +1002,16 @@ inline bool Install(uint8_t* base)
          return false;
      }
  
@@ -1104,7 +1776,39 @@ index 1a2761e..f5acbeb 100644
      QueryPerformanceFrequency(&g_freq);
  
      if (g_freq.QuadPart <= 0)
-@@ -975,21 +991,33 @@ inline bool Install(uint8_t* base)
+@@ -944,52 +1021,37 @@ inline bool Install(uint8_t* base)
+     }
+ 
+     g_base = base;
+-    g_lastBurstQpc = 0;
+-    g_periodNs = 0;
+-    g_intervalQpc = 0;
+-    g_targetQpc = 0;
+-    g_sampleCount = 0;
+-    g_samplePos = 0;
+-    g_pacedFrames = 0;
+-    g_pacedBursts = 0;
+-    g_loggedFirstBurst = false;
+-    g_lastPacedQpc = 0;
+-    g_schedLogged = 0;
+-    g_schedLastIndex = ~0ull;
+-    g_schedCalls = 0;
+-    g_schedRefused = 0;
+-    g_schedWaitQpc = 0;
+-    g_lastMultiplier = 0;
+-    g_burstBlockQpc = 0;
+-    g_renderTimeNs = 0;
+-    g_fedFrameTimeMs = 0.0;
+-    g_ring = nullptr;
+-    g_nextDeadlineNs = 0;
+-    g_burstStepNs = 0;
+-    g_lastTsIndex = 0;
+-    g_lastTsCountPlus1 = 0;
+-    g_tsCalls = 0;
+-    g_tsRebased = 0;
+-    g_tsClamped = 0;
+-    ResetStats(0);
++    ResetMeasurements(g_requestedEpoch.load(std::memory_order_acquire));
  
      void* native = nullptr;
  
@@ -1147,7 +1851,7 @@ index 1a2761e..f5acbeb 100644
      //
      // The native pointer is set from the RVA before the thunk is written,
      // so that the forwarder can never observe the thunk live and the
-@@ -1002,20 +1030,26 @@ inline bool Install(uint8_t* base)
+@@ -1002,20 +1064,26 @@ inline bool Install(uint8_t* base)
                   SchedThunkRva);
      else
      {
@@ -1417,6 +2121,272 @@ index 2ed05a8..bb92f13 100644
      };
  
      bool IsFrozen() override
+diff --git a/OptiScaler/upscalers/ffx/FFXFeature_Dx12.cpp b/OptiScaler/upscalers/ffx/FFXFeature_Dx12.cpp
+index fa3ab36..9dda3cc 100644
+--- a/OptiScaler/upscalers/ffx/FFXFeature_Dx12.cpp
++++ b/OptiScaler/upscalers/ffx/FFXFeature_Dx12.cpp
+@@ -4,9 +4,25 @@
+ #include <proxies/FfxApi_Proxy.h>
+ #include "FFXFeature_Dx12.h"
+ #include "MathUtils.h"
++#include <cmath>
+ 
+ using namespace OptiMath;
+ 
++// A failed NGX Get is not required to write its output. Never let a failed
++// typed/void lookup turn an absent per-frame input into a stale pointer.
++static ID3D12Resource* ReadFfxResource(NVSDK_NGX_Parameter* parameters, const char* name)
++{
++    ID3D12Resource* resource = nullptr;
++    if (parameters->Get(name, &resource) == NVSDK_NGX_Result_Success)
++        return resource;
++
++    resource = nullptr;
++    if (parameters->Get(name, reinterpret_cast<void**>(&resource)) != NVSDK_NGX_Result_Success)
++        return nullptr;
++
++    return resource;
++}
++
+ NVSDK_NGX_Parameter* FFXFeatureDx12::SetParameters(NVSDK_NGX_Parameter* InParameters)
+ {
+     InParameters->Set("OptiScaler.SupportsUpscaleSize", true);
+@@ -94,6 +110,39 @@ bool FFXFeatureDx12::EvaluateInternal(ID3D12GraphicsCommandList* InCommandList,
+ 
+     auto& cfg = *Config::Instance();
+ 
++    // Validate the complete required input set before recording any barriers or
++    // choosing an exposure fallback. An incomplete transition frame is not
++    // evidence that this title permanently omits its exposure texture.
++    ID3D12Resource* paramColor = ReadFfxResource(InParameters, NVSDK_NGX_Parameter_Color);
++    ID3D12Resource* paramVelocity = ReadFfxResource(InParameters, NVSDK_NGX_Parameter_MotionVectors);
++    ID3D12Resource* paramOutput = ReadFfxResource(InParameters, NVSDK_NGX_Parameter_Output);
++    ID3D12Resource* paramDepth = ReadFfxResource(InParameters, NVSDK_NGX_Parameter_Depth);
++    if (paramColor == nullptr || paramVelocity == nullptr || paramOutput == nullptr ||
++        (LowResMV() && paramDepth == nullptr))
++    {
++        LOG_ERROR("FFX required frame input missing; preserving exposure mode");
++        return false;
++    }
++
++    ID3D12Resource* paramExp = nullptr;
++    if (!AutoExposure())
++    {
++        paramExp = ReadFfxResource(InParameters, NVSDK_NGX_Parameter_ExposureTexture);
++        if (paramExp == nullptr)
++        {
++            // Preserve the established immediate fallback for games that do not
++            // supply exposure. Do not add a debounce or reuse an old GPU resource.
++            LOG_DEBUG("AutoExposure disabled but ExposureTexture is not exist, it may cause problems!!");
++            State::Instance().autoExposure = true;
++            State::Instance().changeBackend[Handle()->Id] = true;
++            return true;
++        }
++    }
++
++    // FSR4's padding workaround may replace paramColor with a cropped resource.
++    // The game's original input is still the resource whose state we must restore.
++    ID3D12Resource* const originalColor = paramColor;
++
+     struct ffxDispatchDescUpscale params = { 0 };
+     params.header.type = FFX_API_DISPATCH_DESC_TYPE_UPSCALE;
+ 
+@@ -127,8 +176,9 @@ bool FFXFeatureDx12::EvaluateInternal(ID3D12GraphicsCommandList* InCommandList,
+ 
+     LOG_DEBUG("Jitter Offset: {0}x{1}", params.jitterOffset.x, params.jitterOffset.y);
+ 
+-    unsigned int reset;
+-    InParameters->Get(NVSDK_NGX_Parameter_Reset, &reset);
++    unsigned int reset = 0;
++    if (InParameters->Get(NVSDK_NGX_Parameter_Reset, &reset) != NVSDK_NGX_Result_Success)
++        reset = 0;
+     params.reset = (reset == 1);
+ 
+     GetRenderResolution(InParameters, &params.renderSize.width, &params.renderSize.height);
+@@ -137,10 +187,6 @@ bool FFXFeatureDx12::EvaluateInternal(ID3D12GraphicsCommandList* InCommandList,
+ 
+     params.commandList = InCommandList;
+ 
+-    ID3D12Resource* paramColor;
+-    if (InParameters->Get(NVSDK_NGX_Parameter_Color, &paramColor) != NVSDK_NGX_Result_Success)
+-        InParameters->Get(NVSDK_NGX_Parameter_Color, (void**) &paramColor);
+-
+     if (paramColor)
+     {
+         LOG_DEBUG("Color exist..");
+@@ -217,6 +263,9 @@ bool FFXFeatureDx12::EvaluateInternal(ID3D12GraphicsCommandList* InCommandList,
+                     ResourceBarrier(InCommandList, smallerColor[index], D3D12_RESOURCE_STATE_COPY_DEST,
+                                     D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+ 
++                    ResourceBarrier(InCommandList, paramColor, D3D12_RESOURCE_STATE_COPY_SOURCE,
++                                    D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
++
+                     paramColor = smallerColor[index];
+                 }
+ 
+@@ -232,10 +281,6 @@ bool FFXFeatureDx12::EvaluateInternal(ID3D12GraphicsCommandList* InCommandList,
+         return false;
+     }
+ 
+-    ID3D12Resource* paramVelocity;
+-    if (InParameters->Get(NVSDK_NGX_Parameter_MotionVectors, &paramVelocity) != NVSDK_NGX_Result_Success)
+-        InParameters->Get(NVSDK_NGX_Parameter_MotionVectors, (void**) &paramVelocity);
+-
+     if (paramVelocity)
+     {
+         LOG_DEBUG("MotionVectors exist..");
+@@ -263,10 +308,6 @@ bool FFXFeatureDx12::EvaluateInternal(ID3D12GraphicsCommandList* InCommandList,
+         return false;
+     }
+ 
+-    ID3D12Resource* paramOutput;
+-    if (InParameters->Get(NVSDK_NGX_Parameter_Output, &paramOutput) != NVSDK_NGX_Result_Success)
+-        InParameters->Get(NVSDK_NGX_Parameter_Output, (void**) &paramOutput);
+-
+     if (paramOutput)
+     {
+         LOG_DEBUG("Output exist..");
+@@ -284,10 +325,6 @@ bool FFXFeatureDx12::EvaluateInternal(ID3D12GraphicsCommandList* InCommandList,
+         return false;
+     }
+ 
+-    ID3D12Resource* paramDepth;
+-    if (InParameters->Get(NVSDK_NGX_Parameter_Depth, &paramDepth) != NVSDK_NGX_Result_Success)
+-        InParameters->Get(NVSDK_NGX_Parameter_Depth, (void**) &paramDepth);
+-
+     if (paramDepth)
+     {
+         LOG_DEBUG("Depth exist..");
+@@ -307,16 +344,12 @@ bool FFXFeatureDx12::EvaluateInternal(ID3D12GraphicsCommandList* InCommandList,
+             return false;
+     }
+ 
+-    ID3D12Resource* paramExp = nullptr;
+     if (AutoExposure())
+     {
+         LOG_DEBUG("AutoExposure enabled!");
+     }
+     else
+     {
+-        if (InParameters->Get(NVSDK_NGX_Parameter_ExposureTexture, &paramExp) != NVSDK_NGX_Result_Success)
+-            InParameters->Get(NVSDK_NGX_Parameter_ExposureTexture, (void**) &paramExp);
+-
+         if (paramExp)
+         {
+             LOG_DEBUG("ExposureTexture exist..");
+@@ -328,13 +361,6 @@ bool FFXFeatureDx12::EvaluateInternal(ID3D12GraphicsCommandList* InCommandList,
+ 
+             params.exposure = ffxApiGetResourceDX12(paramExp, FFX_API_RESOURCE_STATE_COMPUTE_READ);
+         }
+-        else
+-        {
+-            LOG_DEBUG("AutoExposure disabled but ExposureTexture is not exist, it may cause problems!!");
+-            State::Instance().autoExposure = true;
+-            State::Instance().changeBackend[Handle()->Id] = true;
+-            return true;
+-        }
+     }
+ 
+     ID3D12Resource* paramTransparency = nullptr;
+@@ -346,6 +372,7 @@ bool FFXFeatureDx12::EvaluateInternal(ID3D12GraphicsCommandList* InCommandList,
+         InParameters->Get("FSR.reactive", (void**) &paramReactiveMask);
+ 
+     ID3D12Resource* paramReactiveMask2 = nullptr;
++    ID3D12Resource* transitionedMask = nullptr;
+     if (InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask, &paramReactiveMask2) !=
+         NVSDK_NGX_Result_Success)
+         InParameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask, (void**) &paramReactiveMask2);
+@@ -373,9 +400,12 @@ bool FFXFeatureDx12::EvaluateInternal(ID3D12GraphicsCommandList* InCommandList,
+                 Config::Instance()->DisableReactiveMask.set_volatile_value(false);
+ 
+                 if (Config::Instance()->MaskResourceBarrier.has_value())
++                {
+                     ResourceBarrier(InCommandList, paramReactiveMask2,
+                                     (D3D12_RESOURCE_STATES) Config::Instance()->MaskResourceBarrier.value(),
+                                     D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
++                    transitionedMask = paramReactiveMask2;
++                }
+ 
+                 if (paramTransparency == nullptr && Config::Instance()->FsrUseMaskForTransparency.value_or_default())
+                     params.transparencyAndComposition =
+@@ -483,7 +513,10 @@ bool FFXFeatureDx12::EvaluateInternal(ID3D12GraphicsCommandList* InCommandList,
+         InParameters->Get("FSR.viewSpaceToMetersFactor", &params.viewSpaceToMetersFactor) != NVSDK_NGX_Result_Success)
+         params.viewSpaceToMetersFactor = 0.0f;
+ 
+-    if (InParameters->Get(NVSDK_NGX_Parameter_DLSS_Pre_Exposure, &params.preExposure) != NVSDK_NGX_Result_Success)
++    // FFX requires positive pre-exposure. Match the existing missing-value
++    // fallback for invalid inputs instead of feeding NaN/Inf/zero into history.
++    if (InParameters->Get(NVSDK_NGX_Parameter_DLSS_Pre_Exposure, &params.preExposure) != NVSDK_NGX_Result_Success ||
++        !std::isfinite(params.preExposure) || params.preExposure <= 0.0f)
+         params.preExposure = 1.0f;
+ 
+     if (Version() >= feature_version { 3, 1, 1 } && _velocity != Config::Instance()->FsrVelocity.value_or_default())
+@@ -581,22 +614,10 @@ bool FFXFeatureDx12::EvaluateInternal(ID3D12GraphicsCommandList* InCommandList,
+     LOG_DEBUG("Dispatch!!");
+     auto result = FfxApiProxy::D3D12_Dispatch(&_context, &params.header);
+ 
+-    if (result != FFX_API_RETURN_OK)
+-    {
+-        LOG_ERROR("_dispatch error: {0}", FfxApiProxy::ReturnCodeToString(result));
+-
+-        if (result == FFX_API_RETURN_ERROR_RUNTIME_ERROR)
+-        {
+-            LOG_WARN("Trying to recover by recreating the feature");
+-            State::Instance().changeBackend[Handle()->Id] = true;
+-        }
+-
+-        return false;
+-    }
+-
+-    // restore resource states
+-    if (paramColor && Config::Instance()->ColorResourceBarrier.has_value())
+-        ResourceBarrier(InCommandList, paramColor, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
++    // Restore recorded input states even when dispatch fails. The crop is our
++    // own buffer; the game's original color resource owns the configured state.
++    if (originalColor && Config::Instance()->ColorResourceBarrier.has_value())
++        ResourceBarrier(InCommandList, originalColor, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                         (D3D12_RESOURCE_STATES) Config::Instance()->ColorResourceBarrier.value());
+ 
+     if (paramVelocity && Config::Instance()->MVResourceBarrier.has_value())
+@@ -615,10 +636,23 @@ bool FFXFeatureDx12::EvaluateInternal(ID3D12GraphicsCommandList* InCommandList,
+         ResourceBarrier(InCommandList, paramExp, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                         (D3D12_RESOURCE_STATES) Config::Instance()->ExposureResourceBarrier.value());
+ 
+-    if (paramReactiveMask && Config::Instance()->MaskResourceBarrier.has_value())
+-        ResourceBarrier(InCommandList, paramReactiveMask, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
++    if (transitionedMask && Config::Instance()->MaskResourceBarrier.has_value())
++        ResourceBarrier(InCommandList, transitionedMask, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                         (D3D12_RESOURCE_STATES) Config::Instance()->MaskResourceBarrier.value());
+ 
++    if (result != FFX_API_RETURN_OK)
++    {
++        LOG_ERROR("_dispatch error: {0}", FfxApiProxy::ReturnCodeToString(result));
++
++        if (result == FFX_API_RETURN_ERROR_RUNTIME_ERROR)
++        {
++            LOG_WARN("Trying to recover by recreating the feature");
++            State::Instance().changeBackend[Handle()->Id] = true;
++        }
++
++        return false;
++    }
++
+     _frameCount++;
+ 
+     return true;
+diff --git a/OptiScaler/upscalers/ffx/FFXFeature_Dx12.h b/OptiScaler/upscalers/ffx/FFXFeature_Dx12.h
+index c5912b2..5d98f5b 100644
+--- a/OptiScaler/upscalers/ffx/FFXFeature_Dx12.h
++++ b/OptiScaler/upscalers/ffx/FFXFeature_Dx12.h
+@@ -8,7 +8,7 @@
+ class FFXFeatureDx12 : public FFXFeature, public IFeature_Dx12
+ {
+   private:
+-    ID3D12Resource* smallerColor[2];
++    ID3D12Resource* smallerColor[2] = { nullptr, nullptr };
+ 
+     NVSDK_NGX_Parameter* SetParameters(NVSDK_NGX_Parameter* InParameters);
+ 
 diff --git a/OptiScaler/wrapped/wrapped_swapchain.cpp b/OptiScaler/wrapped/wrapped_swapchain.cpp
 index 597ce8f..72858ff 100644
 --- a/OptiScaler/wrapped/wrapped_swapchain.cpp

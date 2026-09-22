@@ -1,19 +1,59 @@
 {
   "repository": "https://github.com/Coldwood1026/OptiScalerDp4aUnlock",
   "commit": "9eea95bba9fda7121f214d2eba358423be598d7e",
-  "patch_sha256": "8132ad4381f7c83d6a837bf7e5a5475d4b0a28e7d4fdec74a514158b8805e80d",
+  "patch_sha256": "0af6056005818dc70e6bd8f9f789c28c518999393f417bc70737c1fa856def0e",
   "files": {
+    "OptiScaler/Config.cpp": {
+      "before_sha256": "abba9b5a3db81e9b2d38c92c23796e0365cdd62b11b8abed5cdb3b68080e2a1d",
+      "after_sha256": "95132e6d1508a5c95abda3767bf093398e65daa6df561970801844b3afbd2ed3"
+    },
+    "OptiScaler/Config.h": {
+      "before_sha256": "2b5a70c3c25fffe98886685ba38e29f1b76ca5c56c9786f245d7aae85c11fbae",
+      "after_sha256": "2dc26c030e50da25a2f702ec6b3a06004c5f1d306030272d7bd4b6a54597cc75"
+    },
+    "OptiScaler/NVNGX_Parameter.cpp": {
+      "before_sha256": "854564ee8d3993aa981f9cb298a283af435ed990bd3bfd4d40ad4f97217ab26f",
+      "after_sha256": "44ed999f681ed821c0019d6c69fcbb73e2d0790dd93565ba2924387274e29d20"
+    },
     "OptiScaler/Source.def": {
       "before_sha256": "e4f5f8afe9fef5d69a7f9acb72c166cb4392b0b83fea5e5ab395b73987ee3ecf",
       "after_sha256": "4843536ecbaabe2b77b02a02ccd0879e5b74e53efbea9eb7090ed918bfe464d5"
+    },
+    "OptiScaler/State.h": {
+      "before_sha256": "bd93223406c7d02fcbf3937ccd4c088077eb1df0d763d8004843e76636d4b418",
+      "after_sha256": "7c1a1ca5c6b0262e8056f89c24f6b488825b613442f19420886f22a014292dcd"
     },
     "OptiScaler/exports/dxgi.h": {
       "before_sha256": "b3a214063eefe998e4d642c89c60a9776e3999574d1f079671c4515d91e79bfb",
       "after_sha256": "9c681bf085d6ca0517d40a7850406f4b87dc7f8a5852d9bfcd5361202986a1d6"
     },
+    "OptiScaler/framegen/IFGFeature.cpp": {
+      "before_sha256": "5cfbbcf8bc768c88b57d9b718f3c531c76a85660c28ebc7c17a0054169d08da7",
+      "after_sha256": "4931196c964e2061bb1e5295671b57f0ebd9f82d518012b1a539365d0782e5a5"
+    },
+    "OptiScaler/framegen/IFGFeature.h": {
+      "before_sha256": "771d61b12fb2050d7410321fa4593784ca7454f0b05160ddaab33e3cca93dd68",
+      "after_sha256": "e8627a558bb306aa855eef79654349f7a926cf321293442141d051a1c9d9d8ea"
+    },
+    "OptiScaler/framegen/IFGFeature_Reset.h": {
+      "before_sha256": null,
+      "after_sha256": "6aec637809e6f2a8c026fb50490d431c9d451e505cc6bedc73ff543c2cffa63c"
+    },
     "OptiScaler/framegen/xefg/XeFG_Dx12.cpp": {
       "before_sha256": "9ea89da71cd336ff85b7b41a7b119cdf4a4c892b7478fb37d618bd5ef3f151e9",
-      "after_sha256": "fda10b8eb46e35f573f8441edca9082f384ba6ca62e238a0cd7ae7d052e68308"
+      "after_sha256": "093222fe52aef51fa56bc0b5256d04f0636831ce5c748a4cd45f2f2445fd4d82"
+    },
+    "OptiScaler/hooks/Streamline_Hooks.cpp": {
+      "before_sha256": "41abeebeb6c6b761c5a389fd32f19e8cc40fcb96349a8ef77e92fa21675b929c",
+      "after_sha256": "cfab569047bdb05832e0dd48b04d91fdc8a04eef86c01fc1f271a6af16a7f521"
+    },
+    "OptiScaler/inputs/FG/Streamline_Inputs_Dx12.cpp": {
+      "before_sha256": "81e257036b6ea95c8cd83e39fff621625a7f576007ce270f510e1c6eb8a6bb98",
+      "after_sha256": "6405fdc0d74766cf3b50d3308ee55446e3bfe08a8e20cee31732afdb81892b48"
+    },
+    "OptiScaler/inputs/FG/Streamline_Inputs_Dx12.h": {
+      "before_sha256": "2fcbf988f31f1c25bf29848fc0a1edb0777afb9ded2a5935028fb50070f3b929",
+      "after_sha256": "e69af6454e13fb21db343ecc37c3b9924875bee36a76003c703c9feaa6037588"
     },
     "OptiScaler/menu/input/input_system.cpp": {
       "before_sha256": "4dc21002f9d5ef6a0996dbf423395661dbcda0a567a446327fdaa50822ef3451",
@@ -37,7 +77,7 @@
     },
     "OptiScaler/proxies/XeFGPacing.h": {
       "before_sha256": "453270a4cd3f7944b4f1259f54727f76d5d256c81675b92d1059ab14cc92a507",
-      "after_sha256": "be205dc2602cd37ba97cd41ad1d165c783a3eefeda1aa59f9a5a296845c2c99b"
+      "after_sha256": "a425002db8b29b58eb69b349a82f492cc54d1940445b6b35630b633d8ecfdea4"
     },
     "OptiScaler/proxies/XeFGUnlock.h": {
       "before_sha256": "b0ffad609f3a9c1ba85d8c60eba482eb34012ba96f8933dec2f5984f58d545b9",
@@ -63,6 +103,14 @@
       "before_sha256": "be56e217557302dfe3dcfc2f8afa2df8a1c1c353fafa4cec8e93b021b6e9f915",
       "after_sha256": "4fe92a7783aebcc7ca5668a1787b4571b6568591db93c4130ea9c752eb98de1b"
     },
+    "OptiScaler/upscalers/ffx/FFXFeature_Dx12.cpp": {
+      "before_sha256": "32eceea046cd71cc7b782dc80781d0669a15e3e5563f4bfaa277ce1d3955a3ad",
+      "after_sha256": "44861f8e08e1e40747c81f2fce814a4bd858ce031ffaee4adb9d6f927c09e5a9"
+    },
+    "OptiScaler/upscalers/ffx/FFXFeature_Dx12.h": {
+      "before_sha256": "caceaf009db0a1523b8b5eb1f27cfc6ebebe6687af0147567b81b72334e5fa10",
+      "after_sha256": "e9c402e94dd6b83a4a3f6e8898d22968e13736ca36e89b6be55308c443b2b30f"
+    },
     "OptiScaler/wrapped/wrapped_swapchain.cpp": {
       "before_sha256": "c833fd10d09e3cfdbe0a94d68632f5f00c9fd66e7cb07a7fbd47f11520498473",
       "after_sha256": "dbcfc71244eddc21a0a5cb2ca485bcfc709234ef2a2b2c20a81c7981f2b58867"
@@ -76,7 +124,12 @@
   ],
   "custom_changes": [
     "XeFG resource transition restore only after an emitted transition; restore on tagging failure",
-    "Transactional exact-provider MFG unlock and pacing hook rollback"
+    "Transactional exact-provider MFG unlock and pacing hook rollback",
+    "R2: use configured game-facing interpolation maximum before initialization and provider/config minimum afterward",
+    "R2: restore input frame time priority; request pacing epoch reset across FG lifecycle and successful multiplier changes",
+    "R2: latch current-frame reset requests across pauses and acknowledge only after successful XeFG dispatch setup",
+    "R2: learn only valid/current SL depth and motion flags as volatile values; preserve explicit defaults during serialization",
+    "R2: preflight initialized FFX resource inputs, sanitize invalid pre-exposure, restore original crop color and actual transitioned mask on dispatch failures"
   ],
   "profile": {
     "fg_output": "XeFG",
@@ -87,5 +140,7 @@
     "baseline_amd_upscaler_sha256": "0dd77d9c78d1ef9bc330cf4697ab3ffe24bc1aa7850e4130263dc922107fbd75",
     "intel_fg_sha256": "ec5e0c65e075570c6ede72618bb666d0be0c2e10b2ea9762c0fe8cb8e375ab27",
     "intel_xell_sha256": "d2030dcd694fda8f2ec7e044b13e6db8f0b56d4ba9113a5efad334e3f3ded8c7"
-  }
+  },
+  "regression_baseline_builder": "2cd5239e0658cd7fd3d5ebd56b8ef9ec47427406",
+  "revision": "r2"
 }
