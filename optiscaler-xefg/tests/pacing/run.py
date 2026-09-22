@@ -20,6 +20,7 @@ selection = cpp[start:end]
 with tempfile.TemporaryDirectory(prefix="xefg-pacing-") as directory:
     tmp = Path(directory)
     shutil.copy2(source / "proxies/XeFGPacing.h", tmp / "XeFGPacing.h")
+    shutil.copy2(source / "proxies/XeFGPacingGuard.h", tmp / "XeFGPacingGuard.h")
     if os.name != "nt":
         (tmp / "intrin.h").write_text("#pragma once\ninline void* _ReturnAddress(){return nullptr;}\n")
     (tmp / "Logger.h").write_text(
@@ -50,7 +51,7 @@ inline bool VirtualProtect(void*, size_t, DWORD, DWORD* old) { *old=0x20; return
 inline bool FlushInstructionCache(void*, void*, size_t) { return true; }
 inline void* GetCurrentProcess() { return nullptr; }
 inline void QueryPerformanceFrequency(LARGE_INTEGER* out) { out->QuadPart=1000000; }
-inline void QueryPerformanceCounter(LARGE_INTEGER* out) { out->QuadPart=mockClock; mockClock+=100; }
+inline bool QueryPerformanceCounter(LARGE_INTEGER* out) { out->QuadPart=mockClock; mockClock+=100; return true; }
 inline void Sleep(int) {} inline void YieldProcessor() {}
 ''')
     test = r'''#include "XeFGPacing.h"
@@ -170,11 +171,11 @@ int main() {
     (tmp / "test.cpp").write_text(test, encoding="utf-8")
     binary = tmp / ("test.exe" if os.name == "nt" else "test")
     if os.name == "nt":
-        command = ["cl", "/nologo", "/std:c++20", "/EHsc", "/I" + str(tmp),
+        command = ["cl", "/nologo", "/std:c++20", "/EHsc", "/I" + str(tmp), "/I" + str(source),
                    str(tmp / "test.cpp"), "/Fe:" + str(binary)]
     else:
         command = ["g++", "-std=c++20", "-fpermissive", "-w", "-O0", "-pthread",
-                   "-I", str(tmp), str(tmp / "test.cpp"), "-o", str(binary)]
+                   "-I", str(tmp), "-I", str(source), str(tmp / "test.cpp"), "-o", str(binary)]
     subprocess.run(command, cwd=tmp, check=True)
     subprocess.run([str(binary)], check=True)
 print("Scope: production pacing code with deterministic CPU mocks; no GPU/game performance claim.")

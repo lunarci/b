@@ -41,6 +41,10 @@ def main():
         ("Pacing epochs, fresh estimates and input-time priority", here / "pacing/run.py"),
         ("History reset handoff and valid runtime motion metadata", here / "history/run.py"),
         ("FFX input, exposure and copy resource-state guards", here / "exposure/run.py"),
+        ("Long-session memory pressure and bounded timing diagnostics", here / "long_session/run.py"),
+        ("Long-stall pacing recovery and native-forward guards", here / "pacing_guard/run.py"),
+        ("Descriptor metadata publication without registry-lock allocation", here / "tracking/run.py"),
+        ("Owned-copy allocation failures and safe GPU/provider teardown", here / "memory_lifetime/run.py"),
     ]
     report = {"passed": False, "gpu_game_tested": False, "tests": []}
     try:

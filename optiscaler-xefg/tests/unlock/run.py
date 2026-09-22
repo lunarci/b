@@ -7,7 +7,7 @@ parser.add_argument('--runtime-dir',type=Path)
 args=parser.parse_args()
 root=args.source_dir/'OptiScaler'/'proxies'
 tmp=Path(tempfile.mkdtemp(prefix='xefg-safety-'))
-for name in ('XeFGUnlock.h','XeLLUnLock.h','XeFGPacing.h'):
+for name in ('XeFGUnlock.h','XeLLUnLock.h','XeFGPacing.h','XeFGPacingGuard.h'):
     shutil.copy2(root/name,tmp/name)
 if os.name != 'nt':
     # MSVC's standard library also includes intrin.h; do not shadow its real
@@ -55,7 +55,7 @@ inline bool FlushInstructionCache(void*,void* ptr,size_t) {
 }
 inline void* GetCurrentProcess(){return nullptr;}
 inline void QueryPerformanceFrequency(LARGE_INTEGER* x){x->QuadPart=1000000;}
-inline void QueryPerformanceCounter(LARGE_INTEGER* x){static int64_t t=0;x->QuadPart=++t;}
+inline bool QueryPerformanceCounter(LARGE_INTEGER* x){static int64_t t=0;x->QuadPart=++t;return true;}
 inline void Sleep(int){} inline void YieldProcessor(){}
 ''')
 (tmp/'test.cpp').write_text('''#include "XeFGUnlock.h"
@@ -103,10 +103,10 @@ int main(int argc,char**argv){
 ''')
 binary=tmp/('test.exe' if os.name=='nt' else 'test')
 if os.name=='nt':
-    command=['cl','/nologo','/std:c++20','/EHsc','/I'+str(tmp),str(tmp/'test.cpp'),'/Fe:'+str(binary)]
+    command=['cl','/nologo','/std:c++20','/EHsc','/I'+str(tmp),'/I'+str(args.source_dir/'OptiScaler'),str(tmp/'test.cpp'),'/Fe:'+str(binary)]
 else:
     # Match the donor's MSVC function-pointer-to-void* extension in this Linux mock.
-    command=['g++','-std=c++20','-fpermissive','-w','-O0','-I',str(tmp),str(tmp/'test.cpp'),'-o',str(binary)]
+    command=['g++','-std=c++20','-fpermissive','-w','-O0','-I',str(tmp),'-I',str(args.source_dir/'OptiScaler'),str(tmp/'test.cpp'),'-o',str(binary)]
 subprocess.run(command,cwd=tmp,check=True)
 cases=['unknown','mismatch','write_fail','partial_write','pacing_mismatch','pacing_write_fail','pacing_partial_write','success','xell_unknown','xell_partial_write','xell_success']
 for case in cases:subprocess.run([str(binary),case],check=True)
