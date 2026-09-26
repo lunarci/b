@@ -112,8 +112,25 @@
     "tests/r6_recovery/pipeline_tests.cpp": "cfcb2f4aa501a2f48056d199a4b74c26603faf08e6192cce12c1d493aa930399",
     "tests/r6_recovery/present_diagnostics.cpp": "8bde8cfb8722791560df98fa1ba8985dca093ef01379f981d30172cb6c4034f8",
     "tests/r6_recovery/recovery_policy.cpp": "45a5a30942de3630fef53df7fa3b2a3ee121036e95ef5aa40064adfcbeb54bfb",
-    "tests/r6_recovery/residency.cpp": "7e33e74045f569d00d7fd0ca8ddb5019179d4417f2138b7e64516116c55f684e",
+    "tests/r6_recovery/residency.cpp": "c1de7e53844022180cb69b53866a8daf8c2a58d482b9da6819aaec1f059f9a3f",
     "tests/r6_recovery/resource_harness.cpp": "56feb63740c3fca59ed9ff03837e6755bc077a3177018fb0404985e4156f2722",
     "tests/r6_recovery/run.py": "f5d41c4942a9713e65c2242167e5eba926e2ad3d04f7ebaa18898123e077c983"
-  }
+  },
+  "portability_followups": [
+    {
+      "reviewed_at_utc": "2026-09-26T15:39:57.296648+00:00",
+      "issue": "Windows MSVC C2169 rejected defining a fake function named _ReturnAddress, which is a compiler intrinsic.",
+      "change": "Harness-only FakeReturnAddress function plus a preprocessor redirect for the extracted production call; assertions and production code unchanged.",
+      "fixture": "tests/r6_recovery/residency.cpp",
+      "previous_sha256": "7e33e74045f569d00d7fd0ca8ddb5019179d4417f2138b7e64516116c55f684e",
+      "reviewed_sha256": "c1de7e53844022180cb69b53866a8daf8c2a58d482b9da6819aaec1f059f9a3f",
+      "review_result": "PASS",
+      "production_hashes_unchanged": true,
+      "targeted_validation": {
+        "command": "python3 tests/r6_recovery/run.py /workspace/scratch/29657caf7bd8/r6-source",
+        "result": "PASS"
+      },
+      "windows_ci_status_at_review": "Rerun pending; no Windows success asserted by this review."
+    }
+  ]
 }

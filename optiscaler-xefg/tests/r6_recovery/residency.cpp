@@ -14,7 +14,9 @@ struct ID3D12Pageable{};using D3D12_RESIDENCY_PRIORITY=uint32_t;
 static std::atomic<bool> residencyAmdKnown{false};static std::atomic<uint64_t> residencyAmdLuid{123};
 static HMODULE callerModule=nullptr,xefgModule=reinterpret_cast<void*>(1),xessModule=reinterpret_cast<void*>(2);
 static unsigned originalCalls=0;static HRESULT originalResult=0;
-void* _ReturnAddress(){return nullptr;}
+static void* FakeReturnAddress(){return nullptr;}
+// MSVC reserves _ReturnAddress as an intrinsic; redirect only the extracted call.
+#define _ReturnAddress FakeReturnAddress
 namespace Util{HMODULE GetCallerModule(void*){return callerModule;}}
 namespace XeFGProxy{HMODULE Module(){return xefgModule;}}
 namespace XeSSProxy{HMODULE Module(){return xessModule;}}
