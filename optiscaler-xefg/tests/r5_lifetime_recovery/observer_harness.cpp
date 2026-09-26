@@ -110,9 +110,15 @@ static void NativeExecute(ID3D12CommandQueue* queue,UINT,ID3D12CommandList* cons
     if(nativeEntered) nativeEntered->count_down();
     if(nativeMayReturn) nativeMayReturn->wait();
 }
-template<int N> void dummy() {}
+// MSVC /OPT:ICF merges identical empty template bodies. Native COM methods
+// below need distinct target identities so duplicate-detour checks model the
+// real vtable rather than linker folding in this CPU fixture.
+static volatile int dummyIdentity=0;
+template<int N> void dummy() { dummyIdentity=N; }
 static std::array<void*,48> deviceTable,queueTable,listTable,allocatorTable,resourceTable;
 static void InitializeTables(){
+    assert(reinterpret_cast<void*>(&dummy<22>) != reinterpret_cast<void*>(&dummy<16>) &&
+           "fake native vtable methods must retain distinct linker identities");
     deviceTable.fill(nullptr);queueTable.fill(nullptr);listTable.fill(nullptr);allocatorTable.fill(nullptr);
     deviceTable[2]=reinterpret_cast<void*>(&NativeDeviceRelease);
     deviceTable[22]=reinterpret_cast<void*>(&dummy<22>);deviceTable[16]=reinterpret_cast<void*>(&dummy<16>);
