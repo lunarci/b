@@ -1,15 +1,15 @@
 {
   "repository": "https://github.com/Coldwood1026/OptiScalerDp4aUnlock",
   "commit": "9eea95bba9fda7121f214d2eba358423be598d7e",
-  "patch_sha256": "1c845f397e3957eaf8a66a2ab57cdf0af2af2e2dc666eedb71571046420dad4a",
+  "patch_sha256": "c8f1be6971d3a512af4667aa2a2771020ca6341c72b59d4523413db9d7ce0c38",
   "files": {
     "OptiScaler/Config.cpp": {
       "before_sha256": "abba9b5a3db81e9b2d38c92c23796e0365cdd62b11b8abed5cdb3b68080e2a1d",
-      "after_sha256": "95132e6d1508a5c95abda3767bf093398e65daa6df561970801844b3afbd2ed3"
+      "after_sha256": "dce598db7b8d16b294164b897d90e80c3ea5cc78b9db02495c19b005dc88c9f7"
     },
     "OptiScaler/Config.h": {
       "before_sha256": "2b5a70c3c25fffe98886685ba38e29f1b76ca5c56c9786f245d7aae85c11fbae",
-      "after_sha256": "2dc26c030e50da25a2f702ec6b3a06004c5f1d306030272d7bd4b6a54597cc75"
+      "after_sha256": "e5265d73980ef51db84dd7734be430ae7d08a1ead91e74aacc253d0488b8aa6c"
     },
     "OptiScaler/NVNGX_Parameter.cpp": {
       "before_sha256": "854564ee8d3993aa981f9cb298a283af435ed990bd3bfd4d40ad4f97217ab26f",
@@ -37,7 +37,7 @@
     },
     "OptiScaler/framegen/IFGFeature.h": {
       "before_sha256": "771d61b12fb2050d7410321fa4593784ca7454f0b05160ddaab33e3cca93dd68",
-      "after_sha256": "9dd4d261f9fe493a61e3e6c07e438ca01b02b6a4024fa65f0230a6d0f154fff8"
+      "after_sha256": "4fe838c69822197ef26c09ee0e622b91a36068c5fe3b13ed4ec19a4ad4cc2e12"
     },
     "OptiScaler/framegen/IFGFeature_Dx12.cpp": {
       "before_sha256": "947a9f55a0fedccc773598f295d1147d7f5c4e7dc96a23f8308fae6a22392752",
@@ -45,7 +45,7 @@
     },
     "OptiScaler/framegen/IFGFeature_Dx12.h": {
       "before_sha256": "35c93ee09e132ea9bb26dd5894be9570bfe88ad3dc3201c3a6dfdb9d22c3587e",
-      "after_sha256": "656a928f5efba99704a60481c756ba64c2876bd09861041313e235984970606e"
+      "after_sha256": "4d9c2aa40c684ff64c16019d37d630fba1fc3bf570f28fb91adda75265c01b14"
     },
     "OptiScaler/framegen/IFGFeature_Reset.h": {
       "before_sha256": null,
@@ -57,15 +57,15 @@
     },
     "OptiScaler/framegen/xefg/XeFG_Dx12.cpp": {
       "before_sha256": "9ea89da71cd336ff85b7b41a7b119cdf4a4c892b7478fb37d618bd5ef3f151e9",
-      "after_sha256": "1797987cdaab5670faddfef2bcb12d09bba528382f5e4a11599c16b273d0bd49"
+      "after_sha256": "9f0c730c22b409b658a78801ce2ccc4f88708da8df6147a6879a6130596640e8"
     },
     "OptiScaler/framegen/xefg/XeFG_Dx12.h": {
       "before_sha256": "be231c40c22d20e7f2d6597bca8bf8c64eaa88334874fe2808949ab5b3784748",
-      "after_sha256": "39067e947bbab467ea24201a7eca6b8f1077b25467473a8ea1da255ba44f64fe"
+      "after_sha256": "20ad1be7b0d179594063b3c926a64e52bbf5b66c2a3f7798175bf0d5d38bc10a"
     },
     "OptiScaler/hooks/D3D12_Hooks.cpp": {
       "before_sha256": "507b6f140323222c0c9685f155e9dde418082666bc454548ad0093b1fd5879ed",
-      "after_sha256": "8fa366637420a513fefc707fd620567e683ea07a9352003a2b29cdd848cf9576"
+      "after_sha256": "759b5d6b6a0654e2746c763cb01816eaa84417173a87363d2583640147a159db"
     },
     "OptiScaler/hooks/FG_Hooks.cpp": {
       "before_sha256": "0295a530cbcac7226c2e4de38f97040f5b3262798a9b602ef2b93f9e9b1cd754",
@@ -73,7 +73,7 @@
     },
     "OptiScaler/hooks/GpuAllocationHooks.h": {
       "before_sha256": null,
-      "after_sha256": "d3d9e6ccfd8ce0661312a543dea0f8cd7d1b16153d868ecbacbb00a262976026"
+      "after_sha256": "e829f4784a8c2a829e4966559fa053f231c4a91953d90945e0ecdebafaf694a7"
     },
     "OptiScaler/hooks/Streamline_Hooks.cpp": {
       "before_sha256": "41abeebeb6c6b761c5a389fd32f19e8cc40fcb96349a8ef77e92fa21675b929c",
@@ -133,19 +133,19 @@
     },
     "OptiScaler/misc/GpuAllocationDiagnostics.h": {
       "before_sha256": null,
-      "after_sha256": "02a459f81365cddc72ac678a557b90b4aba3bd3c777d71c3f7a2b5e04de7b85b"
+      "after_sha256": "34e188d3ddced329d24f5280a2d2c2d1c049cb8b223c665f889c050155507a85"
     },
     "OptiScaler/misc/LongSessionMonitor.h": {
       "before_sha256": null,
-      "after_sha256": "79d3752c1272b0d815f99860901ff9b3328c9757df877d8f8f64ad248063cda1"
+      "after_sha256": "9975168623cf40e2c8c6208769f57a1ab3b129bbae5c113664ddade8b810d6a9"
     },
     "OptiScaler/misc/LongSessionState.h": {
       "before_sha256": null,
-      "after_sha256": "f74618e6ede53c7c59030a0fe48627a5fb8aeeb9473b2ade5d001239d0f4a69e"
+      "after_sha256": "3b960da0e593dcec815217185307ef407f684e623d10a4b7c84f5716e22fd421"
     },
     "OptiScaler/misc/LongSessionTiming.h": {
       "before_sha256": null,
-      "after_sha256": "fd704e0e75e66b75bc23e12036414a2ed08784223a761381ec5d9c86b2921544"
+      "after_sha256": "15be9f1f2dca0d5b6d8cff4b25619f3497d051bcec0e9fb608696a6290b2f49c"
     },
     "OptiScaler/misc/ResidencyDiagnostics.h": {
       "before_sha256": null,
@@ -154,6 +154,10 @@
     "OptiScaler/misc/XeFGPresentDiagnostics.h": {
       "before_sha256": null,
       "after_sha256": "54709d1ad4941944e21efd318f9fc957546de0529ed6cfabc25d1ce27c861100"
+    },
+    "OptiScaler/misc/XeFGProgressDiagnostics.h": {
+      "before_sha256": null,
+      "after_sha256": "d9edc69d00f1622ed93af0912f63df4cc138f89e149255bec840bbbc10ac6075"
     },
     "OptiScaler/misc/XeFGResourceDiagnostics.h": {
       "before_sha256": null,
@@ -189,7 +193,7 @@
     },
     "OptiScaler/resource_tracking/ResTrack_dx12.cpp": {
       "before_sha256": "00f896845dd0db46118c068e71ded4266598f823958261a619a61ac250516a9c",
-      "after_sha256": "5bff32a2bacda73f76696699464c85a72cc138c88750c9bf1e0206a0787fa5be"
+      "after_sha256": "988e5a86f35bede2f5ebebcd75a744b86d61415c68b19f77441eb68a4eb9b2b6"
     },
     "OptiScaler/resource_tracking/ResTrack_dx12.h": {
       "before_sha256": "5a5064c8486e7f5ef0d689b01e87fe4e2b208a083d7ccc1b8a36cd30e40bf4c4",
@@ -257,7 +261,13 @@
     "R6: query Intel status after native Present; separate CPU submissions, provider queued frame counts and actual display-completion limitations",
     "R6: propagate real residency failures except narrowly identified Intel AMD E_INVALIDARG compatibility case; add bounded caller-attributed allocation lifetime diagnostics",
     "R6: serialize FFX context type registry access across deferred destruction and foreground creation without holding locks across SDK calls",
-    "R6: preserve all R5 lifetime protections, original quality profile, Intel runtime binaries, and unlocked maximum 6x"
+    "R6: preserve all R5 lifetime protections, original quality profile, Intel runtime binaries, and unlocked maximum 6x",
+    "R7: bind submitted command-list retirement to a per-call generation watermark; preserve Reset/re-recorded pending work",
+    "R7: observe completed markers nonblockingly on already tracked queues, at most once per second per queue; no probe authorizes resource destruction",
+    "R7: add bounded allocation descriptor/caller RVA/age groups and sampled diagnostic overhead without retaining game resources",
+    "R7: provide startup-only Diagnostics.GpuAllocationTracking control for isolated allocation-observation comparison; default enabled",
+    "R7: record pressure epochs, sample-window memory extrema, native Present CPU mean and lifecycle causes with bounded log output",
+    "R7: preserve original quality profile and all existing FG protections; no forced game-resource eviction, fixed-byte purge or multiplier reduction"
   ],
   "profile": {
     "fg_output": "XeFG",
@@ -270,5 +280,6 @@
     "intel_xell_sha256": "d2030dcd694fda8f2ec7e044b13e6db8f0b56d4ba9113a5efad334e3f3ded8c7"
   },
   "regression_baseline_builder": "d2ea5898907cb87fe5049c0447f335fd86d50f2d",
-  "revision": "r6"
+  "revision": "r7",
+  "previous_builder": "138c7f805e9c09528f2d95da9793d1404d828f52"
 }

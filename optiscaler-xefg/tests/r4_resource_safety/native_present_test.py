@@ -52,6 +52,7 @@ def compile_and_run(source, name):
 present_body = body("OptiScaler/hooks/FG_Hooks.cpp", "HRESULT FGHooks::FGPresent(")
 present_harness = r'''
 #include <framegen/FGWorkGate.h>
+#include <misc/XeFGProgressDiagnostics.h>
 #include <misc/LongSessionTiming.h>
 #include <misc/XeFGWorkDiagnostics.h>
 #include <misc/XeFGPresentDiagnostics.h>
@@ -160,7 +161,7 @@ struct XeFG_Dx12 {
     int _hudlessObservedFormat[BUFFER_COUNT]{},_hudlessAcceptedFormat[BUFFER_COUNT]{};
     auto AcquireWork(){return _workGate.TryEnter();}
     bool TryCloseCpuAdmission();void RestoreCpuAdmission();void RestoreProviderState(bool);
-    bool DeactivateImpl(bool submitPending=true);void DestroyFGContext();
+    bool DeactivateImpl(bool submitPending=true,XeFGProgress::DeactivateReason reason=XeFGProgress::DeactivateReason::External);void DestroyFGContext();
     void CreateContext(ID3D12Device*,FG_Constants&);
     unsigned GetIndex()const{return 0;}
     void RequestHistoryReset(){++historyResets;}void UpdateTarget(){++targetUpdates;}
@@ -462,6 +463,6 @@ int main() {
 '''
 lifecycle_bodies = "\n".join(body("OptiScaler/framegen/xefg/XeFG_Dx12.cpp", signature) for signature in [
     "bool XeFG_Dx12::TryCloseCpuAdmission()", "void XeFG_Dx12::RestoreCpuAdmission()",
-    "void XeFG_Dx12::RestoreProviderState(bool wasActive)", "bool XeFG_Dx12::DeactivateImpl(bool submitPending)",
+    "void XeFG_Dx12::RestoreProviderState(bool wasActive)", "bool XeFG_Dx12::DeactivateImpl(",
     "void XeFG_Dx12::DestroyFGContext()", "void XeFG_Dx12::CreateContext("])
 compile_and_run(present_harness + "\n" + lifecycle_bodies + "\n" + present_body + "\n" + present_tests, "native_present")

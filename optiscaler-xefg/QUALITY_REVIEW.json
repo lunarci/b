@@ -1,88 +1,93 @@
 {
-  "schema_version": 1,
-  "reviewed_at_utc": "2026-09-26T15:29:04.793142+00:00",
-  "baseline_source_commit": "94e66579b7b70eaa1a9e3a6274abc5efe41b2544",
-  "baseline_description": "Verified deployed R5 source baseline (d2ea5898907c)",
-  "scope": "Source-level preservation of quality settings, shaders, metadata calculations and six-times capability. This is not a GPU image-quality/performance test.",
+  "schema_version": 2,
+  "revision": "R7",
+  "reviewed_at_utc": "2026-09-26T16:35:58.770369+00:00",
+  "baseline_source_commit": "5cd4f61dd44c03eb2bfa9c54eaad4dd22607b9fb",
+  "baseline_description": "Verified R6 source snapshot imported for R7; prior R6 quality review preserved in R6 branch.",
+  "scope": "Source-level quality/profile/algorithm preservation relative to R6, not GPU rendering equivalence or real-game FPS validation.",
   "passed": true,
   "prior_core_file_count": 13,
-  "byte_identical_core_file_count": 12,
+  "byte_identical_core_file_count": 11,
   "core_files": [
     {
       "path": "OptiScaler/Config.cpp",
-      "identical_to_r5": true,
-      "sha256": "95132e6d1508a5c95abda3767bf093398e65daa6df561970801844b3afbd2ed3",
-      "baseline_sha256": "95132e6d1508a5c95abda3767bf093398e65daa6df561970801844b3afbd2ed3"
+      "identical_to_r6": false,
+      "sha256": "dce598db7b8d16b294164b897d90e80c3ea5cc78b9db02495c19b005dc88c9f7",
+      "baseline_sha256": "95132e6d1508a5c95abda3767bf093398e65daa6df561970801844b3afbd2ed3",
+      "semantically_preserved_quality": true,
+      "review": "Only startup Diagnostics.GpuAllocationTracking (default true) load/save/default added. Removing those exact additions reproduces R6 bytes; all quality/pacing/multiplier defaults unchanged."
     },
     {
       "path": "OptiScaler/Config.h",
-      "identical_to_r5": true,
-      "sha256": "2dc26c030e50da25a2f702ec6b3a06004c5f1d306030272d7bd4b6a54597cc75",
-      "baseline_sha256": "2dc26c030e50da25a2f702ec6b3a06004c5f1d306030272d7bd4b6a54597cc75"
+      "identical_to_r6": false,
+      "sha256": "e5265d73980ef51db84dd7734be430ae7d08a1ead91e74aacc253d0488b8aa6c",
+      "baseline_sha256": "2dc26c030e50da25a2f702ec6b3a06004c5f1d306030272d7bd4b6a54597cc75",
+      "semantically_preserved_quality": true,
+      "review": "Only startup Diagnostics.GpuAllocationTracking (default true) load/save/default added. Removing those exact additions reproduces R6 bytes; all quality/pacing/multiplier defaults unchanged."
     },
     {
       "path": "OptiScaler/NVNGX_Parameter.cpp",
-      "identical_to_r5": true,
+      "identical_to_r6": true,
       "sha256": "44ed999f681ed821c0019d6c69fcbb73e2d0790dd93565ba2924387274e29d20",
       "baseline_sha256": "44ed999f681ed821c0019d6c69fcbb73e2d0790dd93565ba2924387274e29d20"
     },
     {
       "path": "OptiScaler/proxies/XeFGUnlock.h",
-      "identical_to_r5": true,
+      "identical_to_r6": true,
       "sha256": "96032aa374bc6800317d72cb44ac14b7b803b8ca2e00e800bb55b0d80e5cf762",
       "baseline_sha256": "96032aa374bc6800317d72cb44ac14b7b803b8ca2e00e800bb55b0d80e5cf762"
     },
     {
       "path": "OptiScaler/proxies/XeLLUnLock.h",
-      "identical_to_r5": true,
+      "identical_to_r6": true,
       "sha256": "fab080cf89e34472dbc2e50f6afdd3918717b8b6231bf62b29658e69300480bf",
       "baseline_sha256": "fab080cf89e34472dbc2e50f6afdd3918717b8b6231bf62b29658e69300480bf"
     },
     {
       "path": "OptiScaler/proxies/XeFGPacing.h",
-      "identical_to_r5": true,
+      "identical_to_r6": true,
       "sha256": "58ce5f43bd1409086db18ef9906ac1a5b42ead502e8b8b6f3e20b9dbd4980b06",
       "baseline_sha256": "58ce5f43bd1409086db18ef9906ac1a5b42ead502e8b8b6f3e20b9dbd4980b06"
     },
     {
       "path": "OptiScaler/proxies/XeFGPacingGuard.h",
-      "identical_to_r5": true,
+      "identical_to_r6": true,
       "sha256": "03bdc66d40c7d27d2860892f7d4df1da753fe933c15294b47a49380b67920758",
       "baseline_sha256": "03bdc66d40c7d27d2860892f7d4df1da753fe933c15294b47a49380b67920758"
     },
     {
       "path": "OptiScaler/hooks/Streamline_Hooks.cpp",
-      "identical_to_r5": true,
+      "identical_to_r6": true,
       "sha256": "cfab569047bdb05832e0dd48b04d91fdc8a04eef86c01fc1f271a6af16a7f521",
       "baseline_sha256": "cfab569047bdb05832e0dd48b04d91fdc8a04eef86c01fc1f271a6af16a7f521"
     },
     {
       "path": "OptiScaler/inputs/FG/Streamline_Inputs_Dx12.cpp",
-      "identical_to_r5": false,
+      "identical_to_r6": true,
       "sha256": "026572b0c9203b00bd31626f9d76945b5a4b7527fd6635f0f645bcd401b1e0c9",
-      "baseline_sha256": "6405fdc0d74766cf3b50d3308ee55446e3bfe08a8e20cee31732afdb81892b48"
+      "baseline_sha256": "026572b0c9203b00bd31626f9d76945b5a4b7527fd6635f0f645bcd401b1e0c9"
     },
     {
       "path": "OptiScaler/upscalers/ffx/FFXFeature_Dx12.cpp",
-      "identical_to_r5": true,
+      "identical_to_r6": true,
       "sha256": "44861f8e08e1e40747c81f2fce814a4bd858ce031ffaee4adb9d6f927c09e5a9",
       "baseline_sha256": "44861f8e08e1e40747c81f2fce814a4bd858ce031ffaee4adb9d6f927c09e5a9"
     },
     {
       "path": "OptiScaler/upscalers/ffx/FFXFeature_Dx12.h",
-      "identical_to_r5": true,
+      "identical_to_r6": true,
       "sha256": "e9c402e94dd6b83a4a3f6e8898d22968e13736ca36e89b6be55308c443b2b30f",
       "baseline_sha256": "e9c402e94dd6b83a4a3f6e8898d22968e13736ca36e89b6be55308c443b2b30f"
     },
     {
       "path": "OptiScaler/upscalers/ffx/FFXFeature.cpp",
-      "identical_to_r5": true,
+      "identical_to_r6": true,
       "sha256": "0118d4710a5b978118a9d4ffa03c243eb03628e642e47cf8cea20b37a9b7c5ce",
       "baseline_sha256": "0118d4710a5b978118a9d4ffa03c243eb03628e642e47cf8cea20b37a9b7c5ce"
     },
     {
       "path": "OptiScaler/upscalers/IFeature_Dx12.cpp",
-      "identical_to_r5": true,
+      "identical_to_r6": true,
       "sha256": "76bdf475b972a9443cb5cca5be6c3315444db8b5c58f8be947fbcb76e2e1e1c9",
       "baseline_sha256": "76bdf475b972a9443cb5cca5be6c3315444db8b5c58f8be947fbcb76e2e1e1c9"
     }
@@ -90,112 +95,217 @@
   "semantically_reviewed_inputs": [
     {
       "path": "OptiScaler/inputs/FG/Streamline_Inputs_Dx12.cpp",
+      "identical_to_r6": true,
       "sha256": "026572b0c9203b00bd31626f9d76945b5a4b7527fd6635f0f645bcd401b1e0c9",
-      "baseline_sha256": "6405fdc0d74766cf3b50d3308ee55446e3bfe08a8e20cee31732afdb81892b48",
-      "review": "Adds current-frame readiness metadata after unchanged camera, projection, motion, jitter, reset and frame-time calculations."
+      "baseline_sha256": "026572b0c9203b00bd31626f9d76945b5a4b7527fd6635f0f645bcd401b1e0c9"
     },
     {
       "path": "OptiScaler/inputs/FG/Streamline_Inputs_Sl1_Dx12.cpp",
+      "identical_to_r6": true,
       "sha256": "4f02a2d3d64cda49c41afa4894fbf0547a090f015a31f45d964dd93a97bdcb94",
-      "baseline_sha256": "49c2a6f898abee349034e05798e11e5b17a16acb715498bef4b3871a515da465",
-      "review": "Adds cached-constant frame identity and readiness eligibility; existing matrix/motion calculations and cached-constant application remain. Stale cached constants cannot establish recovery readiness."
+      "baseline_sha256": "4f02a2d3d64cda49c41afa4894fbf0547a090f015a31f45d964dd93a97bdcb94"
     },
     {
       "path": "OptiScaler/inputs/FG/Streamline_Inputs_Sl1_Dx12.h",
+      "identical_to_r6": true,
       "sha256": "8638e0676ec1c02b88ea844fe87f9c139b1c62bdb1e6ce6a632d1bdc15f5bb45",
-      "baseline_sha256": "b2353afd947417dad8af5fdc30d34fc9c55ac26a7563b50b3f5e7e55b05a72a2",
-      "review": "Adds lastConstantsFrame and freshForFrame metadata argument only."
+      "baseline_sha256": "8638e0676ec1c02b88ea844fe87f9c139b1c62bdb1e6ce6a632d1bdc15f5bb45"
     },
     {
       "path": "OptiScaler/inputs/FG/FSR3_Dx12_FG.cpp",
+      "identical_to_r6": true,
       "sha256": "41d9107a8de4ac4098fdc1bdfa713ee75db66844465c7998da2988a465ba422d",
-      "baseline_sha256": "9c4a003fa25be20af0311e8be46ef0857e0ed4a32de2c9b121d7d30180d139de",
-      "review": "Adds frame-stamped readiness after unchanged SetCameraValues/SetJitter/SetReset/SetInterpolationRect calls; no new FG backend enabled."
+      "baseline_sha256": "41d9107a8de4ac4098fdc1bdfa713ee75db66844465c7998da2988a465ba422d"
     },
     {
       "path": "OptiScaler/inputs/FG/FfxApi_Dx12_FG.cpp",
+      "identical_to_r6": true,
       "sha256": "4a418408cbd391f1e755fed6560e7e607b3a59f2491aecb4f21ee05305d3882a",
-      "baseline_sha256": "65c3c94546b28fe6af9faf0f7e6dcb7aba236441b1fd226a89f93501c17d2e08",
-      "review": "Adds readiness only for matching internal frame/index; existing camera/motion/jitter math unchanged."
+      "baseline_sha256": "4a418408cbd391f1e755fed6560e7e607b3a59f2491aecb4f21ee05305d3882a"
     },
     {
       "path": "OptiScaler/inputs/FG/Upscaler_Inputs_Dx11wDx12.cpp",
+      "identical_to_r6": true,
       "sha256": "7acc7b43757a8895c9ff59c91e07916d80e34d47b5e0783cee6cdbb1866bb2b4",
-      "baseline_sha256": "a9ea45382bee1ee7aec26689c9a29dcb876452ff3395b74db860eb9b6d05e28e",
-      "review": "Adds constants readiness metadata following unchanged camera/motion/jitter/reset assignments."
+      "baseline_sha256": "7acc7b43757a8895c9ff59c91e07916d80e34d47b5e0783cee6cdbb1866bb2b4"
     },
     {
       "path": "OptiScaler/inputs/FG/Upscaler_Inputs_Dx12.cpp",
+      "identical_to_r6": true,
       "sha256": "b9ea5d3946fda98a8d4a2a675afdd426fc0ab9e453023256ec1a826181c8ed29",
-      "baseline_sha256": "7a7a026ff96d2039b76401109af60cbe2627d23c06350f908c98b36ba91ace82",
-      "review": "Adds constants readiness metadata following unchanged camera/motion/jitter/reset assignments."
+      "baseline_sha256": "b9ea5d3946fda98a8d4a2a675afdd426fc0ab9e453023256ec1a826181c8ed29"
     }
   ],
   "exact_body_checks": [
     {
+      "path": "OptiScaler/framegen/IFGFeature.cpp",
       "signature": "IFGFeature::StartNewFrame(",
-      "identical_to_r5": true,
-      "sha256": "7bc1b1e4e196be7a3c1cffd0a24e35c1dc82c6cba7c33db9ca9970888f65af85"
+      "sha256": "7bc1b1e4e196be7a3c1cffd0a24e35c1dc82c6cba7c33db9ca9970888f65af85",
+      "baseline_sha256": "7bc1b1e4e196be7a3c1cffd0a24e35c1dc82c6cba7c33db9ca9970888f65af85",
+      "identical_to_r6": true
     },
     {
+      "path": "OptiScaler/framegen/IFGFeature.cpp",
       "signature": "IFGFeature::SetFrameCount(",
-      "identical_to_r5": true,
-      "sha256": "8ddf6d0e886e59f325fd44e14c68f72cd4311bf0184c6260cb435cccb4304ffd"
+      "sha256": "8ddf6d0e886e59f325fd44e14c68f72cd4311bf0184c6260cb435cccb4304ffd",
+      "baseline_sha256": "8ddf6d0e886e59f325fd44e14c68f72cd4311bf0184c6260cb435cccb4304ffd",
+      "identical_to_r6": true
     },
     {
+      "path": "OptiScaler/framegen/xefg/XeFG_Dx12.cpp",
       "signature": "XeFG_Dx12::GetResourceData(",
-      "identical_to_r5": true,
-      "sha256": "65f5201c0285093bf0ead8cce4fab24694fb236a11e1c1d16a354822bebc700e"
+      "sha256": "65f5201c0285093bf0ead8cce4fab24694fb236a11e1c1d16a354822bebc700e",
+      "baseline_sha256": "65f5201c0285093bf0ead8cce4fab24694fb236a11e1c1d16a354822bebc700e",
+      "identical_to_r6": true
     },
     {
+      "path": "OptiScaler/framegen/xefg/XeFG_Dx12.cpp",
       "signature": "XeFG_Dx12::CreateContext(",
-      "identical_to_r5": true,
-      "sha256": "904765fa1b3009dd9ae80d95cc6cc7a707c66581b6ed46a97150f5852624b72a"
+      "sha256": "904765fa1b3009dd9ae80d95cc6cc7a707c66581b6ed46a97150f5852624b72a",
+      "baseline_sha256": "904765fa1b3009dd9ae80d95cc6cc7a707c66581b6ed46a97150f5852624b72a",
+      "identical_to_r6": true
     },
     {
-      "signature": "XeFG Dispatch camera/projection/jitter/motion/frame-time/history constant preparation",
-      "identical_to_r5": true,
-      "sha256": "d25b55f33a92138919bf3146c005314fdcdfa800274f1ee1851898e1df1b8813"
+      "path": "OptiScaler/framegen/xefg/XeFG_Dx12.cpp",
+      "signature": "XeFG_Dx12::CreateSwapchain(",
+      "sha256": "e550c40a0499d83810a6dc11a583e7b9bfe7dccb1be7a8c62f4abea5b84a9f94",
+      "baseline_sha256": "e550c40a0499d83810a6dc11a583e7b9bfe7dccb1be7a8c62f4abea5b84a9f94",
+      "identical_to_r6": true
     },
     {
-      "signature": "XeFG_Dx12::CreateSwapchain( maximum interpolation capacity selection",
-      "identical_to_r5": true,
-      "sha256": "deb074ec14b80139d1f7fb4996875c94c12230eee71001a0f3727fd764c3814e"
+      "path": "OptiScaler/framegen/xefg/XeFG_Dx12.cpp",
+      "signature": "XeFG_Dx12::CreateSwapchain1(",
+      "sha256": "66dd64df5bf8138272862a02e38e06db9a1b4a53f39e9886ac055483d378e10f",
+      "baseline_sha256": "66dd64df5bf8138272862a02e38e06db9a1b4a53f39e9886ac055483d378e10f",
+      "identical_to_r6": true
     },
     {
-      "signature": "XeFG_Dx12::CreateSwapchain1( maximum interpolation capacity selection",
-      "identical_to_r5": true,
-      "sha256": "deb074ec14b80139d1f7fb4996875c94c12230eee71001a0f3727fd764c3814e"
+      "path": "OptiScaler/framegen/xefg/XeFG_Dx12.cpp",
+      "signature": "XeFG_Dx12::StartNewFrame(",
+      "sha256": "340bf4dc8e119e897dfc5377bb81ad97c5ba01b729a5167578769637ea93eb24",
+      "baseline_sha256": "340bf4dc8e119e897dfc5377bb81ad97c5ba01b729a5167578769637ea93eb24",
+      "identical_to_r6": true
     },
     {
-      "signature": "XeFG selected interpolation count and game/config fallback",
-      "identical_after_removing_diagnostic_call": true,
-      "sha256_without_diagnostic": "f9f2c9f4953fc971e5e7ad9df032d4f60562d40b8a3906e51dc80f888ba0e857"
+      "path": "OptiScaler/framegen/xefg/XeFG_Dx12.cpp",
+      "signature": "XeFG_Dx12::SetFrameCount(",
+      "sha256": "fc584378e9ce07f0d689e23b1785092a234c0d73390fe545f6f1753c68899241",
+      "baseline_sha256": "fc584378e9ce07f0d689e23b1785092a234c0d73390fe545f6f1753c68899241",
+      "identical_to_r6": true
+    },
+    {
+      "path": "OptiScaler/framegen/xefg/XeFG_Dx12.cpp",
+      "signature": "XeFG_Dx12::SetResource(",
+      "sha256": "c632bf462dbf714ad267b46eecfe2ef4bde62fca77660455633e4f8d6ac870f3",
+      "baseline_sha256": "c632bf462dbf714ad267b46eecfe2ef4bde62fca77660455633e4f8d6ac870f3",
+      "identical_to_r6": true
+    },
+    {
+      "path": "OptiScaler/framegen/xefg/XeFG_Dx12.cpp",
+      "signature": "XeFG_Dx12::Activate(",
+      "sha256": "af31b2b920a501ef9c401fba105c6fce641af21390f1c93600301aae0708b279",
+      "baseline_sha256": "af31b2b920a501ef9c401fba105c6fce641af21390f1c93600301aae0708b279",
+      "identical_to_r6": true
+    },
+    {
+      "path": "OptiScaler/framegen/xefg/XeFG_Dx12.cpp",
+      "signature": "XeFG_Dx12::Dispatch(",
+      "sha256": "8747e58ffd26dd4f2b1eca15a9de5d98612517e659108abf59b21738b025229e",
+      "baseline_sha256": "d24cc94b24298702580bce594341b2cd22bba770a629d2b84328e011b0cb7ce5",
+      "identical_to_r6": false,
+      "identical_after_normalizing_diagnostic_reason_only": true,
+      "review": "Only reason argument selects diagnostic counter; DeactivateForReason keeps original admission + DeactivateImpl call. Frame/input math, SDK calls, count selection and algorithms unchanged."
+    },
+    {
+      "path": "OptiScaler/framegen/xefg/XeFG_Dx12.cpp",
+      "signature": "XeFG_Dx12::EvaluateState(",
+      "sha256": "bd55de62bc39e7dd2807ab57953e67fe8380bf6da65c5208410cf333d9df8c6c",
+      "baseline_sha256": "baa16d22400045b29ddb60d71b31df008ddfddd87414cd1da1d82b1d7c0b8e98",
+      "identical_to_r6": false,
+      "identical_after_normalizing_diagnostic_reason_only": true,
+      "review": "Only reason argument selects diagnostic counter; DeactivateForReason keeps original admission + DeactivateImpl call. Frame/input math, SDK calls, count selection and algorithms unchanged."
     }
   ],
   "shaders": {
     "tracked_file_count": 241,
-    "all_git_blob_identities_match_r5": true,
-    "aggregate_paths_and_sha256": "f5c2d9d8f49c35feb9b86573ee904e3533b94030e7b49bdbadaf44563d2eb648"
+    "all_bytes_match_r6": true,
+    "aggregate_paths_and_sha256": "3a1792c9f8eadb7ed3a181f7bb4cc379242c669c419c6ed0b9324f5e0621f5d5"
   },
-  "ffx_registry": {
-    "proxy_sha256": "b64be8a90eb79e0b91aa2c7f73392d661ac27ea25af147c7f1423ab669a5b25c",
-    "helper_sha256": "2406b2c8eeff65bf0cdec2f8a2277497169dd6e1fbf79f9a3ec10dc6f19271b6",
-    "review": "Only context-to-provider routing metadata is synchronized. Existing ankerl container, SDK calls, fallback types and insertion behavior remain; shader and quality parameters are unchanged."
-  },
-  "intentional_behavior_changes": [
-    "Per-frame recovery evidence and stale-constant rejection affect when XeFG may resume, without changing the preserved camera/motion formulas.",
-    "Changed Hudless formats reset temporal history and undergo SDK validation instead of permanent rejection behind an old static value.",
-    "SDK input/activation/Present errors and confirmed interpolation determine recovery state. This may change frame availability at transitions and is the intended fix."
+  "reviewed_source_hashes": [
+    {
+      "path": "OptiScaler/framegen/IFGFeature.cpp",
+      "identical_to_r6": true,
+      "sha256": "4931196c964e2061bb1e5295671b57f0ebd9f82d518012b1a539365d0782e5a5",
+      "baseline_sha256": "4931196c964e2061bb1e5295671b57f0ebd9f82d518012b1a539365d0782e5a5"
+    },
+    {
+      "path": "OptiScaler/framegen/IFGFeature.h",
+      "identical_to_r6": false,
+      "sha256": "4fe838c69822197ef26c09ee0e622b91a36068c5fe3b13ed4ec19a4ad4cc2e12",
+      "baseline_sha256": "9dd4d261f9fe493a61e3e6c07e438ca01b02b6a4024fa65f0230a6d0f154fff8"
+    },
+    {
+      "path": "OptiScaler/framegen/IFGFeature_Dx12.h",
+      "identical_to_r6": false,
+      "sha256": "4d9c2aa40c684ff64c16019d37d630fba1fc3bf570f28fb91adda75265c01b14",
+      "baseline_sha256": "656a928f5efba99704a60481c756ba64c2876bd09861041313e235984970606e"
+    },
+    {
+      "path": "OptiScaler/framegen/xefg/XeFG_Dx12.cpp",
+      "identical_to_r6": false,
+      "sha256": "9f0c730c22b409b658a78801ce2ccc4f88708da8df6147a6879a6130596640e8",
+      "baseline_sha256": "1797987cdaab5670faddfef2bcb12d09bba528382f5e4a11599c16b273d0bd49"
+    },
+    {
+      "path": "OptiScaler/framegen/xefg/XeFG_Dx12.h",
+      "identical_to_r6": false,
+      "sha256": "20ad1be7b0d179594063b3c926a64e52bbf5b66c2a3f7798175bf0d5d38bc10a",
+      "baseline_sha256": "39067e947bbab467ea24201a7eca6b8f1077b25467473a8ea1da255ba44f64fe"
+    },
+    {
+      "path": "OptiScaler/framegen/xefg/XeFGRecovery.h",
+      "identical_to_r6": true,
+      "sha256": "3442606f886c2abe7cea8a34cf857798eca35786ba20c9cb5358736608e53235",
+      "baseline_sha256": "3442606f886c2abe7cea8a34cf857798eca35786ba20c9cb5358736608e53235"
+    },
+    {
+      "path": "OptiScaler/proxies/FfxApi_Proxy.h",
+      "identical_to_r6": true,
+      "sha256": "b64be8a90eb79e0b91aa2c7f73392d661ac27ea25af147c7f1423ab669a5b25c",
+      "baseline_sha256": "b64be8a90eb79e0b91aa2c7f73392d661ac27ea25af147c7f1423ab669a5b25c"
+    },
+    {
+      "path": "OptiScaler/proxies/FfxContextRegistry.h",
+      "identical_to_r6": true,
+      "sha256": "2406b2c8eeff65bf0cdec2f8a2277497169dd6e1fbf79f9a3ec10dc6f19271b6",
+      "baseline_sha256": "2406b2c8eeff65bf0cdec2f8a2277497169dd6e1fbf79f9a3ec10dc6f19271b6"
+    },
+    {
+      "path": "OptiScaler/resource_tracking/ResTrack_dx12.cpp",
+      "identical_to_r6": false,
+      "sha256": "988e5a86f35bede2f5ebebcd75a744b86d61415c68b19f77441eb68a4eb9b2b6",
+      "baseline_sha256": "5bff32a2bacda73f76696699464c85a72cc138c88750c9bf1e0206a0787fa5be"
+    },
+    {
+      "path": "OptiScaler/resource_tracking/ResTrack_dx12.h",
+      "identical_to_r6": true,
+      "sha256": "7c1a9a324097a259d5fddea5200b22c12bd3257f734c58f20f358fdeb02c8b25",
+      "baseline_sha256": "7c1a9a324097a259d5fddea5200b22c12bd3257f734c58f20f358fdeb02c8b25"
+    }
   ],
   "preserved_configuration_intent": [
     "Intel XeFG only; no DLSS5/NR or additional FG stacking.",
     "Upscale ratio 1.5, original HDR/exposure/sharpening/FSR profile and pacing source preserved.",
     "Initial selected total 3x and maximum total 6x remain; no automatic multiplier or resolution reduction."
   ],
+  "intentional_behavior_changes": [
+    "Generation-bounded retirement retains newly Reset/re-recorded command lists until their own submission/discard evidence; this changes tracking safety, not rendering formulas.",
+    "Progress fence markers and allocation/lifecycle/timing diagnostics add observation work and can have unmeasured real-device overhead.",
+    "Startup allocation-observation opt-out defaults enabled and does not alter Intel FG, output count, shaders or quality settings."
+  ],
   "limits": [
-    "Payload/INI exact bytes and Intel runtime hashes are verified by the separate final package audit, not this source review.",
-    "New diagnostics add CPU observation work; real-device overhead and visual equivalence are unmeasured.",
-    "Passing preservation checks does not prove Dogtown performance recovery or absence of engine/provider/driver leaks."
+    "Final INI/payload bytes and runtime DLL hashes are verified separately by PACKAGE_AUDIT.json.",
+    "Source hashes identify the exact reviewed source contents; source changes after this report require a new audit.",
+    "No gameplay, image comparison, GPU overhead or complete Dogtown recovery is established by these checks."
   ]
 }

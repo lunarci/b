@@ -65,6 +65,10 @@ def observer_integration(source, baseline=False, recovery=False):
         "void XeFG_Dx12::RetirePendingCommandList(", "void XeFG_Dx12::PublishPendingLocked("]
     functions = [helpers.extract_function(tracker, sig) for sig in tracker_signatures]
     if baseline:
+        # Preserve the exact pinned R4 methods. Only the newer caller ABI is
+        # adapted; the old observer/lifetime algorithms remain unmodified.
+        functions = [function.replace("->BeforeCommandSubmission(", "->BeforeForHook(")
+                     .replace("->AfterCommandSubmission(", "->AfterForHook(") for function in functions]
         fixture = baseline_fixture()
         old_methods = fixture["OptiScaler/framegen/xefg/XeFG_Dx12.cpp"]["functions"]
         functions += [next(value for key, value in old_methods.items() if key.startswith(sig.replace("bool XeFG_Dx12::Track", "void XeFG_Dx12::Track"))) for sig in methods[:5]]
@@ -74,7 +78,7 @@ def observer_integration(source, baseline=False, recovery=False):
         functions += [next(iter(fixture["OptiScaler/hooks/D3D12_Hooks.cpp"]["functions"].values()))]
         fields = "static constexpr size_t MaxPendingCommandLists=256; ID3D12CommandList* _pendingCommandLists[MaxPendingCommandLists]{}; size_t _pendingCommandListCount=0; bool _pendingTrackingComplete=true; std::condition_variable _pendingCommandsSubmitted;"
     else:
-        functions += [helpers.extract_function(xefg, sig) for sig in methods + [
+        functions += [helpers.extract_function(xefg, sig.replace("void XeFG_Dx12::BeforeCommandSubmission(", "uint64_t XeFG_Dx12::BeforeCommandSubmission(")) for sig in methods + [
             "bool XeFG_Dx12::TryCloseCpuAdmission()", "void XeFG_Dx12::RestoreCpuAdmission()", "bool XeFG_Dx12::QuiesceWork()"]]
         functions += [helpers.extract_function(hooks, "static void HookToDevice(ID3D12Device* InDevice)\n{")]
         start = header.index("    static constexpr size_t MaxPendingCommandLists")

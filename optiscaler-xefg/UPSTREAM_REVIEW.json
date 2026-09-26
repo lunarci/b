@@ -1,14 +1,14 @@
 {
-  "schema_version": 2,
-  "review_date": "2026-09-26",
-  "scope": "R6 source review for Night City to Dogtown persistent degradation. Intel XeFG only; preserve ratio 1.5, original color/HDR/upscaler profile and 6x unlock. Source evidence is not gameplay validation.",
+  "schema_version": 3,
+  "review_date": "2026-09-26T16:33:31.571152+00:00",
+  "scope": "R7 selective source review for persistent Night City to Dogtown degradation. Preserve Intel XeFG, ratio 1.5, color/HDR/upscaler profile and unlocked 6x. No proof of complete gameplay recovery.",
   "repositories": [
     {
       "repository": "https://github.com/optiscaler/OptiScaler",
-      "head": "44cfee4d436857742a9bf71bbe81396ec9989715",
-      "date": "2026-09-25T19:27:13Z",
-      "decision": "No whole-nightly replacement; latest head is unchanged since R5 review. Reprojection/shader changes are outside this stability task.",
-      "source_url": "https://github.com/optiscaler/OptiScaler/tree/44cfee4d436857742a9bf71bbe81396ec9989715"
+      "head": "80f4c61b51f4d54d7377f215799a20b716e8032f",
+      "date": "2026-09-26T16:24:26Z",
+      "decision": "Latest official head newly reviewed, not adopted: only Streamline slSetFeatureLoaded compatibility spoof, with no demonstrated memory/queue fix for this already-running path. No whole-nightly replacement.",
+      "source_url": "https://github.com/optiscaler/OptiScaler/commit/80f4c61b51f4d54d7377f215799a20b716e8032f"
     },
     {
       "repository": "https://github.com/Coldwood1026/OptiScalerDp4aUnlock",
@@ -51,7 +51,7 @@
     "latest_release": "v3.0.2",
     "published_at": "2026-07-24T18:24:17Z",
     "url": "https://github.com/intel/xess/releases/tag/v3.0.2",
-    "decision": "Preserve R4/R5 payload. XeLL marker-without-Present leak and Streamline proxy fixes are already included by version; do not advertise as new R6 fixes.",
+    "decision": "Preserve already-current R4 through R6 payload. XeLL marker-without-Present leak and Streamline proxy fixes are already included by version; not new R7 fixes.",
     "files": [
       {
         "path": "OptiScaler/libxess_fg.dll",
@@ -86,6 +86,13 @@
       "url": "https://github.com/optiscaler/OptiScaler/blob/44cfee4d436857742a9bf71bbe81396ec9989715/OptiScaler/framegen/xefg/XeFG_Dx12.cpp#L1494-L1552",
       "decision": "Correct original inherited control-flow locally; no upstream fix available at this head.",
       "reason": "Static lastFormat returns on changed format before updating remembered value; tag result !=SUCCESS enters fgChanged/Deactivate loop. These mechanisms remain in latest upstream. Whether Dogtown triggered either is unproven by R5 logs."
+    },
+    {
+      "commit": "80f4c61b51f4d54d7377f215799a20b716e8032f",
+      "date": "2026-09-26T16:24:26Z",
+      "url": "https://github.com/optiscaler/OptiScaler/commit/80f4c61b51f4d54d7377f215799a20b716e8032f",
+      "decision": "Reviewed, not adopted in R7. Compare against prior 44cfee4d436857742a9bf71bbe81396ec9989715 contains only this commit.",
+      "reason": "Returns eOk for slSetFeatureLoaded(DLSS_G,loaded) and hooks this function. No allocation, residency, GPU-progress or resource-release fix; changing feature load behavior is outside demonstrated failure."
     }
   ],
   "sdk_contracts": {
@@ -131,6 +138,22 @@
     {
       "url": "https://learn.microsoft.com/en-us/windows/win32/direct3d12/residency",
       "finding": "Over-budget residency can intermittently freeze the process. Moving frequently used resources to system memory can severely reduce FPS; no simple API identifies safely spillable engine resources."
+    },
+    {
+      "url": "https://learn.microsoft.com/en-us/windows/win32/api/unknwn/nf-unknwn-iunknown-release",
+      "finding": "Release frees the object at zero; returned reference count is intended only for testing. R7 does not redesign the inherited pin/probe reference-count hook or perform post-final-release object access."
+    },
+    {
+      "url": "https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-reset",
+      "finding": "Command-list Reset is legal while the previous execution is still pending (unlike command allocator Reset), provided the allocator and list rules are met. A newer recording can appear before a post-Execute CPU observer runs."
+    },
+    {
+      "url": "https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12commandqueue-executecommandlists",
+      "finding": "Native ExecuteCommandLists return is a CPU submission boundary, not GPU completion. ResTrack observes only after forwarding the original call."
+    },
+    {
+      "url": "https://learn.microsoft.com/en-us/windows/win32/direct3d12/user-mode-heap-synchronization",
+      "finding": "Queue Signal updates its fence after previous queue work completes. A separate per-queue fence timeline can measure progress without CPU waiting. Completion does not establish present/display timing or prove memory is safely evictable."
     }
   ],
   "local_source_corrections": [
@@ -146,6 +169,47 @@
       "implementation": "FfxContextRegistry retains the existing map type; short locks serialize Set/Find/atomic Take. External provider calls stay outside locks. Original dispatch/fallback and quality settings are unchanged.",
       "validation": "tests/r6_ffx_registry compiles the production helper and exercises 16000 concurrent context lifetimes, single-winner removal and fallback semantics. Final aggregate results are in TEST_RESULTS.json.",
       "limit": "Concrete source data race corrected; R5 log does not establish that this race occurred at Dogtown or caused its memory growth."
+    },
+    {
+      "name": "R7 generation-aware post-submission retirement",
+      "decision": "adopt_local_fix",
+      "evidence": [
+        "BeforeCommandSubmission identifies recording generation before native Execute. Concurrent Reset/re-record can publish the same command-list pointer at a newer generation before AfterCommandSubmission.",
+        "The old identity-only retirement could erase that new pending recording; Microsoft explicitly permits command-list Reset while prior execution is pending."
+      ],
+      "implementation": "Capture a generation watermark under the pending mutex at entry; post-submit retirement removes only matching identities no newer than this watermark. Keep submission admission across native call and both observers. No new TLS ticket registry or queue references in ResTrack.",
+      "validation": "Actual production callback and core pending-generation regressions are in tests/r7_tracking and tests/r7_progress; final results are TEST_RESULTS.json.",
+      "limit": "This corrects a source lifetime-tracking race; no log demonstrates it caused Dogtown VRAM growth."
+    },
+    {
+      "name": "R7 tracked Release audit and sampled CPU timing",
+      "decision": "measure_without_COM_semantics_change",
+      "evidence": [
+        "Reverse-index lock spans temporary AddRef plus nonfinal original Release probe; descriptor cleanup and final original Release run outside it.",
+        "Removing the temporary pin or cleaning raw pointer keys after final destruction can introduce stale-pointer/address-reuse hazards. Descriptor binding metadata does not provide a complete resource-generation contract."
+      ],
+      "implementation": "Preserve existing COM call order/refcounts/mutex coverage. Sample one in 64 calls for mutex acquisition, AddRef/native probe and final native Release durations. No claims that native COM Release is GPU completion.",
+      "validation": "tests/r7_tracking extracts the real callback and checks reference balance, lock coverage, weak-descriptor cleanup, shutdown bypass, lifetime dispatch and exact sample counts.",
+      "limit": "This is diagnosis, not an established contention fix. Sampled maxima are lower bounds; inherited probe assumptions and unobserved calls remain outside proof."
+    },
+    {
+      "name": "R7 nonblocking queue progress observations",
+      "decision": "adopt_diagnostic",
+      "implementation": "After native submission, observe only XeFG-already-tracked queues. Use a separate progress fence, bounded try-lock, at most one outstanding marker and no blocking waits. Retain original teardown completion proofs; observations never authorize resource destruction.",
+      "limit": "Separates sampled queue progress from CPU submission and SDK status. An incomplete sample cannot alone identify paging, GPU load or a leak; actual GPU overhead remains unmeasured."
     }
+  ],
+  "review_history": [
+    {
+      "revision": "R6",
+      "review_date": "2026-09-26",
+      "official_head": "44cfee4d436857742a9bf71bbe81396ec9989715",
+      "summary": "R6 source/SDK review and local corrections below retained as prior evidence; not advertised as new R7 upstream patches."
+    }
+  ],
+  "r7_research_limits": [
+    "Targeted official OptiScaler Dogtown search found no transferable code-backed patch. Older Nukem Dogtown reports use a different FSR provider and provide no Intel correction.",
+    "No force Evict/MakeResident cycle, priority manipulation, synthetic byte purge, RAM offload or automatic quality/multiplier reduction was adopted.",
+    "The official latest head changed after R6 review; donor, nightly artifact and Intel release remained as recorded. Existing prior-reviewed commit facts above are historical unless explicitly rechecked."
   ]
 }

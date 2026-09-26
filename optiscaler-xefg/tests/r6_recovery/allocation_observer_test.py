@@ -64,7 +64,7 @@ struct FakeObject : ID3DDestructionNotifier {
 };
 namespace GpuAllocationHooks {
 using namespace GpuAllocationDiagnostics;
-Caller ClassifyCaller(void* address) {return static_cast<Caller>(reinterpret_cast<uintptr_t>(address));}
+Caller ClassifyCaller(void* address, AllocationMetadata* = nullptr) {return static_cast<Caller>(reinterpret_cast<uintptr_t>(address));}
 // ACTUAL_FUNCTIONS
 }
 using namespace GpuAllocationDiagnostics;

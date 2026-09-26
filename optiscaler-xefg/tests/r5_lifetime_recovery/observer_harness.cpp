@@ -1,5 +1,8 @@
 #include "framegen/FGWorkGate.h"
 #include "misc/XeFGWorkDiagnostics.h"
+#include "misc/XeFGProgressDiagnostics.h"
+#include "misc/GpuAllocationDiagnostics.h"
+#include "misc/LongSessionTiming.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -161,7 +164,7 @@ template<class T> bool CheckForRealObject(const char* name,T* input,IUnknown** o
 enum class FG_ResourceType {Depth,Velocity,UIColor,HudlessColor};
 enum class FGInput {DLSSG,Upscaler,NvngxFG};enum class FGOutput {XeFG,DLSSG};enum class SwapchainInteropApi {None};
 struct Flag {bool value=false;bool value_or_default()const{return value;}};
-struct Config {Flag FGDisableHUDFix{true},UESpoofIntelAtomics64;static Config* Instance(){static Config c;return &c;}};
+struct Config {Flag FGDisableHUDFix{true},UESpoofIntelAtomics64,GpuAllocationTracking{true};static Config* Instance(){static Config c;return &c;}};
 struct XeFG_Dx12;
 struct State {
     XeFG_Dx12* currentFG=nullptr;FGInput activeFgInput=FGInput::DLSSG;FGOutput activeFgOutput=FGOutput::XeFG;
@@ -189,7 +192,7 @@ struct XeFG_Dx12 {
     void RestoreCpuAdmission();
     bool QuiesceWork();
     static constexpr size_t MaxLifetimeQueues=8;
-    struct LifetimeQueue {ID3D12CommandQueue* queue=nullptr;};
+    struct LifetimeQueue {ID3D12CommandQueue* queue=nullptr; XeFGProgress::QueueSnapshot progress;};
     LifetimeQueue _lifetimeQueues[MaxLifetimeQueues]{};size_t _lifetimeQueueCount=0;
     bool _queueTrackingComplete=true,_objectsDrained=false;
     ID3D12GraphicsCommandList* _uiCommandList[BUFFER_COUNT]{},*_scCommandList[BUFFER_COUNT]{};
@@ -197,8 +200,21 @@ struct XeFG_Dx12 {
     bool IsActive()const{return true;}bool IsPaused()const{return false;}int GetIndex()const{return 0;}
     void SetResourceReady(FG_ResourceType){++hudWrites;}void SetCommandQueue(FG_ResourceType,ID3D12CommandQueue*){++hudWrites;}
     TRACK_RETURN TrackPendingCommandList(ID3D12GraphicsCommandList*);
+#if R4_BASELINE
     void BeforeCommandSubmission(ID3D12CommandQueue*,UINT,ID3D12CommandList* const*);
     void AfterCommandSubmission(UINT,ID3D12CommandList* const*);
+    uint64_t BeforeForHook(ID3D12CommandQueue* queue,UINT count,ID3D12CommandList* const* lists) {
+        BeforeCommandSubmission(queue,count,lists); return 0;
+    }
+    void AfterForHook(UINT count,ID3D12CommandList* const* lists,uint64_t) {
+        AfterCommandSubmission(count,lists);
+    }
+#else
+    uint64_t BeforeCommandSubmission(ID3D12CommandQueue*,UINT,ID3D12CommandList* const*);
+    void AfterCommandSubmission(UINT,ID3D12CommandList* const*,uint64_t);
+#endif
+    // R7 progress marker bodies have their own real-production regression suite.
+    void ObserveSubmittedQueue(ID3D12CommandQueue*) {}
     void DiscardPendingCommandList(ID3D12GraphicsCommandList*);
     void TrackLifetimeQueue(ID3D12CommandQueue*);
     std::uint64_t CapturePendingCommandListGeneration(const void*);

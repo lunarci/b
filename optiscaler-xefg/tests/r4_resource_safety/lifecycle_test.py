@@ -56,6 +56,7 @@ hook = body("OptiScaler/resource_tracking/ResTrack_dx12.cpp",
 hook_harness = r'''
 #include <framegen/FGWorkGate.h>
 #include <misc/XeFGWorkDiagnostics.h>
+#include <misc/XeFGProgressDiagnostics.h>
 #include <atomic>
 #include <cassert>
 #include <chrono>
@@ -96,12 +97,15 @@ struct FakeFG {
     void SetCommandQueue(FG_ResourceType, ID3D12CommandQueue*) {
         tracked = true; events.push_back('Q');
     }
-    void BeforeCommandSubmission(ID3D12CommandQueue*, UINT, ID3D12CommandList* const*) {
-        ++beforeCalls; tracked = true; events.push_back('B');
+    uint64_t BeforeCommandSubmission(ID3D12CommandQueue*, UINT, ID3D12CommandList* const*) {
+        ++beforeCalls; tracked = true; events.push_back('B'); return 77;
     }
-    void AfterCommandSubmission(UINT, ID3D12CommandList* const*) {
-        ++afterCalls; after = true; events.push_back('A');
+    void AfterCommandSubmission(UINT, ID3D12CommandList* const*, uint64_t ticket) {
+        assert(ticket == 77); ++afterCalls; after = true; events.push_back('A');
     }
+    // The progress implementation is executed in r7_progress; this boundary
+    // keeps the complete pre-existing hook/lifecycle tests intact.
+    void ObserveSubmittedQueue(ID3D12CommandQueue*) {}
     void DiscardPendingCommandList(ID3D12GraphicsCommandList*) {
         ++discardCalls; pending = false; events.push_back('D');
     }
@@ -265,13 +269,14 @@ pending_bodies = "\n\n".join(body("OptiScaler/framegen/xefg/XeFG_Dx12.cpp", sign
     "void XeFG_Dx12::PublishPendingLocked()",
     "bool XeFG_Dx12::TrackPendingCommandList(",
     "void XeFG_Dx12::DiscardPendingCommandList(",
-    "void XeFG_Dx12::BeforeCommandSubmission(",
+    "uint64_t XeFG_Dx12::BeforeCommandSubmission(",
     "void XeFG_Dx12::AfterCommandSubmission(",
     "void XeFG_Dx12::TrackLifetimeQueue(",
 ))
 pending_harness = r'''
 #include <framegen/FGWorkGate.h>
 #include <misc/XeFGWorkDiagnostics.h>
+#include <misc/XeFGProgressDiagnostics.h>
 #include <algorithm>
 #include <atomic>
 #include <cassert>
@@ -329,7 +334,7 @@ struct XeFG_Dx12 {
     bool _pendingTrackingComplete = true, _queueTrackingComplete = true;
     std::atomic<bool> _lifecycleFailed{false};
     bool _objectsDrained = false;
-    struct LifetimeQueue { ID3D12CommandQueue* queue = nullptr; };
+    struct LifetimeQueue { ID3D12CommandQueue* queue = nullptr; XeFGProgress::QueueSnapshot progress; };
     LifetimeQueue _lifetimeQueues[MaxLifetimeQueues]{};
     size_t _lifetimeQueueCount = 0;
     ID3D12GraphicsCommandList* _uiCommandList[BUFFER_COUNT]{};
@@ -343,8 +348,8 @@ struct XeFG_Dx12 {
     }
     bool TrackPendingCommandList(ID3D12GraphicsCommandList*);
     void DiscardPendingCommandList(ID3D12GraphicsCommandList*);
-    void BeforeCommandSubmission(ID3D12CommandQueue*, UINT, ID3D12CommandList* const*);
-    void AfterCommandSubmission(UINT, ID3D12CommandList* const*);
+    uint64_t BeforeCommandSubmission(ID3D12CommandQueue*, UINT, ID3D12CommandList* const*);
+    void AfterCommandSubmission(UINT, ID3D12CommandList* const*, uint64_t);
     void TrackLifetimeQueue(ID3D12CommandQueue*);
 };
 template<class Predicate> void await(Predicate predicate) {
@@ -371,9 +376,9 @@ int main() {
         assert(std::chrono::steady_clock::now()-begin<250ms);
         assert(!fg._workGate.IsClosed() && !fg._submissionGate.IsClosed());
         { auto work=fg.AcquireSubmissionWork(); assert(work);
-          fg.BeforeCommandSubmission(&queue,1,lists);
+          auto ticket = fg.BeforeCommandSubmission(&queue,1,lists);
           assert(queue.refs==1 && fg._lifetimeQueueCount==1 && fg.PendingForTest());
-          fg.AfterCommandSubmission(1,lists); assert(!fg.PendingForTest());
+          fg.AfterCommandSubmission(1,lists,ticket); assert(!fg.PendingForTest());
           // Observer bookkeeping in flight must also defer without closing it.
           assert(!fg.QuiesceWork());
           assert(!fg._workGate.IsClosed() && !fg._providerPresentGate.IsClosed() && !fg._submissionGate.IsClosed()); }
@@ -394,13 +399,13 @@ int main() {
         fg.TrackPendingCommandList(&first);
         fg.TrackPendingCommandList(&second);
         assert(fg._pendingCommandListCount == 2);
-        fg.AfterCommandSubmission(1, other);
+        fg.AfterCommandSubmission(1, other, fg.BeforeCommandSubmission(&queue, 1, other));
         assert(fg._pendingCommandListCount == 2);
-        fg.BeforeCommandSubmission(&queue, 1, one);
-        fg.AfterCommandSubmission(1, one);
+        auto ticket = fg.BeforeCommandSubmission(&queue, 1, one);
+        fg.AfterCommandSubmission(1, one, ticket);
         assert(fg._pendingCommandListCount == 1 && fg.PendingForTest());
-        fg.BeforeCommandSubmission(&queue, 2, both);
-        fg.AfterCommandSubmission(2, both);
+        ticket = fg.BeforeCommandSubmission(&queue, 2, both);
+        fg.AfterCommandSubmission(2, both, ticket);
         assert(!fg.PendingForTest() && queue.refs == 1);
         assert(fg.QuiesceWork());
     }
@@ -410,8 +415,8 @@ int main() {
         ID3D12CommandQueue queue;
         ID3D12CommandList* submitted[]{&first};
         fg.TrackPendingCommandList(&first);
-        fg.BeforeCommandSubmission(&queue, 1, submitted);
-        fg.AfterCommandSubmission(1, submitted);
+        auto ticket = fg.BeforeCommandSubmission(&queue, 1, submitted);
+        fg.AfterCommandSubmission(1, submitted, ticket);
         assert(queue.refs == 1 && fg._lifetimeQueueCount == 1);
         // A later recording of the SAME list may be discarded. That cancels
         // the new recording only; its earlier submitted GPU work still owns
@@ -435,15 +440,63 @@ int main() {
         fg.TrackPendingCommandList(&wrapped);
         fg.TrackPendingCommandList(&canonical);
         assert(fg._pendingCommandListCount == 1);
-        fg.BeforeCommandSubmission(&queue, 1, wrappedBatch);
+        auto ticket = fg.BeforeCommandSubmission(&queue, 1, wrappedBatch);
         assert(queue.refs == 1);
-        fg.AfterCommandSubmission(1, wrappedBatch);
+        fg.AfterCommandSubmission(1, wrappedBatch, ticket);
         assert(!fg.PendingForTest());
         fg.TrackPendingCommandList(&canonical);
         fg.DiscardPendingCommandList(&wrapped);
         assert(!fg.PendingForTest() && fg.QuiesceWork());
         assert(queue.refs == 1 && fg._lifetimeQueueCount == 1);
         wrappedList = nullptr; canonicalList = nullptr;
+    }
+    {
+        // R7 regression: a Reset/new recording between native Execute and
+        // its After callback is a new generation, not the submitted work.
+        XeFG_Dx12 fg; ID3D12GraphicsCommandList list; ID3D12CommandQueue queue;
+        ID3D12CommandList* batch[]{&list};
+        assert(fg.TrackPendingCommandList(&list));
+        const auto oldTicket = fg.BeforeCommandSubmission(&queue, 1, batch);
+        assert(oldTicket != 0);
+        fg.DiscardPendingCommandList(&list); // successful native Reset
+        assert(fg.TrackPendingCommandList(&list));
+        const auto newer = fg.CapturePendingCommandListGeneration(&list);
+        assert(newer > oldTicket);
+        fg.AfterCommandSubmission(1, batch, oldTicket);
+        assert(fg.PendingForTest() && fg.CapturePendingCommandListGeneration(&list) == newer);
+        assert(!fg.QuiesceWork() && !fg._submissionGate.IsClosed());
+        const auto newTicket = fg.BeforeCommandSubmission(&queue, 1, batch);
+        fg.AfterCommandSubmission(1, batch, newTicket);
+        assert(!fg.PendingForTest() && fg.QuiesceWork());
+    }
+    {
+        // A batch captured with no pending entries cannot retire a later tag.
+        XeFG_Dx12 fg; ID3D12GraphicsCommandList list; ID3D12CommandQueue queue;
+        ID3D12CommandList* batch[]{&list};
+        const auto emptyTicket = fg.BeforeCommandSubmission(&queue, 1, batch);
+        assert(emptyTicket == 0);
+        assert(fg.TrackPendingCommandList(&list));
+        fg.AfterCommandSubmission(1, batch, emptyTicket);
+        assert(fg.PendingForTest());
+        fg.DiscardPendingCommandList(&list);
+        assert(fg.QuiesceWork());
+    }
+    {
+        // Overlapping callbacks keep distinct local watermarks. The old
+        // two-list batch consumes its second list, but not the first list's
+        // newer recording captured by a nested submission.
+        XeFG_Dx12 fg; ID3D12GraphicsCommandList first,second; ID3D12CommandQueue queue;
+        ID3D12CommandList* both[]{&first,&second}; ID3D12CommandList* one[]{&first};
+        assert(fg.TrackPendingCommandList(&first) && fg.TrackPendingCommandList(&second));
+        const auto older = fg.BeforeCommandSubmission(&queue, 2, both);
+        fg.DiscardPendingCommandList(&first); assert(fg.TrackPendingCommandList(&first));
+        const auto newer = fg.BeforeCommandSubmission(&queue, 1, one);
+        assert(newer > older);
+        fg.AfterCommandSubmission(2, both, older);
+        assert(fg._pendingCommandListCount == 1 && fg.CapturePendingCommandListGeneration(&first) == newer);
+        assert(fg.CapturePendingCommandListGeneration(&second) == 0);
+        fg.AfterCommandSubmission(1, one, newer);
+        assert(!fg.PendingForTest() && fg.QuiesceWork());
     }
     {
         // A recorded game list can be discarded/reset without Execute. Until

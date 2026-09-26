@@ -1,8 +1,16 @@
 diff --git a/OptiScaler/Config.cpp b/OptiScaler/Config.cpp
-index ea38b300..2a102dff 100644
+index ea38b300..bff07ad7 100644
 --- a/OptiScaler/Config.cpp
 +++ b/OptiScaler/Config.cpp
-@@ -1013,9 +1013,9 @@ bool Config::SaveIni()
+@@ -420,6 +420,7 @@ bool Config::Reload(std::filesystem::path iniPath)
+             LogSingleFile.set_from_config(readBool("Log", "SingleFile"));
+             LogAsync.set_from_config(readBool("Log", "LogAsync"));
+             LogAsyncThreads.set_from_config(readInt("Log", "LogAsyncThreads"));
++            GpuAllocationTracking.set_from_config(readBool("Diagnostics", "GpuAllocationTracking"));
+ 
+             {
+                 auto setting = readString("Log", "LogFileName", false);
+@@ -1013,9 +1014,9 @@ bool Config::SaveIni()
          ini.SetValue("XeFG", "IgnoreInitChecks",
                       GetBoolValue(Instance()->FGXeFGIgnoreInitChecks.value_for_config()).c_str());
          ini.SetValue("XeFG", "UIComposition", GetBoolValue(Instance()->FGXeFGUIComposition.value_for_config()).c_str());
@@ -15,7 +23,16 @@ index ea38b300..2a102dff 100644
          ini.SetValue("XeFG", "DebugView", GetBoolValue(Instance()->FGXeFGDebugView.value_for_config()).c_str());
          ini.SetValue("XeFG", "ForceBorderless",
                       GetBoolValue(Instance()->FGXeFGForceBorderless.value_for_config()).c_str());
-@@ -1612,9 +1612,9 @@ bool Config::SaveIni()
+@@ -1448,6 +1449,8 @@ bool Config::SaveIni()
+                      wstring_to_string(Instance()->LogFileName.value_for_config_or(L"auto")).c_str());
+         ini.SetValue("Log", "LogAsync", GetBoolValue(Instance()->LogAsync.value_for_config()).c_str());
+         ini.SetValue("Log", "LogAsyncThreads", GetIntValue(Instance()->LogAsyncThreads.value_for_config()).c_str());
++        ini.SetValue("Diagnostics", "GpuAllocationTracking",
++                     GetBoolValue(Instance()->GpuAllocationTracking.value_for_config()).c_str());
+     }
+ 
+     // NvApi
+@@ -1612,9 +1615,9 @@ bool Config::SaveIni()
  
  bool Config::SaveXeFG()
  {
@@ -29,7 +46,7 @@ index ea38b300..2a102dff 100644
      auto pathWStr = absoluteFileName.wstring();
      LOG_INFO("Trying to save ini to: {0}", wstring_to_string(pathWStr));
 diff --git a/OptiScaler/Config.h b/OptiScaler/Config.h
-index b01e2cf5..071b1207 100644
+index b01e2cf5..3ae88f09 100644
 --- a/OptiScaler/Config.h
 +++ b/OptiScaler/Config.h
 @@ -46,6 +46,20 @@ template <class T, HasDefaultValue defaultState = WithDefault> class CustomOptio
@@ -53,6 +70,16 @@ index b01e2cf5..071b1207 100644
      // Use this when first setting a CustomOptional
      constexpr void set_from_config(const std::optional<T>& opt)
      {
+@@ -247,6 +261,9 @@ class Config
+     CustomOptional<bool> LogAsync { false };
+     CustomOptional<int> LogAsyncThreads { 4 };
+ 
++    // Allocation observation is selected at process startup; reload requires a restart.
++    CustomOptional<bool> GpuAllocationTracking { true };
++
+     // XeSS
+     CustomOptional<bool> BuildPipelines { true };
+     CustomOptional<int32_t> NetworkModel { 0 };
 diff --git a/OptiScaler/NVNGX_Parameter.cpp b/OptiScaler/NVNGX_Parameter.cpp
 index 453565e6..f23e4623 100644
 --- a/OptiScaler/NVNGX_Parameter.cpp
@@ -604,7 +631,7 @@ index 3cb12cff..0685c611 100644
  {
      if (index < 0)
 diff --git a/OptiScaler/framegen/IFGFeature.h b/OptiScaler/framegen/IFGFeature.h
-index 1a64bab2..a90041c3 100644
+index 1a64bab2..75ff35f8 100644
 --- a/OptiScaler/framegen/IFGFeature.h
 +++ b/OptiScaler/framegen/IFGFeature.h
 @@ -3,6 +3,7 @@
@@ -623,7 +650,7 @@ index 1a64bab2..a90041c3 100644
  
      UINT64 _frameCount = 0;
      UINT64 _lastDispatchedFrame = 0;
-@@ -100,6 +102,12 @@ class IFGFeature
+@@ -100,6 +102,15 @@ class IFGFeature
      virtual const char* Name() = 0;
  
      virtual bool Present() = 0;
@@ -633,10 +660,13 @@ index 1a64bab2..a90041c3 100644
 +    virtual UINT64 PresentRecoveryToken() { return 0; }
 +    virtual void ObservePresentStatus(UINT64 token, HRESULT nativeResult, int32_t queryResult,
 +                                      uint32_t framesPresented, int32_t frameGenResult, bool enabled) {}
++    // Diagnostic notification after the original queue submission returns.
++    // It never changes submission or grants permission to release game resources.
++    virtual void ObserveSubmittedQueue(ID3D12CommandQueue* queue) {}
      virtual void Activate() = 0;
      virtual void Deactivate() = 0;
      virtual void DestroyFGContext() = 0;
-@@ -110,7 +118,7 @@ class IFGFeature
+@@ -110,7 +121,7 @@ class IFGFeature
  
      int GetIndex();
      int GetIndexWillBeDispatched();
@@ -645,7 +675,7 @@ index 1a64bab2..a90041c3 100644
  
      bool IsResourceReady(FG_ResourceType type, int index = -1);
  
-@@ -133,7 +141,7 @@ class IFGFeature
+@@ -133,7 +144,7 @@ class IFGFeature
      bool IsInvertedDepth();
      bool IsInfiniteDepth();
  
@@ -654,7 +684,7 @@ index 1a64bab2..a90041c3 100644
      void SetJitter(float x, float y, int index = -1);
      void SetMVScale(float x, float y, int index = -1);
      void SetCameraValues(float nearValue, float farValue, float vFov, float aspectRatio, float meterFactor = 0.0f,
-@@ -142,6 +150,9 @@ class IFGFeature
+@@ -142,6 +153,9 @@ class IFGFeature
                         int index = -1);
      void SetFrameTimeDelta(double delta, int index = -1);
      void SetReset(UINT reset, int index = -1);
@@ -1051,7 +1081,7 @@ index 0eee70e4..692425ca 100644
  
      return true;
 diff --git a/OptiScaler/framegen/IFGFeature_Dx12.h b/OptiScaler/framegen/IFGFeature_Dx12.h
-index aee92e25..8f6331de 100644
+index aee92e25..b8fe691d 100644
 --- a/OptiScaler/framegen/IFGFeature_Dx12.h
 +++ b/OptiScaler/framegen/IFGFeature_Dx12.h
 @@ -1,6 +1,7 @@
@@ -1128,8 +1158,8 @@ index aee92e25..8f6331de 100644
 +    FGWorkGate::Scope AcquireSubmissionWork() { return _submissionGate.TryEnter(); }
 +    FGWorkGate::Scope AcquirePresentWork() { return _providerPresentGate.TryEnter(); }
 +    // Called with an admission token spanning the actual ExecuteCommandLists.
-+    virtual void BeforeCommandSubmission(ID3D12CommandQueue*, UINT, ID3D12CommandList* const*) {}
-+    virtual void AfterCommandSubmission(UINT, ID3D12CommandList* const*) {}
++    virtual uint64_t BeforeCommandSubmission(ID3D12CommandQueue*, UINT, ID3D12CommandList* const*) { return 0; }
++    virtual void AfterCommandSubmission(UINT, ID3D12CommandList* const*, uint64_t) {}
 +    virtual void DiscardPendingCommandList(ID3D12GraphicsCommandList*) {}
 +    virtual uint64_t CapturePendingCommandListGeneration(const void*) { return 0; }
 +    virtual void RetirePendingCommandList(const void*, uint64_t) {}
@@ -1469,7 +1499,7 @@ index 00000000..d416cd50
 +    }
 +};
 diff --git a/OptiScaler/framegen/xefg/XeFG_Dx12.cpp b/OptiScaler/framegen/xefg/XeFG_Dx12.cpp
-index 1dbb3831..f01d2bb1 100644
+index 1dbb3831..485e3d0c 100644
 --- a/OptiScaler/framegen/xefg/XeFG_Dx12.cpp
 +++ b/OptiScaler/framegen/xefg/XeFG_Dx12.cpp
 @@ -1,5 +1,6 @@
@@ -1479,7 +1509,7 @@ index 1dbb3831..f01d2bb1 100644
  #include <hudfix/Hudfix_Dx12.h>
  #include <menu/menu_overlay_dx.h>
  #include <resource_tracking/ResTrack_dx12.h>
-@@ -73,6 +74,13 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
+@@ -73,6 +74,17 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
          }
  
          LOG_INFO("XeFG context created");
@@ -1488,12 +1518,16 @@ index 1dbb3831..f01d2bb1 100644
 +        std::fill(std::begin(_hudlessAcceptedFormat), std::end(_hudlessAcceptedFormat), DXGI_FORMAT_UNKNOWN);
 +        _resourceDiagnostics.BeginContext();
 +        _workDiagnostics.BeginContext(_resourceDiagnostics.Read().contextId);
++        {
++            std::lock_guard progressLock(_gpuProgressMutex);
++            _gpuProgressContextId = _resourceDiagnostics.Read().contextId;
++        }
 +        XeFGPacing::RequestReset();
 +        RequestHistoryReset();
          result = XeFGProxy::SetLoggingCallback()(_swapChainContext, XEFG_SWAPCHAIN_LOGGING_LEVEL_DEBUG, xefgLogCallback,
                                                   nullptr);
  
-@@ -168,6 +176,7 @@ feature_version XeFG_Dx12::Version()
+@@ -168,6 +180,7 @@ feature_version XeFG_Dx12::Version()
      if (XeFGProxy::InitXeFG())
      {
          auto ver = XeFGProxy::Version();
@@ -1501,7 +1535,7 @@ index 1dbb3831..f01d2bb1 100644
          return feature_version(ver.major, ver.minor, ver.patch);
      }
  
-@@ -180,8 +189,13 @@ bool XeFG_Dx12::DestroySwapchainContext()
+@@ -180,8 +193,13 @@ bool XeFG_Dx12::DestroySwapchainContext()
  {
      LOG_DEBUG("");
  
@@ -1516,7 +1550,7 @@ index 1dbb3831..f01d2bb1 100644
          auto context = _swapChainContext;
          _swapChainContext = nullptr;
  
-@@ -193,6 +207,7 @@ bool XeFG_Dx12::DestroySwapchainContext()
+@@ -193,6 +211,7 @@ bool XeFG_Dx12::DestroySwapchainContext()
          if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
          {
              _swapChainContext = context;
@@ -1524,7 +1558,7 @@ index 1dbb3831..f01d2bb1 100644
          }
          else
          {
-@@ -275,19 +290,9 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
+@@ -275,19 +294,9 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
          else if (readyToRelease)
          {
              LOG_INFO("Releasing old swapchain");
@@ -1546,7 +1580,7 @@ index 1dbb3831..f01d2bb1 100644
          }
          else
          {
-@@ -296,6 +301,8 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
+@@ -296,6 +305,8 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
          }
      }
  
@@ -1555,7 +1589,7 @@ index 1dbb3831..f01d2bb1 100644
      if (_swapChainContext == nullptr)
      {
          LOG_DEBUG("Creating swapchain context for the first time");
-@@ -316,6 +323,8 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
+@@ -316,6 +327,8 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
          if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
          {
              _maxInterpolationCount = props.maxSupportedInterpolations;
@@ -1564,7 +1598,7 @@ index 1dbb3831..f01d2bb1 100644
              LOG_INFO("Max supported interpolations: {}", props.maxSupportedInterpolations);
          }
          else
-@@ -429,6 +438,8 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
+@@ -429,6 +442,8 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
      ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
  #endif // !DONT_USE_XMX
  
@@ -1573,7 +1607,7 @@ index 1dbb3831..f01d2bb1 100644
      xefg_swapchain_result_t result;
      result = XeFGProxy::D3D12InitFromSwapChainDesc()(_swapChainContext, hwnd, &scDesc, &fsDesc, realQueue, factory12,
                                                       &params);
-@@ -439,6 +450,11 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
+@@ -439,6 +454,11 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
          return false;
      }
  
@@ -1585,7 +1619,7 @@ index 1dbb3831..f01d2bb1 100644
      LOG_INFO("XeFG swapchain created");
      result = XeFGProxy::D3D12GetSwapChainPtr()(_swapChainContext, IID_PPV_ARGS(swapChain));
      if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
-@@ -450,13 +466,22 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
+@@ -450,13 +470,22 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
      // When forcing XeLL, always tell XeFG that FG is active, even tho we don't send anything
      if (State::Instance().activeFgInput == FGInput::ForceXeLL)
      {
@@ -1609,7 +1643,7 @@ index 1dbb3831..f01d2bb1 100644
      return true;
  }
  
-@@ -480,19 +505,9 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
+@@ -480,19 +509,9 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
          else if (readyToRelease)
          {
              LOG_INFO("Releasing old swapchain");
@@ -1631,7 +1665,7 @@ index 1dbb3831..f01d2bb1 100644
          }
          else
          {
-@@ -501,6 +516,8 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
+@@ -501,6 +520,8 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
          }
      }
  
@@ -1640,7 +1674,7 @@ index 1dbb3831..f01d2bb1 100644
      if (_swapChainContext == nullptr)
      {
          if (State::Instance().currentD3D12Device == nullptr)
-@@ -519,6 +536,8 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
+@@ -519,6 +540,8 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
          if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
          {
              _maxInterpolationCount = props.maxSupportedInterpolations;
@@ -1649,7 +1683,7 @@ index 1dbb3831..f01d2bb1 100644
              LOG_INFO("Max supported interpolations: {}", props.maxSupportedInterpolations);
          }
          else
-@@ -592,6 +611,8 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
+@@ -592,6 +615,8 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
      if (Config::Instance()->FGXeFGHighResMV.value_or_default())
          _constants.flags |= FG_Flags::DisplayResolutionMVs;
  
@@ -1658,7 +1692,7 @@ index 1dbb3831..f01d2bb1 100644
      xefg_swapchain_result_t result;
  
      {
-@@ -608,6 +629,11 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
+@@ -608,6 +633,11 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
          return false;
      }
  
@@ -1670,7 +1704,7 @@ index 1dbb3831..f01d2bb1 100644
      LOG_INFO("XeFG swapchain created");
      result = XeFGProxy::D3D12GetSwapChainPtr()(_swapChainContext, IID_PPV_ARGS(swapChain));
      if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
-@@ -619,42 +645,234 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
+@@ -619,42 +649,235 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
      // When forcing XeLL, always tell XeFG that FG is active, even tho we don't send anything
      if (State::Instance().activeFgInput == FGInput::ForceXeLL)
      {
@@ -1748,9 +1782,10 @@ index 1dbb3831..f01d2bb1 100644
 +                _recovery.PreparePresent(); // Ordinary one-frame SL boundary correction.
 +        }
 +        IFGFeature::SetFrameCount(frameId);
-+    }
+     }
 +}
-+
+ 
+-    if (_isActive)
 +static bool IsTerminalXeFGResult(int32_t result)
 +{
 +    // These official errors require a usable/new context or a supported runtime.
@@ -1769,10 +1804,9 @@ index 1dbb3831..f01d2bb1 100644
 +        return true;
 +    default:
 +        return false;
-     }
++    }
 +}
- 
--    if (_isActive)
++
 +bool XeFG_Dx12::TryBeginRecoveryTrial(UINT64 frame)
 +{
 +    if (!_recovery.Recovering()) return true;
@@ -1810,7 +1844,7 @@ index 1dbb3831..f01d2bb1 100644
 +            XeFGPacing::RequestReset();
 +            RequestHistoryReset();
 +        }
-+    }
+     }
 +    return _recovery.AllowsInput(frame);
 +}
 +
@@ -1843,6 +1877,7 @@ index 1dbb3831..f01d2bb1 100644
 +
 +void XeFG_Dx12::PreparePresent()
 +{
++    PollGpuProgress();
 +    auto work = AcquireWork();
 +    if (!work || _swapChainContext == nullptr || _lifecycleFailed) return;
 +    _recovery.PreparePresent();
@@ -1860,7 +1895,7 @@ index 1dbb3831..f01d2bb1 100644
 +    {
 +        _isActive = false;
 +        _waitingNewFrameData = false;
-     }
++    }
 +    const bool terminal = IsTerminalXeFGResult(static_cast<int32_t>(result));
 +    _recovery.Disabled(ticket, success, now, terminal);
 +    if (terminal)
@@ -1917,7 +1952,7 @@ index 1dbb3831..f01d2bb1 100644
      auto currentFeature = State::Instance().currentFeature;
      bool nativeAA = false;
      if (State::Instance().activeFgInput == FGInput::Upscaler && currentFeature != nullptr)
-@@ -664,7 +882,10 @@ void XeFG_Dx12::Activate()
+@@ -664,7 +887,10 @@ void XeFG_Dx12::Activate()
          (IsLowResMV() || nativeAA || (State::Instance().gameQuirks & GameQuirk::ForceFGRenderSizeMVs) ||
           Config::Instance()->FGXeFGIgnoreInitChecks.value_or_default()))
      {
@@ -1928,7 +1963,7 @@ index 1dbb3831..f01d2bb1 100644
  
          if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
          {
-@@ -672,37 +893,39 @@ void XeFG_Dx12::Activate()
+@@ -672,37 +898,45 @@ void XeFG_Dx12::Activate()
              _lastDispatchedFrame = 0;
          }
  
@@ -1941,12 +1976,17 @@ index 1dbb3831..f01d2bb1 100644
  
  void XeFG_Dx12::Deactivate()
 +{
-+    auto work = AcquireWork();
-+    if (work)
-+        DeactivateImpl();
++    DeactivateForReason(XeFGProgress::DeactivateReason::External);
 +}
 +
-+bool XeFG_Dx12::DeactivateImpl(bool submitPending)
++void XeFG_Dx12::DeactivateForReason(XeFGProgress::DeactivateReason reason)
++{
++    auto work = AcquireWork();
++    if (work)
++        DeactivateImpl(true, reason);
++}
++
++bool XeFG_Dx12::DeactivateImpl(bool submitPending, XeFGProgress::DeactivateReason reason)
  {
      LOG_DEBUG("");
  
@@ -1977,12 +2017,13 @@ index 1dbb3831..f01d2bb1 100644
          if (_swapChainContext != nullptr)
          {
              result = XeFGProxy::SetEnabled()(_swapChainContext, false);
++            XeFGProgress::RecordDeactivate(reason, static_cast<int32_t>(result));
 +            XeFGDiagnostics::RecordActivation(false, static_cast<int32_t>(result),
 +                                               XeFGDiagnostics::ActivationReason::LifecycleDisable);
              if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
                  _isActive = false;
          }
-@@ -712,39 +935,112 @@ void XeFG_Dx12::Deactivate()
+@@ -712,39 +946,112 @@ void XeFG_Dx12::Deactivate()
          }
  
          //_lastDispatchedFrame = 0;
@@ -2013,7 +2054,7 @@ index 1dbb3831..f01d2bb1 100644
 +    if (!TryCloseCpuAdmission())
 +        return;
 +    const bool wasActive = _isActive;
-+    if (!DeactivateImpl(false))
++    if (!DeactivateImpl(false, XeFGProgress::DeactivateReason::AliasReset))
 +    {
 +        RestoreCpuAdmission();
 +        _workDiagnostics.OnCleanupDeferred(XeFGDiagnostics::CleanupReason::ProviderDisableFailed);
@@ -2060,7 +2101,7 @@ index 1dbb3831..f01d2bb1 100644
 +    if (!QuiesceWork())
 +        return false; // Admission is restored; no five-second pending-list wait.
 +    const bool wasActive = _isActive;
-+    if (!DeactivateImpl(false))
++    if (!DeactivateImpl(false, XeFGProgress::DeactivateReason::FullShutdown))
 +    {
 +        RestoreCpuAdmission();
 +        _workDiagnostics.OnCleanupDeferred(XeFGDiagnostics::CleanupReason::ProviderDisableFailed);
@@ -2110,7 +2151,7 @@ index 1dbb3831..f01d2bb1 100644
      LOG_FUNC();
  
      UINT64 willDispatchFrame = 0;
-@@ -757,14 +1053,20 @@ bool XeFG_Dx12::Dispatch()
+@@ -757,14 +1064,20 @@ bool XeFG_Dx12::Dispatch()
  
      LOG_DEBUG("_frameCount: {}, willDispatchFrame: {}, fIndex: {}", _frameCount, willDispatchFrame, fIndex);
  
@@ -2136,7 +2177,7 @@ index 1dbb3831..f01d2bb1 100644
  
      auto& state = State::Instance();
  
-@@ -819,21 +1121,25 @@ bool XeFG_Dx12::Dispatch()
+@@ -819,21 +1132,25 @@ bool XeFG_Dx12::Dispatch()
          {
              LOG_INFO("Interpolation count changed {} -> {}", _framesToInterpolate, targetCount);
  
@@ -2166,7 +2207,26 @@ index 1dbb3831..f01d2bb1 100644
          }
      }
  
-@@ -879,7 +1185,8 @@ bool XeFG_Dx12::Dispatch()
+@@ -844,7 +1161,8 @@ bool XeFG_Dx12::Dispatch()
+ 
+         state.fgChanged = true;
+         UpdateTarget();
+-        Deactivate();
++        // This shared workaround also covers UI-composition and VSync changes.
++        DeactivateForReason(XeFGProgress::DeactivateReason::ProviderSettingsToggle);
+     }
+ 
+     if (!_haveHudless.has_value())
+@@ -866,7 +1184,7 @@ bool XeFG_Dx12::Dispatch()
+             _haveHudless = usingHudless;
+             state.fgChanged = true;
+             UpdateTarget();
+-            Deactivate();
++            DeactivateForReason(XeFGProgress::DeactivateReason::HudlessChanged);
+ 
+             return false;
+         }
+@@ -879,7 +1197,8 @@ bool XeFG_Dx12::Dispatch()
          {
              res->validity = FG_ResourceValidity::UntilPresentFromDispatch;
              res->frameIndex = fIndex;
@@ -2176,7 +2236,7 @@ index 1dbb3831..f01d2bb1 100644
          }
      }
  
-@@ -890,10 +1197,14 @@ bool XeFG_Dx12::Dispatch()
+@@ -890,10 +1209,14 @@ bool XeFG_Dx12::Dispatch()
          {
              res->validity = FG_ResourceValidity::UntilPresentFromDispatch;
              res->frameIndex = fIndex;
@@ -2192,7 +2252,7 @@ index 1dbb3831..f01d2bb1 100644
      XeFGProxy::EnableDebugFeature()(_swapChainContext, XEFG_SWAPCHAIN_DEBUG_FEATURE_TAG_INTERPOLATED_FRAMES,
                                      Config::Instance()->FGXeFGDebugView.value_or_default(), nullptr);
      static bool lastOnlyFG = false;
-@@ -956,37 +1267,19 @@ bool XeFG_Dx12::Dispatch()
+@@ -956,37 +1279,19 @@ bool XeFG_Dx12::Dispatch()
      constData.motionVectorScaleX = _mvScaleX[fIndex];
      constData.motionVectorScaleY = _mvScaleY[fIndex];
  
@@ -2237,7 +2297,7 @@ index 1dbb3831..f01d2bb1 100644
  
      if (!(frameRenderTime > 0.0))
          frameRenderTime = state.lastFGFrameTime;
-@@ -1021,9 +1314,8 @@ bool XeFG_Dx12::Dispatch()
+@@ -1021,9 +1326,8 @@ bool XeFG_Dx12::Dispatch()
      {
          LOG_ERROR("TagFrameConstants error: {} ({})", magic_enum::enum_name(result), (UINT) result);
  
@@ -2249,7 +2309,7 @@ index 1dbb3831..f01d2bb1 100644
  
          return false;
      }
-@@ -1033,9 +1325,8 @@ bool XeFG_Dx12::Dispatch()
+@@ -1033,9 +1337,8 @@ bool XeFG_Dx12::Dispatch()
      {
          LOG_ERROR("SetPresentId error: {} ({})", magic_enum::enum_name(result), (UINT) result);
  
@@ -2261,7 +2321,7 @@ index 1dbb3831..f01d2bb1 100644
  
          return false;
      }
-@@ -1084,12 +1375,16 @@ bool XeFG_Dx12::Dispatch()
+@@ -1084,12 +1387,16 @@ bool XeFG_Dx12::Dispatch()
          {
              LOG_ERROR("D3D12TagFrameResource Backbuffer error: {} ({})", magic_enum::enum_name(result), (UINT) result);
  
@@ -2281,7 +2341,7 @@ index 1dbb3831..f01d2bb1 100644
      LOG_DEBUG("Result: Ok");
  
      return true;
-@@ -1099,7 +1394,19 @@ void* XeFG_Dx12::FrameGenerationContext() { return _fgContext; }
+@@ -1099,7 +1406,19 @@ void* XeFG_Dx12::FrameGenerationContext() { return _fgContext; }
  
  void* XeFG_Dx12::SwapchainContext() { return _swapChainContext; }
  
@@ -2302,7 +2362,7 @@ index 1dbb3831..f01d2bb1 100644
  
  bool XeFG_Dx12::SetInterpolatedFrameCount(UINT interpolatedFrameCount) { return true; }
  
-@@ -1123,6 +1430,13 @@ void XeFG_Dx12::EvaluateState(ID3D12Device* device, FG_Constants& fgConstants)
+@@ -1123,6 +1442,13 @@ void XeFG_Dx12::EvaluateState(ID3D12Device* device, FG_Constants& fgConstants)
  
      _infiniteDepth = static_cast<bool>(fgConstants.flags & FG_Flags::InfiniteDepth);
  
@@ -2316,7 +2376,25 @@ index 1dbb3831..f01d2bb1 100644
      // If FG Enabled from menu
      if (Config::Instance()->FGEnabled.value_or_default())
      {
-@@ -1180,7 +1494,7 @@ void XeFG_Dx12::EvaluateState(ID3D12Device* device, FG_Constants& fgConstants)
+@@ -1139,7 +1465,7 @@ void XeFG_Dx12::EvaluateState(ID3D12Device* device, FG_Constants& fgConstants)
+         else if (state.fgChanged)
+         {
+             LOG_DEBUG("FGChanged");
+-            Deactivate();
++            DeactivateForReason(XeFGProgress::DeactivateReason::SettingsChanged);
+ 
+             // Pause for 10 frames
+             UpdateTarget();
+@@ -1155,7 +1481,7 @@ void XeFG_Dx12::EvaluateState(ID3D12Device* device, FG_Constants& fgConstants)
+     else
+     {
+         LOG_DEBUG("!FGEnabled");
+-        Deactivate();
++        DeactivateForReason(XeFGProgress::DeactivateReason::ConfigurationDisabled);
+ 
+         state.clearCapturedHudlesses = true;
+         Hudfix_Dx12::ResetCounters();
+@@ -1180,7 +1506,7 @@ void XeFG_Dx12::EvaluateState(ID3D12Device* device, FG_Constants& fgConstants)
      state.scChanged = false;
  }
  
@@ -2325,7 +2403,7 @@ index 1dbb3831..f01d2bb1 100644
  {
      for (size_t i = 0; i < BUFFER_COUNT; i++)
      {
-@@ -1188,6 +1502,9 @@ void XeFG_Dx12::ReleaseObjects()
+@@ -1188,6 +1514,9 @@ void XeFG_Dx12::ReleaseObjects()
          SAFE_RELEASE(_uiCommandList[i]);
          SAFE_RELEASE(_scCommandAllocator[i]);
          SAFE_RELEASE(_scCommandList[i]);
@@ -2335,7 +2413,7 @@ index 1dbb3831..f01d2bb1 100644
  
          // Reset command list state
          _scCommandListResetted[i] = false;
-@@ -1197,6 +1514,65 @@ void XeFG_Dx12::ReleaseObjects()
+@@ -1197,6 +1526,71 @@ void XeFG_Dx12::ReleaseObjects()
          _uiAllocatorFenceValues[i] = 0;
      }
  
@@ -2389,6 +2467,7 @@ index 1dbb3831..f01d2bb1 100644
 +        {
 +            auto& entry = _lifetimeQueues[i];
 +            SAFE_RELEASE(entry.fence);
++            SAFE_RELEASE(entry.progressFence);
 +            if (entry.event != nullptr)
 +                CloseHandle(entry.event);
 +            SAFE_RELEASE(entry.queue); // Balance only our AddRef.
@@ -2397,11 +2476,16 @@ index 1dbb3831..f01d2bb1 100644
 +        _lifetimeQueueCount = 0;
 +    }
 +    _gameCommandQueue = nullptr;
++    {
++        std::lock_guard progressLock(_gpuProgressMutex);
++        _nextGpuProgressPollMs = 0;
++        PublishGpuProgressLocked(XeFGDiagnostics::WorkNowMs());
++    }
 +
      _renderUI.reset();
      _hudlessCompare.reset();
      _mvFlip.reset();
-@@ -1204,138 +1580,111 @@ void XeFG_Dx12::ReleaseObjects()
+@@ -1204,138 +1598,111 @@ void XeFG_Dx12::ReleaseObjects()
      _depthInvert.reset();
  }
  
@@ -2489,10 +2573,16 @@ index 1dbb3831..f01d2bb1 100644
 -
 -            result = _uiCommandList[i]->Close();
 -            if (result != S_OK)
--            {
++            ID3D12GraphicsCommandList* realList = nullptr;
++            if (CheckForRealObject(__FUNCTION__, _uiCommandList[i], (IUnknown**) &realList))
++                _uiCommandList[i] = realList;
++            if (FAILED(_uiCommandList[i]->Close()))
+             {
 -                LOG_ERROR("_uiCommandList[{}]->Close: {:X}", i, (unsigned long) result);
 -                break;
--            }
++                SAFE_RELEASE(_uiCommandList[i]); // Newly created, never submitted.
++                return;
+             }
 -
 -            if (_uiFence == nullptr)
 -            {
@@ -2505,20 +2595,14 @@ index 1dbb3831..f01d2bb1 100644
 -            }
 -
 -            if (_uiFenceEvent == nullptr)
-+            ID3D12GraphicsCommandList* realList = nullptr;
-+            if (CheckForRealObject(__FUNCTION__, _uiCommandList[i], (IUnknown**) &realList))
-+                _uiCommandList[i] = realList;
-+            if (FAILED(_uiCommandList[i]->Close()))
-             {
+-            {
 -                _uiFenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 -                if (_uiFenceEvent == nullptr)
 -                {
 -                    LOG_ERROR("CreateEvent for UI fence failed");
 -                    break;
 -                }
-+                SAFE_RELEASE(_uiCommandList[i]); // Newly created, never submitted.
-+                return;
-             }
+-            }
 -
 -            result =
 -                InDevice->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&_scCommandAllocator[i]));
@@ -2571,7 +2655,11 @@ index 1dbb3831..f01d2bb1 100644
 -            }
 -
 -            if (_scFence == nullptr)
--            {
++            ID3D12GraphicsCommandList* realList = nullptr;
++            if (CheckForRealObject(__FUNCTION__, _scCommandList[i], (IUnknown**) &realList))
++                _scCommandList[i] = realList;
++            if (FAILED(_scCommandList[i]->Close()))
+             {
 -                result = InDevice->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&_scFence));
 -                if (FAILED(result))
 -                {
@@ -2581,11 +2669,7 @@ index 1dbb3831..f01d2bb1 100644
 -            }
 -
 -            if (_scFenceEvent == nullptr)
-+            ID3D12GraphicsCommandList* realList = nullptr;
-+            if (CheckForRealObject(__FUNCTION__, _scCommandList[i], (IUnknown**) &realList))
-+                _scCommandList[i] = realList;
-+            if (FAILED(_scCommandList[i]->Close()))
-             {
+-            {
 -                _scFenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 -                if (_scFenceEvent == nullptr)
 -                {
@@ -2617,7 +2701,7 @@ index 1dbb3831..f01d2bb1 100644
      auto fIndex = GetIndexWillBeDispatched();
      LOG_DEBUG("fIndex: {}", fIndex);
  
-@@ -1363,7 +1712,8 @@ bool XeFG_Dx12::Present()
+@@ -1363,7 +1730,8 @@ bool XeFG_Dx12::Present()
                  else if (_renderUI->IsInit())
                  {
                      auto commandList = GetSCCommandList(fIndex);
@@ -2627,7 +2711,7 @@ index 1dbb3831..f01d2bb1 100644
                  }
              }
          }
-@@ -1393,8 +1743,9 @@ bool XeFG_Dx12::Present()
+@@ -1393,8 +1761,9 @@ bool XeFG_Dx12::Present()
                      if (_hudlessCompare->IsInit())
                      {
                          auto commandList = GetSCCommandList(fIndex);
@@ -2639,7 +2723,7 @@ index 1dbb3831..f01d2bb1 100644
                      }
                  }
              }
-@@ -1409,33 +1760,8 @@ bool XeFG_Dx12::Present()
+@@ -1409,33 +1778,8 @@ bool XeFG_Dx12::Present()
  
      // if (IsActive() && !IsPaused())
      {
@@ -2675,7 +2759,7 @@ index 1dbb3831..f01d2bb1 100644
      }
  
      if ((_fgFramePresentId - _lastFGFramePresentId) > 3 && IsActive() && !_waitingNewFrameData)
-@@ -1453,11 +1779,22 @@ bool XeFG_Dx12::Present()
+@@ -1453,11 +1797,22 @@ bool XeFG_Dx12::Present()
  
  bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
  {
@@ -2702,7 +2786,7 @@ index 1dbb3831..f01d2bb1 100644
  
      // For late sent SL resources
      // we use provided frame index
-@@ -1465,7 +1802,18 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1465,7 +1820,18 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
      if (fIndex < 0)
          fIndex = GetIndex();
  
@@ -2722,7 +2806,7 @@ index 1dbb3831..f01d2bb1 100644
  
      std::unique_lock<std::shared_mutex> lock(_resourceMutex[fIndex]);
  
-@@ -1480,7 +1828,7 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1480,7 +1846,7 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
      if (type == FG_ResourceType::HudlessColor)
      {
          if (Config::Instance()->FGDisableHudless.value_or_default())
@@ -2731,7 +2815,7 @@ index 1dbb3831..f01d2bb1 100644
  
          // Making a copy if it's just valid now to be able to use it later
          if (State::Instance().fgHudlessCompare && inputResource->validity == FG_ResourceValidity::ValidNow)
-@@ -1488,20 +1836,20 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1488,20 +1854,20 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
  
          if (!_noHudless[fIndex] && (_frameResources[fIndex][type].validity == FG_ResourceValidity::ValidNow))
          {
@@ -2755,7 +2839,7 @@ index 1dbb3831..f01d2bb1 100644
  
          // Making a copy if it's just valid now
          if (Config::Instance()->FGDrawUIOverFG.value_or_default() &&
-@@ -1512,7 +1860,7 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1512,7 +1878,7 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
  
          if (!_noUi[fIndex] && (_frameResources[fIndex][type].validity == FG_ResourceValidity::ValidNow))
          {
@@ -2764,7 +2848,7 @@ index 1dbb3831..f01d2bb1 100644
          }
      }
  
-@@ -1520,28 +1868,36 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1520,28 +1886,36 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
      {
          if (!_noDistortionField[fIndex] && (_frameResources[fIndex][type].validity == FG_ResourceValidity::ValidNow))
          {
@@ -2805,7 +2889,7 @@ index 1dbb3831..f01d2bb1 100644
      fResource->type = type;
      fResource->state = inputResource->state;
      fResource->validity = inputResource->validity;
-@@ -1556,6 +1912,18 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1556,6 +1930,18 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
                      Config::Instance()->FGResourceFlip.value_or_default() &&
                      (type == FG_ResourceType::Velocity || type == FG_ResourceType::Depth);
  
@@ -2824,7 +2908,7 @@ index 1dbb3831..f01d2bb1 100644
      // Resource flipping
      if (willFlip && _device != nullptr)
          FlipResource(fResource);
-@@ -1574,12 +1942,20 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1574,12 +1960,20 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
          }
          else if (_depthInvert->IsInit())
          {
@@ -2845,7 +2929,7 @@ index 1dbb3831..f01d2bb1 100644
                  _depthInvert->SetBufferState(cmdList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
  
                  if (_depthInvert->Dispatch(cmdList, fResource->GetResource(), _depthInvert->Buffer()))
-@@ -1597,18 +1973,24 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1597,18 +1991,24 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
      {
          LOG_DEBUG("Making a resource copy of: {}", magic_enum::enum_name(type));
  
@@ -2876,7 +2960,7 @@ index 1dbb3831..f01d2bb1 100644
          _resourceCopy[fIndex][type]->SetName(std::format(L"_resourceCopy[{}][{}]", fIndex, (UINT) type).c_str());
          fResource->copy = copyOutput;
          fResource->state = D3D12_RESOURCE_STATE_COPY_DEST;
-@@ -1633,19 +2015,21 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1633,19 +2033,21 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
  
          if (type == FG_ResourceType::HudlessColor)
          {
@@ -2906,7 +2990,7 @@ index 1dbb3831..f01d2bb1 100644
  
          // SDK version 2.1.1 fixes those issues
          if (version < feature_version { 1, 2, 2 })
-@@ -1661,53 +2045,336 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1661,53 +2063,345 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
              // https://github.com/intel/xess/issues/47
              if (inputResource->state == D3D12_RESOURCE_STATE_COPY_SOURCE)
              {
@@ -2994,9 +3078,10 @@ index 1dbb3831..f01d2bb1 100644
      LOG_TRACE("_frameResources[{}][{}]: {:X}", fIndex, magic_enum::enum_name(type), (size_t) fResource->GetResource());
  
 +    observation.Accept();
-+    return true;
-+}
-+
+     return true;
+ }
+ 
+-void XeFG_Dx12::SetCommandQueue(FG_ResourceType type, ID3D12CommandQueue* queue) { _gameCommandQueue = queue; }
 +void XeFG_Dx12::SetCommandQueue(FG_ResourceType type, ID3D12CommandQueue* queue)
 +{
 +    auto work = AcquireWork();
@@ -3036,14 +3121,16 @@ index 1dbb3831..f01d2bb1 100644
 +    return true;
 +}
 +
-+void XeFG_Dx12::BeforeCommandSubmission(ID3D12CommandQueue* queue, UINT count,
++uint64_t XeFG_Dx12::BeforeCommandSubmission(ID3D12CommandQueue* queue, UINT count,
 +                                       ID3D12CommandList* const* lists)
 +{
 +    bool found = false;
++    uint64_t submittedThroughGeneration;
 +    {
 +        std::lock_guard lock(_pendingCommandMutex);
 +        if (_pendingCommandListCount == 0)
-+            return;
++            return 0;
++        submittedThroughGeneration = _pendingGeneration;
 +    }
 +    for (UINT i = 0; i < count && !found; ++i)
 +    {
@@ -3062,10 +3149,13 @@ index 1dbb3831..f01d2bb1 100644
 +    // submission token. A teardown snapshot cannot miss this queue.
 +    if (found)
 +        TrackLifetimeQueue(queue);
++    return submittedThroughGeneration;
 +}
 +
-+void XeFG_Dx12::AfterCommandSubmission(UINT count, ID3D12CommandList* const* lists)
++void XeFG_Dx12::AfterCommandSubmission(UINT count, ID3D12CommandList* const* lists,
++                                      uint64_t submittedThroughGeneration)
 +{
++    if (submittedThroughGeneration == 0) return;
 +    {
 +        std::lock_guard lock(_pendingCommandMutex);
 +        if (_pendingCommandListCount == 0) return;
@@ -3076,7 +3166,11 @@ index 1dbb3831..f01d2bb1 100644
 +        if (!CheckForRealObject(__FUNCTION__, lists[i], (IUnknown**) &realList)) realList = lists[i];
 +        std::lock_guard lock(_pendingCommandMutex);
 +        for (size_t j = 0; j < _pendingCommandListCount;)
-+            if (realList == _pendingCommandLists[j].identity)
++            // Reset/re-record on another CPU thread can start after native
++            // Execute returns but before this callback. Never retire that newer
++            // recording merely because its command-list identity was reused.
++            if (realList == _pendingCommandLists[j].identity &&
++                _pendingCommandLists[j].generation <= submittedThroughGeneration)
 +            {
 +                _pendingCommandLists[j] = _pendingCommandLists[--_pendingCommandListCount];
 +                ++_pendingStats.submitted;
@@ -3198,10 +3292,9 @@ index 1dbb3831..f01d2bb1 100644
 +    }
 +    // Execute/Reset/final Release observation must stay alive even while the
 +    // provider is paused: native game API calls always continue to execute.
-     return true;
- }
- 
--void XeFG_Dx12::SetCommandQueue(FG_ResourceType type, ID3D12CommandQueue* queue) { _gameCommandQueue = queue; }
++    return true;
++}
++
 +void XeFG_Dx12::RestoreCpuAdmission()
 +{
 +    if (_submissionClosedByLifecycle && !_submissionWasClosed) _submissionGate.Open();
@@ -3261,7 +3354,7 @@ index 1dbb3831..f01d2bb1 100644
  
  bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
  {
-@@ -1729,27 +2396,127 @@ bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
+@@ -1729,27 +2423,281 @@ bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
          LOG_TRACE("Accuired Mutex: {}", Mutex.getOwner());
      }
  
@@ -3270,18 +3363,13 @@ index 1dbb3831..f01d2bb1 100644
  
 -    if (_fgContext != nullptr)
 -        DestroyFGContext();
--
--    if (!State::Instance().isShuttingDown)
 +    if (Config::Instance()->FGUseMutexForSwapchain.value_or_default())
-     {
--        if (_swapChainContext != nullptr)
--            DestroySwapchainContext();
++    {
 +        LOG_TRACE("Releasing Mutex: {}", Mutex.getOwner());
 +        Mutex.unlockThis(1);
 +    }
  
--        _swapChainContext = nullptr;
--        State::Instance().currentFGSwapchain = nullptr;
+-    if (!State::Instance().isShuttingDown)
 +    return released;
 +}
 +
@@ -3297,18 +3385,179 @@ index 1dbb3831..f01d2bb1 100644
 +            return;
 +
 +    if (_lifetimeQueueCount == MaxLifetimeQueues)
-+    {
+     {
+-        if (_swapChainContext != nullptr)
+-            DestroySwapchainContext();
 +        if (_queueTrackingComplete)
 +            LOG_ERROR("XeFG queue lifetime tracking capacity exceeded; automatic resource teardown disabled");
 +        _queueTrackingComplete = false;
 +        return;
-     }
++    }
 +    queue->AddRef();
-+    _lifetimeQueues[_lifetimeQueueCount++].queue = queue;
++    auto& entry = _lifetimeQueues[_lifetimeQueueCount++];
++    entry.queue = queue;
++    entry.progress.tracked = true;
++    entry.progress.queueId = XeFGProgress::NextQueueId();
 +    _objectsDrained = false;
 +}
  
+-        _swapChainContext = nullptr;
+-        State::Instance().currentFGSwapchain = nullptr;
++void XeFG_Dx12::PublishGpuProgressLocked(uint64_t now)
++{
++    XeFGProgress::Snapshot snapshot;
++    std::unique_lock queuesLock(_lifetimeQueueMutex, std::try_to_lock);
++    if (!queuesLock.owns_lock()) return;
++    snapshot.valid = true;
++    snapshot.contextId = _gpuProgressContextId;
++    snapshot.sampledAtMs = now;
++    snapshot.trackedQueues = _lifetimeQueueCount;
++    snapshot.queueTrackingComplete = _queueTrackingComplete;
++    snapshot.skippedBusy = _gpuProgressBusy.load(std::memory_order_relaxed);
++    for (size_t i = 0; i < _lifetimeQueueCount; ++i)
++        snapshot.queues[i] = _lifetimeQueues[i].progress;
++    queuesLock.unlock();
++    XeFGProgress::Publish(snapshot);
++}
++
++void XeFG_Dx12::PollGpuProgressLocked(uint64_t now)
++{
++    if (now < _nextGpuProgressPollMs) return;
++    size_t count;
++    {
++        std::unique_lock queuesLock(_lifetimeQueueMutex, std::try_to_lock);
++        if (!queuesLock.owns_lock()) return;
++        count = _lifetimeQueueCount;
++    }
++    _nextGpuProgressPollMs = now + XeFGProgress::IntervalMs;
++    // Fixed entries cannot be released/replaced until the caller's admission
++    // drains. Do not hold the lifetime registry lock across driver methods.
++    for (size_t i = 0; i < count; ++i)
++    {
++        auto& entry = _lifetimeQueues[i];
++        auto& sample = entry.progress;
++        if (entry.progressFence == nullptr || sample.stopped || sample.signalCount == sample.completionCount)
++            continue;
++        const auto completed = entry.progressFence->GetCompletedValue();
++        const auto observedAt = XeFGDiagnostics::WorkNowMs();
++        sample.lastPollTickMs = observedAt;
++        if (completed == UINT64_MAX)
++        {
++            ++sample.deviceRemoved;
++            sample.stopped = true;
++            continue; // UINT64_MAX is an error sentinel, never progress.
++        }
++        if (completed >= entry.progressValue)
++        {
++            ++sample.completionCount;
++            sample.lastCompletionObservedTickMs = observedAt;
++            const auto delay = observedAt >= sample.pendingSinceMs ? observedAt - sample.pendingSinceMs : 0;
++            sample.completionObservationMaxMs = (std::max)(sample.completionObservationMaxMs, delay);
++            sample.pendingSinceMs = 0;
++        }
+     }
++    PublishGpuProgressLocked(XeFGDiagnostics::WorkNowMs());
++}
+ 
 -    ReleaseObjects();
++void XeFG_Dx12::PollGpuProgress()
++{
++    LongSession::WaitScope progressScope(LongSession::WaitStage::GpuProgress);
++    if (State::Instance().isShuttingDown) return;
++    auto admission = AcquireSubmissionWork();
++    if (!admission) return;
++    std::unique_lock progressLock(_gpuProgressMutex, std::try_to_lock);
++    if (!progressLock.owns_lock())
++    {
++        _gpuProgressBusy.fetch_add(1, std::memory_order_relaxed);
++        return;
++    }
++    PollGpuProgressLocked(XeFGDiagnostics::WorkNowMs());
++}
+ 
+-    if (Config::Instance()->FGUseMutexForSwapchain.value_or_default())
++void XeFG_Dx12::ObserveSubmittedQueue(ID3D12CommandQueue* queue)
++{
++    LongSession::WaitScope progressScope(LongSession::WaitStage::GpuProgress);
++    // Called only after the real ExecuteCommandLists, under its submission
++    // token. This callback observes already-owned queues; it never registers a
++    // new queue or changes pending-resource/cleanup evidence.
++    if (queue == nullptr || State::Instance().isShuttingDown) return;
++    std::unique_lock progressLock(_gpuProgressMutex, std::try_to_lock);
++    if (!progressLock.owns_lock())
++    {
++        _gpuProgressBusy.fetch_add(1, std::memory_order_relaxed);
++        return;
++    }
++    LifetimeQueue* entry = nullptr;
+     {
+-        LOG_TRACE("Releasing Mutex: {}", Mutex.getOwner());
+-        Mutex.unlockThis(1);
++        std::unique_lock queuesLock(_lifetimeQueueMutex, std::try_to_lock);
++        if (!queuesLock.owns_lock()) return;
++        for (size_t i = 0; i < _lifetimeQueueCount; ++i)
++            if (_lifetimeQueues[i].queue == queue)
++            {
++                entry = &_lifetimeQueues[i];
++                break;
++            }
++    }
++    if (entry == nullptr) return;
++    const auto now = XeFGDiagnostics::WorkNowMs();
++    auto& sample = entry->progress;
++    sample.lastSubmissionTickMs = now;
++    PollGpuProgressLocked(now);
++    if (now < entry->nextProgressAttemptMs || sample.stopped) return;
++    entry->nextProgressAttemptMs = now + XeFGProgress::IntervalMs;
++    if (sample.signalCount != sample.completionCount)
++    {
++        ++sample.coalesced; // Retain the oldest outstanding marker and its age.
++        PublishGpuProgressLocked(XeFGDiagnostics::WorkNowMs());
++        return;
++    }
++    if (entry->progressFence == nullptr)
++    {
++        ++entry->progressCreateAttempts;
++        sample.queueType = static_cast<uint32_t>(queue->GetDesc().Type);
++        ID3D12Device* device = nullptr;
++        auto result = queue->GetDevice(IID_PPV_ARGS(&device));
++        if (SUCCEEDED(result) && device != nullptr)
++        {
++            result = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&entry->progressFence));
++            device->Release();
++        }
++        if (FAILED(result) || entry->progressFence == nullptr)
++        {
++            ++sample.createFailures;
++            sample.lastError = static_cast<int32_t>(FAILED(result) ? result : E_FAIL);
++            sample.stopped = entry->progressCreateAttempts >= 3;
++            PublishGpuProgressLocked(XeFGDiagnostics::WorkNowMs());
++            return;
++        }
++        sample.fenceReady = true;
++    }
++    const auto value = entry->progressValue + 1;
++    // Fence creation/driver calls may themselves take time. Rate-limit actual
++    // Signal starts, rather than the earlier callback entry timestamp.
++    const auto signalStarted = XeFGDiagnostics::WorkNowMs();
++    entry->nextProgressAttemptMs = signalStarted + XeFGProgress::IntervalMs;
++    const auto result = queue->Signal(entry->progressFence, value);
++    if (FAILED(result))
++    {
++        ++sample.signalFailures;
++        sample.lastError = static_cast<int32_t>(result);
++        sample.stopped = true;
++        // A failed Signal is not an issued marker and never becomes pending.
++    }
++    else
++    {
++        entry->progressValue = value;
++        ++sample.signalCount;
++        sample.lastSignalTickMs = sample.pendingSinceMs = signalStarted;
++    }
++    PublishGpuProgressLocked(XeFGDiagnostics::WorkNowMs());
++}
++
 +bool XeFG_Dx12::DrainLifetimeQueues()
 +{
 +    LongSession::WaitScope drainScope(LongSession::WaitStage::GpuFence);
@@ -3319,17 +3568,14 @@ index 1dbb3831..f01d2bb1 100644
 +            return false;
 +        count = _lifetimeQueueCount;
 +    }
- 
--    if (Config::Instance()->FGUseMutexForSwapchain.value_or_default())
++
 +    // Called only at context lifecycle boundaries, never in the frame loop.
 +    // QuiesceWork has stopped tags/recording, observed their pending submissions,
 +    // and closed submission admission before this stable queue snapshot.
 +    // One deadline covers all queues rather than allowing 5 seconds per queue.
 +    const auto deadline = GetTickCount64() + 5000;
 +    for (size_t i = 0; i < count; ++i)
-     {
--        LOG_TRACE("Releasing Mutex: {}", Mutex.getOwner());
--        Mutex.unlockThis(1);
++    {
 +        auto& entry = _lifetimeQueues[i];
 +        if (entry.fence == nullptr)
 +        {
@@ -3403,10 +3649,10 @@ index 1dbb3831..f01d2bb1 100644
 +    _depthInvert.release();
 +}
 diff --git a/OptiScaler/framegen/xefg/XeFG_Dx12.h b/OptiScaler/framegen/xefg/XeFG_Dx12.h
-index f54de2b3..036aa6ec 100644
+index f54de2b3..5b720e31 100644
 --- a/OptiScaler/framegen/xefg/XeFG_Dx12.h
 +++ b/OptiScaler/framegen/xefg/XeFG_Dx12.h
-@@ -12,6 +12,11 @@
+@@ -12,6 +12,12 @@
  #include <xefg_swapchain.h>
  #include <xefg_swapchain_d3d12.h>
  #include <xefg_swapchain_debug.h>
@@ -3414,11 +3660,12 @@ index f54de2b3..036aa6ec 100644
 +#include <misc/XeFGResourceDiagnostics.h>
 +#include <misc/XeFGWorkDiagnostics.h>
 +#include <misc/XeFGPresentDiagnostics.h>
++#include <misc/XeFGProgressDiagnostics.h>
 +#include "XeFGRecovery.h"
  
  class XeFG_Dx12 : public virtual IFGFeature_Dx12
  {
-@@ -24,8 +29,84 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
+@@ -24,8 +30,98 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
      bool _infiniteDepth = false;
      std::optional<bool> _haveHudless = std::nullopt;
      bool _uiComposition = false;
@@ -3456,6 +3703,12 @@ index f54de2b3..036aa6ec 100644
 +        ID3D12Fence* fence = nullptr;
 +        HANDLE event = nullptr;
 +        UINT64 value = 0;
++        // Diagnostic marker, separate from the fence that proves safe teardown.
++        ID3D12Fence* progressFence = nullptr;
++        UINT64 progressValue = 0;
++        uint64_t nextProgressAttemptMs = 0;
++        unsigned progressCreateAttempts = 0;
++        XeFGProgress::QueueSnapshot progress;
 +    };
 +    LifetimeQueue _lifetimeQueues[MaxLifetimeQueues] {};
 +    size_t _lifetimeQueueCount = 0;
@@ -3463,6 +3716,12 @@ index f54de2b3..036aa6ec 100644
 +    bool _queueTrackingComplete = true;
 +    std::atomic<bool> _lifecycleFailed { false };
 +    bool _objectsDrained = false;
++    std::mutex _gpuProgressMutex;
++    std::atomic<uint64_t> _gpuProgressBusy { 0 };
++    uint64_t _gpuProgressContextId = 0, _nextGpuProgressPollMs = 0;
++    void PollGpuProgress();
++    void PollGpuProgressLocked(uint64_t now);
++    void PublishGpuProgressLocked(uint64_t now);
 +
 +    // Serialize lifecycle owners, never normal driver callback submissions.
 +    // Lock order: lifecycle -> close admission/wait -> per-slot resource locks.
@@ -3493,7 +3752,9 @@ index f54de2b3..036aa6ec 100644
 +    void RestoreCpuAdmission();
 +    bool TrackPendingCommandList(ID3D12GraphicsCommandList* cmdList);
 +    void PublishPendingLocked();
-+    bool DeactivateImpl(bool submitPending = true);
++    void DeactivateForReason(XeFGProgress::DeactivateReason reason);
++    bool DeactivateImpl(bool submitPending = true,
++                        XeFGProgress::DeactivateReason reason = XeFGProgress::DeactivateReason::External);
 +    void RestoreProviderState(bool wasActive);
 +
 +    void TrackLifetimeQueue(ID3D12CommandQueue* queue);
@@ -3503,7 +3764,7 @@ index f54de2b3..036aa6ec 100644
  
      static void xefgLogCallback(const char* message, xefg_swapchain_logging_level_t level, void* userData);
  
-@@ -55,6 +136,8 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
+@@ -55,6 +151,8 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
      bool ReleaseSwapchain(HWND hwnd) override final;
  
      void CreateContext(ID3D12Device* device, FG_Constants& fgConstants) override final;
@@ -3512,7 +3773,7 @@ index f54de2b3..036aa6ec 100644
      void Activate() override final;
      void Deactivate() override final;
      void DestroyFGContext() override final;
-@@ -63,15 +146,31 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
+@@ -63,15 +161,34 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
      void EvaluateState(ID3D12Device* device, FG_Constants& fgConstants) override final;
  
      bool Present() override final;
@@ -3524,9 +3785,12 @@ index f54de2b3..036aa6ec 100644
  
      bool SetResource(Dx12Resource* inputResource) override final;
      void SetCommandQueue(FG_ResourceType type, ID3D12CommandQueue* queue) override final;
-+    void BeforeCommandSubmission(ID3D12CommandQueue* queue, UINT count,
++    uint64_t BeforeCommandSubmission(ID3D12CommandQueue* queue, UINT count,
 +                                 ID3D12CommandList* const* lists) override final;
-+    void AfterCommandSubmission(UINT count, ID3D12CommandList* const* lists) override final;
++    void AfterCommandSubmission(UINT count, ID3D12CommandList* const* lists,
++                                uint64_t submittedThroughGeneration) override final;
++    // Caller holds submission admission through the original Execute and this callback.
++    void ObserveSubmittedQueue(ID3D12CommandQueue* queue) override final;
 +    void DiscardPendingCommandList(ID3D12GraphicsCommandList* cmdList) override final;
 +    uint64_t CapturePendingCommandListGeneration(const void* nativeIdentity) override final;
 +    void RetirePendingCommandList(const void* nativeIdentity, uint64_t generation) override final;
@@ -3545,7 +3809,7 @@ index f54de2b3..036aa6ec 100644
              XeFGProxy::InitXeFG();
      }
 diff --git a/OptiScaler/hooks/D3D12_Hooks.cpp b/OptiScaler/hooks/D3D12_Hooks.cpp
-index ee505fe5..87394b1b 100644
+index ee505fe5..1334dd06 100644
 --- a/OptiScaler/hooks/D3D12_Hooks.cpp
 +++ b/OptiScaler/hooks/D3D12_Hooks.cpp
 @@ -19,8 +19,10 @@
@@ -3587,12 +3851,13 @@ index ee505fe5..87394b1b 100644
      {
          D3D12_RESOURCE_DESC localDesc = {};
          memcpy(&localDesc, pDesc, sizeof(D3D12_RESOURCE_DESC));
-@@ -1776,12 +1786,17 @@ static HRESULT hkCreateCommittedResource(ID3D12Device* device, const D3D12_HEAP_
+@@ -1776,12 +1786,19 @@ static HRESULT hkCreateCommittedResource(ID3D12Device* device, const D3D12_HEAP_
              LOG_DEBUG("IGDExtProxy::hkCreateCommittedResource result: {:X}", (UINT) result);
              _skipCommitedResource = false;
  
 +            if (allocationScope.outermost)
-+                GpuAllocationHooks::ObserveCommitted0(result, device, pHeapProperties, pDesc, ppvResource, _ReturnAddress());
++                GpuAllocationHooks::ObserveCommitted0(result, device, pHeapProperties, pDesc, ppvResource,
++                                                       _ReturnAddress(), static_cast<uint32_t>(HeapFlags), true);
              return result;
          }
      }
@@ -3602,12 +3867,13 @@ index ee505fe5..87394b1b 100644
 +    const auto result = o_CreateCommittedResource(device, pHeapProperties, HeapFlags, pDesc, InitialResourceState,
 +                                                  pOptimizedClearValue, riidResource, ppvResource);
 +    if (allocationScope.outermost)
-+        GpuAllocationHooks::ObserveCommitted0(result, device, pHeapProperties, pDesc, ppvResource, _ReturnAddress());
++        GpuAllocationHooks::ObserveCommitted0(result, device, pHeapProperties, pDesc, ppvResource,
++                                               _ReturnAddress(), static_cast<uint32_t>(HeapFlags), true);
 +    return result;
  }
  
  static bool skipPlacedResource = false;
-@@ -1818,24 +1833,32 @@ VALIDATE_HOOK(hkSetResidencyPriority, PFN_SetResidencyPriority)
+@@ -1818,24 +1835,32 @@ VALIDATE_HOOK(hkSetResidencyPriority, PFN_SetResidencyPriority)
  static HRESULT hkSetResidencyPriority(ID3D12Device1* This, UINT NumObjects, ID3D12Pageable* const* ppObjects,
                                        const D3D12_RESIDENCY_PRIORITY* pPriorities)
  {
@@ -3658,13 +3924,14 @@ index ee505fe5..87394b1b 100644
  }
  
  /*
-@@ -2123,8 +2146,15 @@ static HRESULT hkD3D12GetInterface(REFCLSID rclsid, REFIID riid, void** ppvDebug
+@@ -2123,8 +2148,16 @@ static HRESULT hkD3D12GetInterface(REFCLSID rclsid, REFIID riid, void** ppvDebug
  
  static void HookToDevice(ID3D12Device* InDevice)
  {
 -    if (o_CreateSampler != nullptr || InDevice == nullptr)
 +    if (InDevice == nullptr)
 +        return;
++    GpuAllocationDiagnostics::InitializeObservation(Config::Instance()->GpuAllocationTracking.value_or_default());
 +    if (o_CreateSampler != nullptr)
 +    {
 +        ID3D12Device* native = nullptr;
@@ -3675,7 +3942,7 @@ index ee505fe5..87394b1b 100644
  
      LOG_DEBUG("Dx12");
  
-@@ -2135,6 +2165,18 @@ static void HookToDevice(ID3D12Device* InDevice)
+@@ -2135,6 +2168,18 @@ static void HookToDevice(ID3D12Device* InDevice)
      if (Util::CheckForRealObject(__FUNCTION__, InDevice, (IUnknown**) &realDevice))
          pVTable = *(PVOID**) realDevice;
  
@@ -3694,7 +3961,7 @@ index ee505fe5..87394b1b 100644
      // hudless
      o_D3D12DeviceRelease = (PFN_Release) pVTable[2];
      o_CreateSampler = (PFN_CreateSampler) pVTable[22];
-@@ -2157,59 +2199,53 @@ static void HookToDevice(ID3D12Device* InDevice)
+@@ -2157,59 +2202,53 @@ static void HookToDevice(ID3D12Device* InDevice)
          device12_1->Release();
      }
  
@@ -3793,7 +4060,7 @@ index ee505fe5..87394b1b 100644
      if (State::Instance().activeFgInput == FGInput::Upscaler &&
          !Config::Instance()->FGDisableHUDFix.value_or_default() &&
          State::Instance().swapchainInteropApi == SwapchainInteropApi::None)
-@@ -2223,50 +2259,46 @@ static void HookToDevice(ID3D12Device* InDevice)
+@@ -2223,50 +2262,46 @@ static void HookToDevice(ID3D12Device* InDevice)
      }
  }
  
@@ -3878,7 +4145,7 @@ index ee505fe5..87394b1b 100644
  }
  
  void D3D12Hooks::Hook()
-@@ -2315,42 +2347,7 @@ void D3D12Hooks::Unhook()
+@@ -2315,42 +2350,7 @@ void D3D12Hooks::Unhook()
  {
      if (o_D3D12CreateDevice == nullptr)
          return;
@@ -4267,10 +4534,10 @@ index d410412b..67d545f9 100644
                  auto refCount = State::Instance().currentWrappedSwapchain->Release();
 diff --git a/OptiScaler/hooks/GpuAllocationHooks.h b/OptiScaler/hooks/GpuAllocationHooks.h
 new file mode 100644
-index 00000000..2f5b56c6
+index 00000000..d50178ef
 --- /dev/null
 +++ b/OptiScaler/hooks/GpuAllocationHooks.h
-@@ -0,0 +1,356 @@
+@@ -0,0 +1,422 @@
 +#pragma once
 +
 +#include <misc/GpuAllocationDiagnostics.h>
@@ -4319,9 +4586,16 @@ index 00000000..2f5b56c6
 +        return MemoryClass::CpuVisible;
 +    return MemoryClass::Unclassified;
 +}
-+inline Caller ClassifyCaller(void* address)
++inline Caller ClassifyCaller(void* address, AllocationMetadata* metadata = nullptr)
 +{
 +    const auto module = Util::GetCallerModule(address);
++    if (metadata != nullptr)
++    {
++        metadata->moduleBase = reinterpret_cast<uintptr_t>(module);
++        const auto addressValue = reinterpret_cast<uintptr_t>(address);
++        metadata->callerRva = module != nullptr && addressValue >= metadata->moduleBase ?
++                              addressValue - metadata->moduleBase : 0;
++    }
 +    if (module == nullptr) return Caller::Unknown;
 +    if (module == XeFGProxy::Module()) return Caller::XeFG;
 +    if (module == XeSSProxy::Module()) return Caller::XeSS;
@@ -4329,13 +4603,18 @@ index 00000000..2f5b56c6
 +        module == FfxApiProxy::Dx12Module_FG() || module == FfxApiProxy::Dx12Module_Denoiser() ||
 +        module == FfxApiProxy::Dx12Module_Radiance()) return Caller::FFX;
 +    if (module == StreamlineProxy::Module()) return Caller::Streamline;
-+    if (module == GetModuleHandleW(nullptr)) return Caller::Game;
-+    if (module == Util::GetCallerModule(reinterpret_cast<void*>(&ClassifyCaller))) return Caller::OptiScaler;
++    // The executable and this DLL remain loaded for this diagnostic's lifetime.
++    // Cache only those identities; arbitrary caller modules are still resolved.
++    static const auto gameModule = GetModuleHandleW(nullptr);
++    static const auto ownModule = Util::GetCallerModule(reinterpret_cast<void*>(&ClassifyCaller));
++    if (module == gameModule) return Caller::Game;
++    if (module == ownModule) return Caller::OptiScaler;
 +    return Caller::Other;
 +}
 +
 +inline void OnDestroyed(void* opaqueToken)
 +{
++    SampledDiagnosticTimer timer(TimingStage::Destruction);
 +    // The context is an opaque 64-bit token on this project's x64 target, never
 +    // a resource pointer. Generation matching makes duplicate/stale calls inert.
 +    auto ledger = Instance();
@@ -4352,8 +4631,10 @@ index 00000000..2f5b56c6
 +    }();
 +    return pinned;
 +}
-+inline void ObserveObject(void* returnedInterface, uint64_t bytes, Kind kind, MemoryClass memory, void* caller)
++inline void ObserveObject(void* returnedInterface, uint64_t bytes, Kind kind, MemoryClass memory, void* caller,
++                          AllocationMetadata metadata = AllocationMetadata())
 +{
++    if (!ObservationEnabled()) return;
 +    if (bytes == 0 || bytes == UINT64_MAX)
 +    {
 +        RecordSkip(Skip::SizeUnknown);
@@ -4386,7 +4667,9 @@ index 00000000..2f5b56c6
 +        notifier->Release();
 +        return;
 +    }
-+    const auto token = ledger->Track(ClassifyCaller(caller), kind, memory, bytes);
++    metadata.createdMs = MonotonicMilliseconds();
++    const auto category = ClassifyCaller(caller, &metadata);
++    const auto token = ledger->Track(category, kind, memory, bytes, metadata);
 +    if (token != 0)
 +    {
 +        UINT callbackId = 0;
@@ -4410,9 +4693,44 @@ index 00000000..2f5b56c6
 +    // S_FALSE capability probes and failed/null outputs do not allocate.
 +    return result == S_OK && output != nullptr && *output != nullptr;
 +}
-+inline void ObserveCommitted0(HRESULT result, ID3D12Device* device, const D3D12_HEAP_PROPERTIES* properties,
-+                              const D3D12_RESOURCE_DESC* description, void** output, void* caller)
++inline void CopyHeapProperties(AllocationMetadata& metadata, const D3D12_HEAP_PROPERTIES& properties,
++                               uint32_t flags, bool flagsKnown)
 +{
++    metadata.heapType = static_cast<uint32_t>(properties.Type);
++    metadata.cpuPageProperty = static_cast<uint32_t>(properties.CPUPageProperty);
++    metadata.memoryPoolPreference = static_cast<uint32_t>(properties.MemoryPoolPreference);
++    metadata.creationNodeMask = properties.CreationNodeMask;
++    metadata.visibleNodeMask = properties.VisibleNodeMask;
++    metadata.heapFlags = flags;
++    metadata.heapFlagsKnown = flagsKnown;
++}
++template<class Description>
++inline AllocationMetadata CopyResourceMetadata(const Description& description,
++                                               const D3D12_HEAP_PROPERTIES& properties,
++                                               uint32_t heapFlags, bool heapFlagsKnown)
++{
++    AllocationMetadata metadata;
++    metadata.descriptorKnown = true;
++    metadata.dimension = static_cast<uint32_t>(description.Dimension);
++    metadata.alignment = description.Alignment;
++    metadata.width = description.Width;
++    metadata.height = description.Height;
++    metadata.depthOrArray = description.DepthOrArraySize;
++    metadata.mipLevels = description.MipLevels;
++    metadata.format = static_cast<uint32_t>(description.Format);
++    metadata.sampleCount = description.SampleDesc.Count;
++    metadata.sampleQuality = description.SampleDesc.Quality;
++    metadata.layout = static_cast<uint32_t>(description.Layout);
++    metadata.resourceFlags = static_cast<uint32_t>(description.Flags);
++    CopyHeapProperties(metadata, properties, heapFlags, heapFlagsKnown);
++    return metadata;
++}
++inline void ObserveCommitted0(HRESULT result, ID3D12Device* device, const D3D12_HEAP_PROPERTIES* properties,
++                              const D3D12_RESOURCE_DESC* description, void** output, void* caller,
++                              uint32_t heapFlags = 0, bool heapFlagsKnown = false)
++{
++    if (!ObservationEnabled()) return;
++    SampledDiagnosticTimer timer(TimingStage::Observation);
 +    if (!IsCreated(result, output)) return;
 +    if (properties == nullptr || description == nullptr)
 +    {
@@ -4421,16 +4739,23 @@ index 00000000..2f5b56c6
 +    }
 +    if (description->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER && description->Width < MinimumTrackedBytes)
 +    {
++        // Threshold is deliberately defined by logical buffer width here. This
++        // avoids allocation-info queries even if driver heap alignment is larger.
 +        RecordSkip(Skip::Small);
 +        return;
 +    }
-+    // A normal C++ virtual call preserves the SDK's struct-return ABI.
++    // A normal C++ virtual call preserves the SDK's struct-return ABI. Texture
++    // sizes are never guessed from formats: alignment/compression may differ.
 +    const auto info = device->GetResourceAllocationInfo(0, 1, description);
-+    ObserveObject(*output, info.SizeInBytes, Kind::Committed, ClassifyMemory(*properties), caller);
++    ObserveObject(*output, info.SizeInBytes, Kind::Committed, ClassifyMemory(*properties), caller,
++                  CopyResourceMetadata(*description, *properties, heapFlags, heapFlagsKnown));
 +}
 +inline void ObserveCommitted2(HRESULT result, ID3D12Device8* device, const D3D12_HEAP_PROPERTIES* properties,
-+                              const D3D12_RESOURCE_DESC1* description, void** output, void* caller)
++                              const D3D12_RESOURCE_DESC1* description, void** output, void* caller,
++                              uint32_t heapFlags = 0, bool heapFlagsKnown = false)
 +{
++    if (!ObservationEnabled()) return;
++    SampledDiagnosticTimer timer(TimingStage::Observation);
 +    if (!IsCreated(result, output)) return;
 +    if (properties == nullptr || description == nullptr)
 +    {
@@ -4443,17 +4768,24 @@ index 00000000..2f5b56c6
 +        return;
 +    }
 +    const auto info = device->GetResourceAllocationInfo2(0, 1, description, nullptr);
-+    ObserveObject(*output, info.SizeInBytes, Kind::Committed, ClassifyMemory(*properties), caller);
++    ObserveObject(*output, info.SizeInBytes, Kind::Committed, ClassifyMemory(*properties), caller,
++                  CopyResourceMetadata(*description, *properties, heapFlags, heapFlagsKnown));
 +}
 +inline void ObserveHeap(HRESULT result, const D3D12_HEAP_DESC* description, void** output, void* caller)
 +{
++    if (!ObservationEnabled()) return;
++    SampledDiagnosticTimer timer(TimingStage::Observation);
 +    if (!IsCreated(result, output)) return;
 +    if (description == nullptr)
 +    {
 +        RecordSkip(Skip::SizeUnknown);
 +        return;
 +    }
-+    ObserveObject(*output, description->SizeInBytes, Kind::Heap, ClassifyMemory(description->Properties), caller);
++    AllocationMetadata metadata;
++    metadata.descriptorKnown = true;
++    metadata.alignment = description->Alignment;
++    CopyHeapProperties(metadata, description->Properties, static_cast<uint32_t>(description->Flags), true);
++    ObserveObject(*output, description->SizeInBytes, Kind::Heap, ClassifyMemory(description->Properties), caller, metadata);
 +}
 +
 +static HRESULT hkCommitted1(ID3D12Device4* device, const D3D12_HEAP_PROPERTIES* properties, D3D12_HEAP_FLAGS flags,
@@ -4463,7 +4795,7 @@ index 00000000..2f5b56c6
 +{
 +    CreationScope scope;
 +    auto result = committed1(device, properties, flags, description, state, clear, session, iid, output);
-+    if (scope.outermost) ObserveCommitted0(result, device, properties, description, output, _ReturnAddress());
++    if (scope.outermost) ObserveCommitted0(result, device, properties, description, output, _ReturnAddress(), static_cast<uint32_t>(flags), true);
 +    return result;
 +}
 +static HRESULT hkCommitted2(ID3D12Device8* device, const D3D12_HEAP_PROPERTIES* properties, D3D12_HEAP_FLAGS flags,
@@ -4473,7 +4805,7 @@ index 00000000..2f5b56c6
 +{
 +    CreationScope scope;
 +    auto result = committed2(device, properties, flags, description, state, clear, session, iid, output);
-+    if (scope.outermost) ObserveCommitted2(result, device, properties, description, output, _ReturnAddress());
++    if (scope.outermost) ObserveCommitted2(result, device, properties, description, output, _ReturnAddress(), static_cast<uint32_t>(flags), true);
 +    return result;
 +}
 +static HRESULT hkCommitted3(ID3D12Device10* device, const D3D12_HEAP_PROPERTIES* properties, D3D12_HEAP_FLAGS flags,
@@ -4487,8 +4819,8 @@ index 00000000..2f5b56c6
 +    {
 +        // Castable-format allocations need GetResourceAllocationInfo3 (Device12).
 +        // Do not attribute an inaccurate older-API size when that list is used.
-+        if (formatCount != 0 && IsCreated(result, output)) RecordSkip(Skip::SizeUnknown);
-+        else if (formatCount == 0) ObserveCommitted2(result, device, properties, description, output, _ReturnAddress());
++        if (formatCount != 0 && ObservationEnabled() && IsCreated(result, output)) RecordSkip(Skip::SizeUnknown);
++        else if (formatCount == 0) ObserveCommitted2(result, device, properties, description, output, _ReturnAddress(), static_cast<uint32_t>(flags), true);
 +    }
 +    return result;
 +}
@@ -4517,10 +4849,11 @@ index 00000000..2f5b56c6
 +inline void Install(ID3D12Device* device, Committed0Fn* baseOriginal, Committed0Fn baseHook, bool baseAlreadyHooked)
 +{
 +    std::lock_guard lock(installationMutex);
++    if (!ObservationEnabled()) return;
 +    if (installed || installationAttempts >= 3 || device == nullptr) return;
 +    ++installationAttempts;
 +    // Prepare the fixed CPU ledger outside Present/periodic reporting.
-+    if (Instance() == nullptr) RecordSkip(Skip::CounterUnavailable);
++    if (!PrepareDiagnostics()) RecordSkip(Skip::CounterUnavailable);
 +    auto baseVtable = *reinterpret_cast<void***>(device);
 +    struct Hook { PVOID* original; PVOID replacement; PVOID target; uint32_t bit; };
 +    std::array<Hook, 6> hooks {{
@@ -5611,19 +5944,22 @@ index 44369f14..2b9778c0 100644
      {
 diff --git a/OptiScaler/misc/GpuAllocationDiagnostics.h b/OptiScaler/misc/GpuAllocationDiagnostics.h
 new file mode 100644
-index 00000000..c53a092b
+index 00000000..19ddc87a
 --- /dev/null
 +++ b/OptiScaler/misc/GpuAllocationDiagnostics.h
-@@ -0,0 +1,182 @@
+@@ -0,0 +1,440 @@
 +#pragma once
 +
++#include <algorithm>
 +#include <array>
++#include <chrono>
 +#include <atomic>
 +#include <cstdint>
 +#include <cstddef>
 +#include <limits>
 +#include <mutex>
 +#include <new>
++#include <tuple>
 +
 +// Partial accounting of observed creation callers, not logical ownership or
 +// residency. Explicit heaps and committed resources are counted; placed and
@@ -5648,6 +5984,105 @@ index 00000000..c53a092b
 +    return names[index < CallerCount ? index : CallerCount - 1];
 +}
 +
++// Only the first explicit initialization changes the startup setting. Existing
++// callbacks always retire their tokens; this flag is never a cleanup command.
++inline std::atomic<uint8_t> observationMode { 0 }; // 0 unset, 1 off, 2 on
++inline void InitializeObservation(bool enabled)
++{
++    uint8_t expected = 0;
++    observationMode.compare_exchange_strong(expected, enabled ? 2 : 1, std::memory_order_release);
++}
++inline bool ObservationEnabled() { return observationMode.load(std::memory_order_acquire) != 1; }
++inline uint64_t MonotonicMilliseconds()
++{
++    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
++        std::chrono::steady_clock::now().time_since_epoch()).count());
++}
++
++// Copied creation arguments, never queried through retained resource pointers.
++// moduleBase identifies an immediate calling module in this process; RVA is
++// meaningful with that exact binary. Neither field establishes logical ownership.
++struct AllocationMetadata
++{
++    uint64_t moduleBase = 0, callerRva = 0, createdMs = 0, width = 0, alignment = 0;
++    uint32_t dimension = 0, height = 0, depthOrArray = 0, mipLevels = 0, format = 0;
++    uint32_t sampleCount = 0, sampleQuality = 0, layout = 0, resourceFlags = 0;
++    uint32_t heapType = 0, heapFlags = 0, cpuPageProperty = 0, memoryPoolPreference = 0;
++    uint32_t creationNodeMask = 0, visibleNodeMask = 0;
++    bool descriptorKnown = false, heapFlagsKnown = false;
++};
++inline auto MetadataKey(const AllocationMetadata& m)
++{
++    // Creation time is deliberately excluded: otherwise each object forms a group.
++    return std::tie(m.moduleBase, m.callerRva, m.width, m.alignment, m.dimension,
++                    m.height, m.depthOrArray, m.mipLevels, m.format, m.sampleCount,
++                    m.sampleQuality, m.layout, m.resourceFlags, m.heapType, m.heapFlags,
++                    m.cpuPageProperty, m.memoryPoolPreference, m.creationNodeMask,
++                    m.visibleNodeMask, m.descriptorKnown, m.heapFlagsKnown);
++}
++inline constexpr size_t TopGroupCount = 8;
++struct GroupSnapshot
++{
++    Caller caller = Caller::Unknown;
++    Kind kind = Kind::Committed;
++    MemoryClass memory = MemoryClass::Unclassified;
++    AllocationMetadata metadata {};
++    uint64_t liveBytes = 0, liveCount = 0, oldestAgeMs = 0, youngestAgeMs = 0;
++};
++struct GrowthGroupSnapshot
++{
++    GroupSnapshot group {};
++    uint64_t baselineBytes = 0, growthBytes = 0;
++};
++struct DetailSnapshot
++{
++    std::array<GroupSnapshot, TopGroupCount> groups {};
++    std::array<GrowthGroupSnapshot, TopGroupCount> growthGroups {};
++    uint32_t growthGroupCount = 0;
++    bool growthBaselineAvailable = false;
++    uint64_t growthBaselineCapturedMs = 0, growthIntervalMs = 0;
++    uint32_t groupCount = 0, liveObjects = 0;
++    uint64_t observedBytes = 0, capturedMs = 0;
++};
++enum class TimingStage : uint8_t { Observation, Destruction, DetailSnapshot, Count };
++inline constexpr size_t TimingStageCount = static_cast<size_t>(TimingStage::Count);
++struct TimingSnapshot { uint64_t samples = 0, totalNanoseconds = 0, maximumNanoseconds = 0; };
++struct TimingCounters
++{
++    std::atomic<uint64_t> samples { 0 }, totalNanoseconds { 0 }, maximumNanoseconds { 0 };
++};
++inline std::array<TimingCounters, TimingStageCount> timings {};
++// Two clock reads per 64 calls on each thread/stage. Original driver creation
++// calls occur before this scope. Max is sampled, and contended CAS is bounded.
++class SampledDiagnosticTimer
++{
++    TimingStage stage;
++    bool selected;
++    std::chrono::steady_clock::time_point start;
++  public:
++    explicit SampledDiagnosticTimer(TimingStage value) : stage(value)
++    {
++        static thread_local std::array<uint8_t, TimingStageCount> calls {};
++        auto& count = calls[static_cast<size_t>(stage)];
++        count = static_cast<uint8_t>((count + 1) & 63);
++        selected = count == 0;
++        if (selected) start = std::chrono::steady_clock::now();
++    }
++    ~SampledDiagnosticTimer()
++    {
++        if (!selected) return;
++        const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
++            std::chrono::steady_clock::now() - start).count();
++        const auto ns = static_cast<uint64_t>(elapsed > 0 ? elapsed : 0);
++        auto& counter = timings[static_cast<size_t>(stage)];
++        counter.samples.fetch_add(1, std::memory_order_relaxed);
++        counter.totalNanoseconds.fetch_add(ns, std::memory_order_relaxed);
++        auto maximum = counter.maximumNanoseconds.load(std::memory_order_relaxed);
++        for (unsigned attempt = 0; attempt < 4 && maximum < ns; ++attempt)
++            if (counter.maximumNanoseconds.compare_exchange_weak(maximum, ns, std::memory_order_relaxed)) break;
++    }
++};
++
 +struct CallerSnapshot
 +{
 +    uint64_t liveCommittedBytes = 0, liveHeapBytes = 0;
@@ -5661,6 +6096,8 @@ index 00000000..c53a092b
 +struct Snapshot
 +{
 +    std::array<CallerSnapshot, CallerCount> callers {};
++    std::array<TimingSnapshot, TimingStageCount> timing {};
++    bool observationInitialized = false, observationEnabled = true;
 +    uint64_t smallSkipped = 0, poolExhausted = 0, notifierUnsupported = 0, registrationFailed = 0;
 +    uint64_t allocationFailed = 0, sizeUnknown = 0, pinFailed = 0, counterUnavailable = 0;
 +    uint32_t supportedApiMask = 0, installedApiMask = 0, failedApiMask = 0;
@@ -5685,6 +6122,7 @@ index 00000000..c53a092b
 +        Kind kind = Kind::Committed;
 +        MemoryClass memory = MemoryClass::Unclassified;
 +        bool active = false;
++        AllocationMetadata metadata {};
 +    };
 +    std::mutex mutex;
 +    std::array<Slot, SlotCount> slots {};
@@ -5731,7 +6169,8 @@ index 00000000..c53a092b
 +        for (size_t i = 0; i < SlotCount; ++i)
 +            freeSlots[i] = static_cast<uint16_t>(SlotCount - i - 1);
 +    }
-+    uint64_t Track(Caller caller, Kind kind, MemoryClass memory, uint64_t bytes)
++    uint64_t Track(Caller caller, Kind kind, MemoryClass memory, uint64_t bytes,
++                   const AllocationMetadata& metadata = {})
 +    {
 +        if (bytes < MinimumTrackedBytes || bytes == std::numeric_limits<uint64_t>::max())
 +            return 0;
@@ -5744,7 +6183,7 @@ index 00000000..c53a092b
 +        }
 +        const auto index = freeSlots[--available];
 +        auto& slot = slots[index];
-+        slot = { ++generation, bytes, caller, kind, memory, true };
++        slot = { ++generation, bytes, caller, kind, memory, true, metadata };
 +        auto& totals = callers[static_cast<size_t>(caller)];
 +        (kind == Kind::Committed ? totals.liveCommittedBytes : totals.liveHeapBytes) += bytes;
 +        auto& memoryBytes = memory == MemoryClass::Default ? totals.liveDefaultBytes :
@@ -5761,6 +6200,24 @@ index 00000000..c53a092b
 +    }
 +    bool Retire(uint64_t token) { return Remove(token, false); }
 +    bool Cancel(uint64_t token) { return Remove(token, true); }
++    struct LiveEntry
++    {
++        Caller caller = Caller::Unknown;
++        Kind kind = Kind::Committed;
++        MemoryClass memory = MemoryClass::Unclassified;
++        uint64_t bytes = 0;
++        AllocationMetadata metadata {};
++    };
++    bool TryCopyLive(std::array<LiveEntry, SlotCount>& destination, size_t& count)
++    {
++        std::unique_lock lock(mutex, std::try_to_lock);
++        if (!lock.owns_lock()) return false;
++        count = 0;
++        for (const auto& slot : slots)
++            if (slot.active)
++                destination[count++] = { slot.caller, slot.kind, slot.memory, slot.bytes, slot.metadata };
++        return true;
++    }
 +    bool TryRead(std::array<CallerSnapshot, CallerCount>& destination)
 +    {
 +        std::unique_lock lock(mutex, std::try_to_lock);
@@ -5780,9 +6237,20 @@ index 00000000..c53a092b
 +}
 +inline bool TryReadSnapshot(Snapshot& snapshot)
 +{
-+    auto ledger = Instance();
-+    if (ledger == nullptr || !ledger->TryRead(snapshot.callers))
-+        return false;
++    snapshot = {};
++    snapshot.observationInitialized = observationMode.load(std::memory_order_acquire) != 0;
++    snapshot.observationEnabled = ObservationEnabled();
++    if (snapshot.observationEnabled)
++    {
++        auto ledger = Instance();
++        if (ledger == nullptr || !ledger->TryRead(snapshot.callers)) return false;
++    }
++    for (size_t i = 0; i < TimingStageCount; ++i)
++    {
++        snapshot.timing[i].samples = timings[i].samples.load(std::memory_order_relaxed);
++        snapshot.timing[i].totalNanoseconds = timings[i].totalNanoseconds.load(std::memory_order_relaxed);
++        snapshot.timing[i].maximumNanoseconds = timings[i].maximumNanoseconds.load(std::memory_order_relaxed);
++    }
 +    snapshot.smallSkipped = skipped[static_cast<size_t>(Skip::Small)].load(std::memory_order_relaxed);
 +    snapshot.poolExhausted = skipped[static_cast<size_t>(Skip::PoolFull)].load(std::memory_order_relaxed);
 +    snapshot.notifierUnsupported = skipped[static_cast<size_t>(Skip::NotifierUnsupported)].load(std::memory_order_relaxed);
@@ -5796,13 +6264,136 @@ index 00000000..c53a092b
 +    snapshot.failedApiMask = failedApiMask.load(std::memory_order_relaxed);
 +    return true;
 +}
++// Large work space stays off the render-thread stack. It is prepared alongside
++// the ledger at hook installation and never retains a GPU pointer/reference.
++struct DetailWorkspace
++{
++    std::mutex mutex;
++    std::array<Ledger::LiveEntry, SlotCount> entries {};
++    std::array<Ledger::LiveEntry, SlotCount> previousGroups {};
++    size_t previousGroupCount = 0;
++    uint64_t previousCapturedMs = 0;
++    bool havePrevious = false;
++};
++inline DetailWorkspace* DetailWorkspaceInstance()
++{
++    static DetailWorkspace* const workspace = new (std::nothrow) DetailWorkspace;
++    return workspace;
++}
++inline bool PrepareDiagnostics()
++{
++    return Instance() != nullptr && DetailWorkspaceInstance() != nullptr;
++}
++inline bool TryReadDetailSnapshot(DetailSnapshot& result, uint64_t nowMs = MonotonicMilliseconds())
++{
++    result = {};
++    result.capturedMs = nowMs;
++    if (!ObservationEnabled()) return true;
++    SampledDiagnosticTimer timer(TimingStage::DetailSnapshot);
++    auto workspace = DetailWorkspaceInstance();
++    auto ledger = Instance();
++    if (workspace == nullptr || ledger == nullptr) return false;
++    std::unique_lock workspaceLock(workspace->mutex, std::try_to_lock);
++    if (!workspaceLock.owns_lock()) return false;
++    size_t count = 0;
++    if (!ledger->TryCopyLive(workspace->entries, count)) return false;
++    // The ledger lock is released before sorting/aggregation. Other reporters
++    // skip this snapshot rather than waiting for the work-space lock.
++    auto& entries = workspace->entries;
++    const auto sameKey = [](const Ledger::LiveEntry& a, const Ledger::LiveEntry& b)
++    {
++        return a.caller == b.caller && a.kind == b.kind && a.memory == b.memory &&
++               MetadataKey(a.metadata) == MetadataKey(b.metadata);
++    };
++    const auto keyLess = [](const auto& a, const auto& b)
++    {
++        return std::tie(a.caller, a.kind, a.memory) != std::tie(b.caller, b.kind, b.memory) ?
++               std::tie(a.caller, a.kind, a.memory) < std::tie(b.caller, b.kind, b.memory) :
++               MetadataKey(a.metadata) < MetadataKey(b.metadata);
++    };
++    std::sort(entries.begin(), entries.begin() + count, keyLess);
++    result.growthBaselineAvailable = workspace->havePrevious && nowMs >= workspace->previousCapturedMs;
++    if (result.growthBaselineAvailable)
++    {
++        result.growthBaselineCapturedMs = workspace->previousCapturedMs;
++        result.growthIntervalMs = nowMs - workspace->previousCapturedMs;
++    }
++    size_t compactedGroups = 0;
++    result.liveObjects = static_cast<uint32_t>(count);
++    for (size_t first = 0; first < count;)
++    {
++        GroupSnapshot group;
++        const auto& entry = entries[first];
++        group.caller = entry.caller; group.kind = entry.kind; group.memory = entry.memory;
++        group.metadata = entry.metadata;
++        group.metadata.createdMs = 0; // aggregate age fields below are authoritative
++        group.youngestAgeMs = std::numeric_limits<uint64_t>::max();
++        size_t end = first;
++        do
++        {
++            const auto& item = entries[end];
++            group.liveBytes += item.bytes;
++            ++group.liveCount;
++            const auto age = nowMs >= item.metadata.createdMs ? nowMs - item.metadata.createdMs : 0;
++            group.oldestAgeMs = std::max(group.oldestAgeMs, age);
++            group.youngestAgeMs = std::min(group.youngestAgeMs, age);
++            ++end;
++        } while (end < count && sameKey(entry, entries[end]));
++        result.observedBytes += group.liveBytes;
++        if (result.growthBaselineAvailable)
++        {
++            const auto previousEnd = workspace->previousGroups.begin() + workspace->previousGroupCount;
++            const auto previous = std::lower_bound(workspace->previousGroups.begin(), previousEnd, entry, keyLess);
++            const auto baselineBytes = previous != previousEnd && sameKey(*previous, entry) ? previous->bytes : 0;
++            if (group.liveBytes > baselineBytes)
++            {
++                GrowthGroupSnapshot growth { group, baselineBytes, group.liveBytes - baselineBytes };
++                size_t position = 0;
++                while (position < result.growthGroupCount &&
++                       result.growthGroups[position].growthBytes >= growth.growthBytes) ++position;
++                if (position < TopGroupCount)
++                {
++                    const auto last = std::min<size_t>(result.growthGroupCount, TopGroupCount - 1);
++                    for (size_t i = last; i > position; --i) result.growthGroups[i] = result.growthGroups[i - 1];
++                    result.growthGroups[position] = growth;
++                    if (result.growthGroupCount < TopGroupCount) ++result.growthGroupCount;
++                }
++            }
++        }
++        size_t position = 0;
++        while (position < result.groupCount &&
++               (result.groups[position].liveBytes > group.liveBytes ||
++                (result.groups[position].liveBytes == group.liveBytes &&
++                 result.groups[position].oldestAgeMs >= group.oldestAgeMs))) ++position;
++        if (position < TopGroupCount)
++        {
++            const auto last = std::min<size_t>(result.groupCount, TopGroupCount - 1);
++            for (size_t i = last; i > position; --i) result.groups[i] = result.groups[i - 1];
++            result.groups[position] = group;
++            if (result.groupCount < TopGroupCount) ++result.groupCount;
++        }
++        // Reuse the already-processed front of the entries array for compacted
++        // current groups. No unread entry is overwritten (compactedGroups <= first).
++        entries[compactedGroups++] = { group.caller, group.kind, group.memory, group.liveBytes, group.metadata };
++        first = end;
++    }
++    // Publish a new baseline only after a successful complete snapshot. A failed
++    // try-lock never shortens the next reported growth interval. This observes
++    // net live allocation changes; intervening churn and residency are unknown.
++    std::copy_n(entries.begin(), compactedGroups, workspace->previousGroups.begin());
++    workspace->previousGroupCount = compactedGroups;
++    workspace->previousCapturedMs = nowMs;
++    workspace->havePrevious = true;
++    return true;
++}
++
 +}
 diff --git a/OptiScaler/misc/LongSessionMonitor.h b/OptiScaler/misc/LongSessionMonitor.h
 new file mode 100644
-index 00000000..bee41e65
+index 00000000..bd0d8de4
 --- /dev/null
 +++ b/OptiScaler/misc/LongSessionMonitor.h
-@@ -0,0 +1,492 @@
+@@ -0,0 +1,671 @@
 +#pragma once
 +
 +#include "LongSessionState.h"
@@ -5812,12 +6403,15 @@ index 00000000..bee41e65
 +#include "XeFGPresentDiagnostics.h"
 +#include "GpuAllocationDiagnostics.h"
 +#include "ResidencyDiagnostics.h"
++#include "XeFGProgressDiagnostics.h"
 +#include "Logger.h"
 +
 +#include <array>
 +#include <atomic>
 +#include <chrono>
 +#include <cstdint>
++#include <format>
++#include <string>
 +#include <d3d12.h>
 +#include <dxgi1_4.h>
 +#include <psapi.h>
@@ -5842,6 +6436,11 @@ index 00000000..bee41e65
 +    double gapMaxMs = 0.0;
 +    std::array<double, static_cast<unsigned>(WaitStage::Count)> waitMaxMs {};
 +    std::array<std::uint64_t, static_cast<unsigned>(WaitStage::Count)> waitCalls {};
++    std::array<double, static_cast<unsigned>(WaitStage::Count)> waitSumMs {};
++    MemoryWindowSnapshot memoryWindow {};
++    CaptureEvent captureEvent = CaptureEvent::None;
++    std::uint64_t pressureEpoch = 0, pressureAgeMs = 0;
++    unsigned pressureRecoverySamples = 0;
 +    Pressure pressure = Pressure::Normal;
 +    bool localValid = false;
 +    bool nonlocalValid = false;
@@ -5881,6 +6480,7 @@ index 00000000..bee41e65
 +        if (_lastSample != Clock::time_point {} && now - _lastSample < std::chrono::seconds(1))
 +            return;
 +        _lastSample = now;
++        const auto sampleCpuStarted = Clock::now();
 +        EnsureAdapter(swapchain, device);
 +
 +        Sample sample {};
@@ -5941,7 +6541,16 @@ index 00000000..bee41e65
 +            sample.waitMaxMs[i] = static_cast<double>(
 +                WaitCounters()[i].maximumUs.exchange(0, std::memory_order_relaxed)) / 1000.0;
 +            sample.waitCalls[i] = WaitCounters()[i].calls.exchange(0, std::memory_order_relaxed);
++            sample.waitSumMs[i] = static_cast<double>(
++                WaitCounters()[i].totalUs.exchange(0, std::memory_order_relaxed)) / 1000.0;
 +        }
++        _memoryWindow.Observe(sample.elapsedMs, sample.localValid, sample.localUsage, sample.localBudget);
++        sample.captureEvent = _capture.Observe(sample.elapsedMs, sample.pressure, sample.hitch,
++                                               sample.waitMaxMs[static_cast<unsigned>(WaitStage::NativePresent)],
++                                               _memoryWindow.LatestObservedChange());
++        sample.pressureEpoch = _capture.Epoch();
++        sample.pressureAgeMs = _capture.PressureAgeMs(sample.elapsedMs);
++        sample.pressureRecoverySamples = _pressure.RecoverySamples();
 +        _publishedPressure.store(sample.pressure, std::memory_order_relaxed);
 +        _samples[_writeIndex] = sample;
 +        _writeIndex = (_writeIndex + 1) % _samples.size();
@@ -5954,23 +6563,31 @@ index 00000000..bee41e65
 +            if (sample.waitMaxMs[i] > _logWaitMaxMs[i])
 +                _logWaitMaxMs[i] = sample.waitMaxMs[i];
 +            _logWaitCalls[i] += sample.waitCalls[i];
++            _logWaitSumMs[i] += sample.waitSumMs[i];
 +        }
 +
 +        const bool changed = sample.pressure != oldPressure || sample.hitch != _lastHitch;
 +        _lastHitch = sample.hitch;
-+        if (changed || _lastLog == Clock::time_point {} || now - _lastLog >= std::chrono::seconds(30))
++        // Collection/state work is measured separately from formatting/enqueue.
++        // Counter snapshots are approximate at concurrent window boundaries.
++        RecordWait(WaitStage::DiagnosticSample,
++                   std::chrono::duration<double, std::milli>(Clock::now() - sampleCpuStarted).count());
++        if (sample.captureEvent != CaptureEvent::None)
 +        {
 +            Sample summary = sample;
 +            summary.presentMaxMs = _logPresentMaxMs;
 +            summary.gapMaxMs = _logGapMaxMs;
 +            summary.waitMaxMs = _logWaitMaxMs;
 +            summary.waitCalls = _logWaitCalls;
-+            _lastLog = now;
++            summary.waitSumMs = _logWaitSumMs;
++            summary.memoryWindow = _memoryWindow.Snapshot();
 +            Log(summary, changed);
 +            _logPresentMaxMs = 0.0;
 +            _logGapMaxMs = 0.0;
 +            _logWaitMaxMs = {};
 +            _logWaitCalls = {};
++            _logWaitSumMs = {};
++            _memoryWindow.ResetWindow();
 +        }
 +    }
 +
@@ -5995,6 +6612,11 @@ index 00000000..bee41e65
 +        _logGapMaxMs = 0.0;
 +        _logWaitMaxMs = {};
 +        _logWaitCalls = {};
++        _logWaitSumMs = {};
++        _memoryWindow = {};
++        _capture = {};
++        _detailLogged = false;
++        _lastDetailLogMs = 0;
 +        _publishedPressure.store(Pressure::Normal, std::memory_order_relaxed);
 +    }
 +
@@ -6067,6 +6689,7 @@ index 00000000..bee41e65
 +    void Log(const Sample& sample, bool changed)
 +    {
 +        if (!BeginLogEntry()) return;
++        WaitScope logCpu(WaitStage::DiagnosticLog);
 +        constexpr double mib = 1024.0 * 1024.0;
 +        const auto ownedCopies = XeFGDiagnostics::GlobalSnapshot();
 +        const auto observers = XeFGDiagnostics::ReadObserverSnapshot();
@@ -6085,7 +6708,14 @@ index 00000000..bee41e65
 +        // game work and scheduling; neither it nor a CPU API time measures GPU utilization.
 +        // R3 uses the warning log level so routine existing trace/info traffic stays
 +        // disabled. This explicitly tagged diagnostic is not a claim of a GPU fault.
++        const auto& memory = sample.memoryWindow;
++        const auto mean = [&](unsigned i) { return sample.waitCalls[i] ? sample.waitSumMs[i] / sample.waitCalls[i] : 0.0; };
 +        LOG_WARN("[LongSession] t={}s changed={} pressure={} hitch={} "
++                 "capture={} pressure_epoch_age_ms={}/{} pressure_hysteresis_recovery_samples={} "
++                 "local_over_budget_now={} memory_scope=sampled_since_previous_log memory_samples={} "
++                 "memory_first_last_ms={}/{} local_observed_usage_min_max_MiB={:.1f}/{:.1f} "
++                 "local_observed_budget_min_max_MiB={:.1f}/{:.1f} "
++                 "local_largest_observed_increase_decrease_MiB={:.1f}/{:.1f} observed_delta_intervals_ms={}/{} "
 +                 "local_valid={} local_MiB={:.1f}/{:.1f} nonlocal_valid={} nonlocal_MiB={:.1f}/{:.1f} "
 +                 "private_valid={} private_MiB={:.1f} ram_valid={} available_ram_MiB={:.1f} "
 +                 "process_working_set_MiB={:.1f} process_commit_limit_available_MiB={:.1f}/{:.1f} "
@@ -6094,6 +6724,12 @@ index 00000000..bee41e65
 +                 "pacing_max_ms={:.2f} fence_max_ms={:.2f} tracking_max_ms={:.2f} fg_call_max_ms={:.2f} "
 +                 "lifecycle_cpu_max_ms={:.2f} native_present_cpu_max_ms={:.2f} "
 +                 "provider_status_cpu_max_ms={:.2f} provider_status_calls={} "
++                 "native_present_cpu_mean_sum_ms={:.2f}/{:.2f} cpu_mean_scope=approx_window zero_samples=unmeasured "
++                 "diagnostic_sample_cpu_max_mean_ms_calls={:.3f}/{:.3f}/{} "
++                 "diagnostic_log_cpu_max_mean_ms_calls={:.3f}/{:.3f}/{} "
++                 "gpu_progress_observer_cpu_max_mean_ms_calls={:.3f}/{:.3f}/{} "
++                 "tracked_release_cpu_scope=sample1of64_max_lower_bound "
++                 "release_mutex_probe_native_max_mean_ms_samples={:.3f}/{:.3f}/{}/{:.3f}/{:.3f}/{}/{:.3f}/{:.3f}/{} "
 +                 "timing_calls_pacing_fence_tracking_fg_lifecycle_native={}/{}/{}/{}/{}/{} "
 +                 "xefg_scope=owned_resourceCopy_global xefg_live_peak_copies={}/{} "
 +                 "xefg_live_peak_alloc_est_MiB={:.2f}/{:.2f} xefg_unknown_size_copies={} "
@@ -6107,6 +6743,12 @@ index 00000000..bee41e65
 +                 "pending_age_known={} pending_oldest_observed_age_ms={} "
 +                 "cleanup_state={} cleanup_reason={} cleanup_attempt_defer_complete_recover={}/{}/{}/{}",
 +                 sample.elapsedMs / 1000, changed, pressure, sample.hitch,
++                 CaptureEventName(sample.captureEvent), sample.pressureEpoch, sample.pressureAgeMs,
++                 sample.pressureRecoverySamples, sample.localValid && sample.localBudget != 0 && sample.localUsage > sample.localBudget,
++                 memory.samples, memory.firstTickMs, memory.lastTickMs,
++                 memory.usageMin / mib, memory.usageMax / mib, memory.budgetMin / mib, memory.budgetMax / mib,
++                 memory.observedIncrease / mib, memory.observedDecrease / mib,
++                 memory.increaseIntervalMs, memory.decreaseIntervalMs,
 +                 sample.localValid, sample.localUsage / mib, sample.localBudget / mib,
 +                 sample.nonlocalValid, sample.nonlocalUsage / mib, sample.nonlocalBudget / mib,
 +                 sample.processValid, sample.processPrivateBytes / mib,
@@ -6117,7 +6759,13 @@ index 00000000..bee41e65
 +                 sample.presentMaxMs, sample.gapMaxMs,
 +                 sample.waitMaxMs[0], sample.waitMaxMs[1], sample.waitMaxMs[2], sample.waitMaxMs[3],
 +                 sample.waitMaxMs[4], sample.waitMaxMs[5],
-+                 sample.waitMaxMs[6], sample.waitCalls[6],
++                 sample.waitMaxMs[6], sample.waitCalls[6], mean(5), sample.waitSumMs[5],
++                 sample.waitMaxMs[7], mean(7), sample.waitCalls[7],
++                 sample.waitMaxMs[8], mean(8), sample.waitCalls[8],
++                 sample.waitMaxMs[9], mean(9), sample.waitCalls[9],
++                 sample.waitMaxMs[10], mean(10), sample.waitCalls[10],
++                 sample.waitMaxMs[11], mean(11), sample.waitCalls[11],
++                 sample.waitMaxMs[12], mean(12), sample.waitCalls[12],
 +                 sample.waitCalls[0], sample.waitCalls[1], sample.waitCalls[2], sample.waitCalls[3],
 +                 sample.waitCalls[4], sample.waitCalls[5],
 +                 ownedCopies.liveCopies, ownedCopies.peakCopies,
@@ -6137,6 +6785,16 @@ index 00000000..bee41e65
 +                 work.cleanupAttempts, work.cleanupDeferred, work.cleanupCompleted, work.cleanupRecovered);
 +        LogProvider(sample.elapsedMs);
 +        LogAllocations(sample.elapsedMs);
++        LogProgress(sample.elapsedMs);
++        const bool pressureTransition = sample.captureEvent >= CaptureEvent::PressureEnter &&
++                                        sample.captureEvent <= CaptureEvent::PressureNormalized;
++        if (!_detailLogged || pressureTransition || sample.elapsedMs < _lastDetailLogMs ||
++            sample.elapsedMs - _lastDetailLogMs >= 30000)
++        {
++            _detailLogged = true;
++            _lastDetailLogMs = sample.elapsedMs;
++            LogAllocationDetails(sample.elapsedMs);
++        }
 +    }
 +
 +    void LogProvider(std::uint64_t elapsedMs)
@@ -6199,9 +6857,16 @@ index 00000000..bee41e65
 +        const bool residencyValid = ResidencyDiagnostics::TryReadSnapshot(r);
 +        constexpr double mib = 1024.0 * 1024.0;
 +        const auto& c = a.callers;
++        const auto& timing = a.timing;
++        const auto timingMeanUs = [&](unsigned i) {
++            return timing[i].samples ? static_cast<double>(timing[i].totalNanoseconds) / timing[i].samples / 1000.0 : 0.0;
++        };
 +        // Partial observed creation provenance only, not all allocations or residency.
 +        // Default/CPU-visible/unclassified partition committed+heap, not extra bytes.
 +        LOG_WARN("[GpuAlloc] t={}s valid={} scope=partial_created_ge1MiB_not_residency "
++                 "observation_initialized_enabled={}/{} "
++                 "observer_cpu_scope=process_cumulative_sample1of64_max_lower_bound "
++                 "observer_create_destroy_detail_max_mean_us_samples={:.3f}/{:.3f}/{}/{:.3f}/{:.3f}/{}/{:.3f}/{:.3f}/{} "
 +                 "caller_order=game_xefg_xess_ffx_optiscaler_streamline_other_unknown "
 +                 "api_supported_ever_installed_now_failed_ever={:X}/{:X}/{:X} "
 +                 "skip_small_full_notifier_registration_alloc_size_pin_counter={}/{}/{}/{}/{}/{}/{}/{} "
@@ -6218,7 +6883,11 @@ index 00000000..bee41e65
 +                 "cum_release_MiB={:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f} "
 +                 "residency_valid={} residency_calls_fail_masked={}/{}/{} residency_last_original_hr={:08X} "
 +                 "residency_last_caller_objects_masked={}/{}/{}",
-+                 elapsedMs / 1000, valid, a.supportedApiMask, a.installedApiMask, a.failedApiMask,
++                 elapsedMs / 1000, valid, a.observationInitialized, a.observationEnabled,
++                 timing[0].maximumNanoseconds / 1000.0, timingMeanUs(0), timing[0].samples,
++                 timing[1].maximumNanoseconds / 1000.0, timingMeanUs(1), timing[1].samples,
++                 timing[2].maximumNanoseconds / 1000.0, timingMeanUs(2), timing[2].samples,
++                 a.supportedApiMask, a.installedApiMask, a.failedApiMask,
 +                 a.smallSkipped, a.poolExhausted, a.notifierUnsupported, a.registrationFailed,
 +                 a.allocationFailed, a.sizeUnknown, a.pinFailed, a.counterUnavailable,
 +                 c[0].liveCommittedBytes / mib, c[1].liveCommittedBytes / mib, c[2].liveCommittedBytes / mib, c[3].liveCommittedBytes / mib, c[4].liveCommittedBytes / mib, c[5].liveCommittedBytes / mib, c[6].liveCommittedBytes / mib, c[7].liveCommittedBytes / mib,
@@ -6236,6 +6905,105 @@ index 00000000..bee41e65
 +                 ResidencyDiagnostics::CallerName(r.lastCaller), r.lastObjects, r.lastMasked);
 +    }
 +
++    void LogProgress(std::uint64_t elapsedMs)
++    {
++        if (!BeginLogEntry()) return;
++        const auto progress = XeFGProgress::ReadSnapshot();
++        const auto lifecycle = XeFGProgress::ReadLifecycleSnapshot();
++        const auto now = XeFGDiagnostics::WorkNowMs();
++        const auto age = [now](std::uint64_t tick) -> std::int64_t {
++            return tick != 0 && now >= tick ? static_cast<std::int64_t>(now - tick) : -1;
++        };
++        // At most eight records, formatted only on a bounded log event. A
++        // completed marker covers work before that signal on that queue only.
++        std::string queues;
++        queues.reserve(1536);
++        if (progress.valid)
++            for (unsigned i = 0; i < progress.queues.size(); ++i)
++            {
++                const auto& q = progress.queues[i];
++                if (!q.tracked) continue;
++                queues += std::format(" q{}={}/{}/{}/{}/{}/{}/{}/{}/{}/{}/{}/{}/{}/{:08X}/{}",
++                    i, q.queueId, q.queueType, q.fenceReady, q.stopped,
++                    q.signalCount, q.completionCount, age(q.pendingSinceMs), age(q.lastSubmissionTickMs),
++                    age(q.lastPollTickMs), q.completionObservationMaxMs, q.createFailures, q.signalFailures, q.deviceRemoved,
++                    static_cast<std::uint32_t>(q.lastError), q.coalesced);
++            }
++        LOG_WARN("[GpuProgress] t={}s valid={} scope=latest_tracked_xefg_queues_only context={} snapshot_age_ms={} "
++                 "tracked={} tracking_complete={} skipped_busy={} "
++                 "completion_scope=signal_to_first_cpu_poll_not_gpu_duration unknown_age=-1 "
++                 "queue_fields=id_type_fence_stopped_signal_complete_pendingAge_submitAge_pollAge_observedMax_createFail_signalFail_removed_hresult_coalesced{} "
++                 "disable_scope=process_cumulative_actual_sdk_calls "
++                 "disable_reason_order=external_config_settings_provider_settings_toggle_hudless_alias_shutdown "
++                 "disable_attempts={}/{}/{}/{}/{}/{}/{} disable_accepted={}/{}/{}/{}/{}/{}/{} "
++                 "disable_nonzero={}/{}/{}/{}/{}/{}/{}",
++                 elapsedMs / 1000, progress.valid, progress.contextId,
++                 progress.valid ? age(progress.sampledAtMs) : -1,
++                 progress.trackedQueues, progress.queueTrackingComplete, progress.skippedBusy, queues,
++                 lifecycle.attempted[0], lifecycle.attempted[1], lifecycle.attempted[2], lifecycle.attempted[3],
++                 lifecycle.attempted[4], lifecycle.attempted[5], lifecycle.attempted[6],
++                 lifecycle.accepted[0], lifecycle.accepted[1], lifecycle.accepted[2], lifecycle.accepted[3],
++                 lifecycle.accepted[4], lifecycle.accepted[5], lifecycle.accepted[6],
++                 lifecycle.nonzero[0], lifecycle.nonzero[1], lifecycle.nonzero[2], lifecycle.nonzero[3],
++                 lifecycle.nonzero[4], lifecycle.nonzero[5], lifecycle.nonzero[6]);
++    }
++
++    void LogAllocationDetails(std::uint64_t elapsedMs)
++    {
++        if (!BeginLogEntry()) return;
++        constexpr double mib = 1024.0 * 1024.0;
++        GpuAllocationDiagnostics::DetailSnapshot details;
++        const bool enabled = GpuAllocationDiagnostics::ObservationEnabled();
++        const bool valid = enabled && GpuAllocationDiagnostics::TryReadDetailSnapshot(details);
++        const auto shown = valid ? (std::min)(details.groupCount, std::uint32_t(2)) : 0u;
++        const auto growthShown = valid && details.growthBaselineAvailable ?
++            (std::min)(details.growthGroupCount, std::uint32_t(2)) : 0u;
++        LOG_WARN("[GpuAllocGroups] t={}s valid={} enabled={} scope=partial_live_created_ge1MiB_not_residency "
++                 "captured_monotonic_ms={} all_live_objects={} all_live_MiB={:.2f} "
++                 "largest_groups_available_shown={}/{} age_scope=creation_to_sample_not_unused "
++                 "growth_baseline_valid={} growth_baseline_ms={} growth_interval_ms={} "
++                 "positive_growth_groups_available_shown={}/{} growth_scope=live_net_change_since_previous_successful_snapshot_not_alloc_churn",
++                 elapsedMs / 1000, valid, enabled, details.capturedMs, details.liveObjects,
++                 details.observedBytes / mib, details.groupCount, shown,
++                 valid && details.growthBaselineAvailable, details.growthBaselineCapturedMs, details.growthIntervalMs,
++                 details.growthGroupCount, growthShown);
++        for (unsigned i = 0; i < shown; ++i)
++            LogAllocationGroup(elapsedMs, i + 1, details.groups[i], false, 0, 0);
++        for (unsigned i = 0; i < growthShown; ++i)
++        {
++            const auto& growth = details.growthGroups[i];
++            LogAllocationGroup(elapsedMs, i + 1, growth.group, true, growth.baselineBytes, growth.growthBytes);
++        }
++    }
++
++    void LogAllocationGroup(std::uint64_t elapsedMs, unsigned rank,
++                            const GpuAllocationDiagnostics::GroupSnapshot& group,
++                            bool growth, std::uint64_t baselineBytes, std::uint64_t growthBytes)
++    {
++        if (!BeginLogEntry()) return;
++        constexpr double mib = 1024.0 * 1024.0;
++        const auto& m = group.metadata;
++        LOG_WARN("[GpuAllocGroup] t={}s rank={} ranking={} caller={} kind={} memory_class={} "
++                 "module_base_rva={:X}/{:X} live_MiB={:.2f} live_count={} creation_age_oldest_youngest_ms={}/{} "
++                 "growth_baseline_valid={} baseline_live_MiB={:.2f} observed_positive_live_delta_MiB={:.2f} "
++                 "descriptor_known={} dimension_format_width_height_array_mips={}/{}/{}/{}/{}/{} "
++                 "sample_count_quality_layout={}/{}/{} resource_flags={:X} alignment={} "
++                 "heap_type_flags_known_flags={}/{}/{:X} cpu_page_memory_pool={}/{} node_masks={:X}/{:X}",
++                 elapsedMs / 1000, rank, growth ? "positive_live_growth" : "live_bytes",
++                 GpuAllocationDiagnostics::CallerName(group.caller),
++                 group.kind == GpuAllocationDiagnostics::Kind::Committed ? "committed" : "heap",
++                 group.memory == GpuAllocationDiagnostics::MemoryClass::Default ? "default" :
++                 group.memory == GpuAllocationDiagnostics::MemoryClass::CpuVisible ? "cpu_visible" : "unclassified",
++                 m.moduleBase, m.callerRva, group.liveBytes / mib, group.liveCount, group.oldestAgeMs, group.youngestAgeMs,
++                 growth, baselineBytes / mib, growthBytes / mib,
++                 m.descriptorKnown, m.dimension, m.format, m.width, m.height, m.depthOrArray, m.mipLevels,
++                 m.sampleCount, m.sampleQuality, m.layout, m.resourceFlags, m.alignment,
++                 m.heapType, m.heapFlagsKnown, m.heapFlags, m.cpuPageProperty, m.memoryPoolPreference,
++                 m.creationNodeMask, m.visibleNodeMask);
++    }
++
++    bool _detailLogged = false;
++    std::uint64_t _lastDetailLogMs = 0;
 +    SRWLOCK _lock = SRWLOCK_INIT;
 +    IDXGIAdapter3* _adapter = nullptr;
 +    LUID _adapterLuid {};
@@ -6244,13 +7012,15 @@ index 00000000..bee41e65
 +    Clock::time_point _started = Clock::now();
 +    Clock::time_point _lastSample {};
 +    Clock::time_point _lastPresent {};
-+    Clock::time_point _lastLog {};
 +    double _windowPresentMaxMs = 0.0;
 +    double _windowGapMaxMs = 0.0;
 +    double _logPresentMaxMs = 0.0;
 +    double _logGapMaxMs = 0.0;
 +    std::array<double, static_cast<unsigned>(WaitStage::Count)> _logWaitMaxMs {};
 +    std::array<std::uint64_t, static_cast<unsigned>(WaitStage::Count)> _logWaitCalls {};
++    std::array<double, static_cast<unsigned>(WaitStage::Count)> _logWaitSumMs {};
++    MemoryWindow _memoryWindow;
++    CapturePolicy _capture;
 +    bool _lastHitch = false;
 +    PressureState _pressure;
 +    HitchState _hitch;
@@ -6297,10 +7067,10 @@ index 00000000..bee41e65
 +} // namespace LongSession
 diff --git a/OptiScaler/misc/LongSessionState.h b/OptiScaler/misc/LongSessionState.h
 new file mode 100644
-index 00000000..7c79aa8d
+index 00000000..7992be7b
 --- /dev/null
 +++ b/OptiScaler/misc/LongSessionState.h
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,254 @@
 +#pragma once
 +
 +#include <cmath>
@@ -6355,6 +7125,7 @@ index 00000000..7c79aa8d
 +    }
 +
 +    Pressure Value() const { return _value; }
++    unsigned RecoverySamples() const { return _recoverySamples; }
 +
 +  private:
 +    Pressure _value = Pressure::Normal;
@@ -6386,6 +7157,154 @@ index 00000000..7c79aa8d
 +    unsigned _recoverySamples = 0;
 +};
 +
++struct MemoryWindowSnapshot
++{
++    std::uint64_t samples = 0, firstTickMs = 0, lastTickMs = 0;
++    std::uint64_t usageMin = 0, usageMax = 0, budgetMin = 0, budgetMax = 0;
++    std::uint64_t observedIncrease = 0, observedDecrease = 0;
++    std::uint64_t increaseIntervalMs = 0, decreaseIntervalMs = 0;
++};
++
++// Fixed-size observations, not a continuous memory trace. A delta spans two
++// successful samples; an unavailable sample breaks that comparison chain.
++class MemoryWindow
++{
++  public:
++    void Observe(std::uint64_t tickMs, bool valid, std::uint64_t usage, std::uint64_t budget)
++    {
++        _latestChange = 0;
++        if (!valid || budget == 0)
++        {
++            _previousValid = false;
++            return;
++        }
++        if (_summary.samples++ == 0)
++        {
++            _summary.firstTickMs = tickMs;
++            _summary.usageMin = _summary.usageMax = usage;
++            _summary.budgetMin = _summary.budgetMax = budget;
++        }
++        _summary.lastTickMs = tickMs;
++        if (usage < _summary.usageMin) _summary.usageMin = usage;
++        if (usage > _summary.usageMax) _summary.usageMax = usage;
++        if (budget < _summary.budgetMin) _summary.budgetMin = budget;
++        if (budget > _summary.budgetMax) _summary.budgetMax = budget;
++        if (_previousValid && tickMs >= _previousTickMs)
++        {
++            const auto interval = tickMs - _previousTickMs;
++            if (usage >= _previousUsage)
++            {
++                _latestChange = usage - _previousUsage;
++                if (_latestChange > _summary.observedIncrease)
++                {
++                    _summary.observedIncrease = _latestChange;
++                    _summary.increaseIntervalMs = interval;
++                }
++            }
++            else
++            {
++                _latestChange = _previousUsage - usage;
++                if (_latestChange > _summary.observedDecrease)
++                {
++                    _summary.observedDecrease = _latestChange;
++                    _summary.decreaseIntervalMs = interval;
++                }
++            }
++        }
++        _previousValid = true;
++        _previousUsage = usage;
++        _previousTickMs = tickMs;
++    }
++    MemoryWindowSnapshot Snapshot() const { return _summary; }
++    std::uint64_t LatestObservedChange() const { return _latestChange; }
++    void ResetWindow() { _summary = {}; }
++  private:
++    MemoryWindowSnapshot _summary;
++    std::uint64_t _previousTickMs = 0, _previousUsage = 0, _latestChange = 0;
++    bool _previousValid = false;
++};
++
++enum class CaptureEvent : unsigned char
++{
++    None, Initial, PressureEnter, PressureWorsened, PressureEased, PressureNormalized,
++    HitchStart, HitchEnd, NativeSlow, MemoryStep, Periodic
++};
++
++inline const char* CaptureEventName(CaptureEvent event)
++{
++    switch (event)
++    {
++    case CaptureEvent::Initial: return "initial";
++    case CaptureEvent::PressureEnter: return "pressure_enter";
++    case CaptureEvent::PressureWorsened: return "pressure_worsened";
++    case CaptureEvent::PressureEased: return "pressure_eased";
++    case CaptureEvent::PressureNormalized: return "pressure_normalized";
++    case CaptureEvent::HitchStart: return "cpu_hitch_start";
++    case CaptureEvent::HitchEnd: return "cpu_hitch_end";
++    case CaptureEvent::NativeSlow: return "native_cpu_slow";
++    case CaptureEvent::MemoryStep: return "observed_memory_step";
++    case CaptureEvent::Periodic: return "periodic";
++    default: return "none";
++    }
++}
++
++// Logging decisions only. A pressure epoch ends after hysteresis reports normal;
++// "eased/normalized" describes sampled budget pressure, never gameplay recovery.
++class CapturePolicy
++{
++  public:
++    CaptureEvent Observe(std::uint64_t now, Pressure pressure, bool hitch,
++                         double nativeCpuMaxMs, std::uint64_t observedMemoryChange)
++    {
++        if (_initialized && now < _lastObservedMs) *this = {};
++        _lastObservedMs = now;
++        const auto previousPressure = _pressure;
++        const bool previousHitch = _hitch;
++        _pressure = pressure;
++        _hitch = hitch;
++        if (previousPressure == Pressure::Normal && pressure != Pressure::Normal)
++        {
++            ++_epoch;
++            _pressureSinceMs = now;
++        }
++        CaptureEvent event = CaptureEvent::None;
++        if (!_initialized) event = CaptureEvent::Initial;
++        else if (pressure != previousPressure)
++        {
++            if (pressure == Pressure::Normal) event = CaptureEvent::PressureNormalized;
++            else if (previousPressure == Pressure::Normal) event = CaptureEvent::PressureEnter;
++            else if (static_cast<unsigned>(pressure) > static_cast<unsigned>(previousPressure))
++                event = CaptureEvent::PressureWorsened;
++            else event = CaptureEvent::PressureEased;
++        }
++        else if (hitch != previousHitch) event = hitch ? CaptureEvent::HitchStart : CaptureEvent::HitchEnd;
++        else if (now - _lastEventLogMs >= 10000)
++        {
++            if (std::isfinite(nativeCpuMaxMs) && nativeCpuMaxMs >= 75.0)
++                event = CaptureEvent::NativeSlow;
++            else if (observedMemoryChange >= 512ULL * 1024 * 1024)
++                event = CaptureEvent::MemoryStep;
++        }
++        if (event == CaptureEvent::None && now - _lastLogMs >= 30000) event = CaptureEvent::Periodic;
++        _initialized = true;
++        if (event != CaptureEvent::None)
++        {
++            _lastLogMs = now;
++            _lastEventLogMs = now;
++        }
++        return event;
++    }
++    std::uint64_t Epoch() const { return _epoch; }
++    std::uint64_t PressureAgeMs(std::uint64_t now) const
++    {
++        return _pressure != Pressure::Normal && now >= _pressureSinceMs ? now - _pressureSinceMs : 0;
++    }
++  private:
++    bool _initialized = false, _hitch = false;
++    Pressure _pressure = Pressure::Normal;
++    std::uint64_t _epoch = 0, _pressureSinceMs = 0, _lastLogMs = 0, _lastEventLogMs = 0, _lastObservedMs = 0;
++};
++
 +// Limit this feature's contribution to the existing log, including its final cap message.
 +class LogBudget
 +{
@@ -6408,10 +7327,10 @@ index 00000000..7c79aa8d
 +} // namespace LongSession
 diff --git a/OptiScaler/misc/LongSessionTiming.h b/OptiScaler/misc/LongSessionTiming.h
 new file mode 100644
-index 00000000..8a482949
+index 00000000..52d3cae0
 --- /dev/null
 +++ b/OptiScaler/misc/LongSessionTiming.h
-@@ -0,0 +1,73 @@
+@@ -0,0 +1,114 @@
 +#pragma once
 +
 +#include <array>
@@ -6434,6 +7353,12 @@ index 00000000..8a482949
 +    Lifecycle,
 +    NativePresent,
 +    ProviderStatus,
++    DiagnosticSample,
++    DiagnosticLog,
++    GpuProgress,
++    TrackedReleaseMutex,
++    TrackedReleaseProbe,
++    TrackedReleaseNative,
 +    Count
 +};
 +
@@ -6441,6 +7366,7 @@ index 00000000..8a482949
 +{
 +    std::atomic<std::uint64_t> maximumUs { 0 };
 +    std::atomic<std::uint64_t> calls { 0 };
++    std::atomic<std::uint64_t> totalUs { 0 };
 +};
 +
 +inline std::array<WaitCounter, static_cast<unsigned>(WaitStage::Count)>& WaitCounters()
@@ -6460,6 +7386,9 @@ index 00000000..8a482949
 +    // Saturate before converting to an integer. A 24-hour stall is ample range.
 +    constexpr double maximumMs = 86400000.0;
 +    const auto us = static_cast<std::uint64_t>((milliseconds < maximumMs ? milliseconds : maximumMs) * 1000.0);
++    // Independently sampled atomics give an approximate CPU mean at a window
++    // boundary. No lock or per-call allocation is introduced for diagnostics.
++    WaitCounters()[index].totalUs.fetch_add(us, std::memory_order_relaxed);
 +    auto& maximum = WaitCounters()[index].maximumUs;
 +    auto old = maximum.load(std::memory_order_relaxed);
 +    // Diagnostic contention must not extend a render critical section.
@@ -6482,6 +7411,37 @@ index 00000000..8a482949
 +  private:
 +    WaitStage _stage;
 +    Clock::time_point _start;
++};
++
++// Share one decision across related scopes in a hot callback. Unselected calls
++// perform no clock reads; sampled maxima cannot represent unsampled calls.
++inline bool ShouldSampleWait(WaitStage identity)
++{
++    const auto index = static_cast<unsigned>(identity);
++    if (index >= static_cast<unsigned>(WaitStage::Count)) return false;
++    static thread_local std::array<unsigned char, static_cast<unsigned>(WaitStage::Count)> calls {};
++    calls[index] = static_cast<unsigned char>((calls[index] + 1) & 63);
++    return calls[index] == 0;
++}
++
++class SampledWaitScope
++{
++  public:
++    SampledWaitScope(WaitStage stage, bool selected) : _stage(stage), _selected(selected)
++    {
++        if (_selected) _start = Clock::now();
++    }
++    ~SampledWaitScope()
++    {
++        if (_selected)
++            RecordWait(_stage, std::chrono::duration<double, std::milli>(Clock::now() - _start).count());
++    }
++    SampledWaitScope(const SampledWaitScope&) = delete;
++    SampledWaitScope& operator=(const SampledWaitScope&) = delete;
++  private:
++    WaitStage _stage;
++    bool _selected;
++    Clock::time_point _start {};
 +};
 +
 +} // namespace LongSession
@@ -6887,6 +7847,95 @@ index 00000000..f0378625
 +    return result;
 +}
 +} // namespace XeFGDiagnostics
+diff --git a/OptiScaler/misc/XeFGProgressDiagnostics.h b/OptiScaler/misc/XeFGProgressDiagnostics.h
+new file mode 100644
+index 00000000..39b40c80
+--- /dev/null
++++ b/OptiScaler/misc/XeFGProgressDiagnostics.h
+@@ -0,0 +1,83 @@
++#pragma once
++
++#include <array>
++#include <atomic>
++#include <cstdint>
++#include <mutex>
++
++// Sparse observations of queues already held for XeFG lifetime tracking.
++// These markers never authorize cleanup, infer residency, or prove global GPU
++// idle. Signal-to-observed-completion includes polling/CPU scheduling latency.
++namespace XeFGProgress
++{
++inline constexpr unsigned MaxQueues = 8;
++inline constexpr uint64_t IntervalMs = 1000;
++struct QueueSnapshot
++{
++    bool tracked = false, fenceReady = false, stopped = false;
++    uint64_t queueId = 0;
++    uint32_t queueType = UINT32_MAX;
++    uint64_t signalCount = 0, completionCount = 0;
++    uint64_t lastSignalTickMs = 0, lastCompletionObservedTickMs = 0, lastPollTickMs = 0;
++    uint64_t pendingSinceMs = 0, lastSubmissionTickMs = 0;
++    uint64_t coalesced = 0, createFailures = 0, signalFailures = 0, deviceRemoved = 0;
++    uint64_t completionObservationMaxMs = 0;
++    int32_t lastError = 0;
++};
++struct Snapshot
++{
++    bool valid = false, queueTrackingComplete = false;
++    uint64_t contextId = 0, sampledAtMs = 0, trackedQueues = 0, skippedBusy = 0;
++    std::array<QueueSnapshot, MaxQueues> queues {};
++};
++namespace Detail
++{
++inline std::mutex snapshotMutex;
++inline Snapshot latest;
++inline std::atomic<uint64_t> nextQueueId { 0 };
++}
++inline uint64_t NextQueueId() { return Detail::nextQueueId.fetch_add(1, std::memory_order_relaxed) + 1; }
++inline void Publish(const Snapshot& snapshot)
++{
++    std::unique_lock lock(Detail::snapshotMutex, std::try_to_lock);
++    if (lock.owns_lock()) Detail::latest = snapshot;
++}
++inline Snapshot ReadSnapshot()
++{
++    std::unique_lock lock(Detail::snapshotMutex, std::try_to_lock);
++    return lock.owns_lock() ? Detail::latest : Snapshot {};
++}
++
++enum class DeactivateReason : unsigned
++{
++    External, ConfigurationDisabled, SettingsChanged, ProviderSettingsToggle,
++    HudlessChanged, AliasReset, FullShutdown, Count
++};
++inline constexpr unsigned ReasonCount = static_cast<unsigned>(DeactivateReason::Count);
++struct LifecycleSnapshot
++{
++    std::array<uint64_t, ReasonCount> attempted {}, accepted {}, nonzero {};
++};
++namespace Detail
++{
++inline std::array<std::atomic<uint64_t>, ReasonCount> attempted {}, accepted {}, nonzero {};
++}
++inline void RecordDeactivate(DeactivateReason reason, int32_t result)
++{
++    const auto index = static_cast<unsigned>(reason);
++    if (index >= ReasonCount) return;
++    Detail::attempted[index].fetch_add(1, std::memory_order_relaxed);
++    (result == 0 ? Detail::accepted[index] : Detail::nonzero[index]).fetch_add(1, std::memory_order_relaxed);
++}
++inline LifecycleSnapshot ReadLifecycleSnapshot()
++{
++    LifecycleSnapshot snapshot;
++    for (unsigned i = 0; i < ReasonCount; ++i)
++    {
++        snapshot.attempted[i] = Detail::attempted[i].load(std::memory_order_relaxed);
++        snapshot.accepted[i] = Detail::accepted[i].load(std::memory_order_relaxed);
++        snapshot.nonzero[i] = Detail::nonzero[i].load(std::memory_order_relaxed);
++    }
++    return snapshot;
++}
++}
 diff --git a/OptiScaler/misc/XeFGResourceDiagnostics.h b/OptiScaler/misc/XeFGResourceDiagnostics.h
 new file mode 100644
 index 00000000..db2479ae
@@ -8488,7 +9537,7 @@ index 18b9abab..ef7f01d2 100644
  
      static std::string ToHex(const uint8_t* bytes, uint32_t size)
 diff --git a/OptiScaler/resource_tracking/ResTrack_dx12.cpp b/OptiScaler/resource_tracking/ResTrack_dx12.cpp
-index c96a6660..a2d068c4 100644
+index c96a6660..44400dc6 100644
 --- a/OptiScaler/resource_tracking/ResTrack_dx12.cpp
 +++ b/OptiScaler/resource_tracking/ResTrack_dx12.cpp
 @@ -4,6 +4,8 @@
@@ -8571,8 +9620,8 @@ index c96a6660..a2d068c4 100644
 +    XeFGDiagnostics::RecordObserverCallback(XeFGDiagnostics::LifetimeObserver::CommandSubmission);
      auto fg = State::Instance().currentFG;
 +    auto submission = fg != nullptr ? fg->AcquireSubmissionWork() : FGWorkGate::Scope {};
-+    if (submission)
-+        fg->BeforeCommandSubmission(This, NumCommandLists, ppCommandLists);
++    const auto submissionGeneration =
++        submission ? fg->BeforeCommandSubmission(This, NumCommandLists, ppCommandLists) : 0;
  
 -    if (fg != nullptr && fg->IsActive() && !fg->IsPaused())
 +    // Observing the game's real submission must continue while soft FG cleanup
@@ -8583,7 +9632,7 @@ index c96a6660..a2d068c4 100644
      {
          LOG_TRACK("NumCommandLists: {}", NumCommandLists);
  
-@@ -687,13 +744,14 @@ void ResTrack_Dx12::hkExecuteCommandLists(ID3D12CommandQueue* This, UINT NumComm
+@@ -687,13 +744,15 @@ void ResTrack_Dx12::hkExecuteCommandLists(ID3D12CommandQueue* This, UINT NumComm
  
          if (!found.empty())
          {
@@ -8595,21 +9644,25 @@ index c96a6660..a2d068c4 100644
              }
  
 +            o_ExecuteCommandLists(This, NumCommandLists, ppCommandLists);
-+            fg->AfterCommandSubmission(NumCommandLists, ppCommandLists);
++            fg->AfterCommandSubmission(NumCommandLists, ppCommandLists, submissionGeneration);
++            fg->ObserveSubmittedQueue(This);
 +
              return;
          }
      }
-@@ -701,6 +759,8 @@ void ResTrack_Dx12::hkExecuteCommandLists(ID3D12CommandQueue* This, UINT NumComm
+@@ -701,6 +760,11 @@ void ResTrack_Dx12::hkExecuteCommandLists(ID3D12CommandQueue* This, UINT NumComm
      LOG_TRACK("Done NumCommandLists: {}", NumCommandLists);
  
      o_ExecuteCommandLists(This, NumCommandLists, ppCommandLists);
 +    if (submission)
-+        fg->AfterCommandSubmission(NumCommandLists, ppCommandLists);
++    {
++        fg->AfterCommandSubmission(NumCommandLists, ppCommandLists, submissionGeneration);
++        fg->ObserveSubmittedQueue(This);
++    }
  }
  
  #pragma region Heap hooks
-@@ -710,6 +770,8 @@ static ULONG STDMETHODCALLTYPE hkHeapRelease(ID3D12DescriptorHeap* This)
+@@ -710,6 +774,8 @@ static ULONG STDMETHODCALLTYPE hkHeapRelease(ID3D12DescriptorHeap* This)
      if (State::Instance().isShuttingDown)
          return o_HeapRelease(This);
  
@@ -8618,7 +9671,7 @@ index c96a6660..a2d068c4 100644
      std::shared_ptr<HeapInfo> heapInfo;
      {
          std::shared_lock lock(_heapRegistryMutex);
-@@ -748,6 +810,7 @@ static ULONG STDMETHODCALLTYPE hkHeapRelease(ID3D12DescriptorHeap* This)
+@@ -748,6 +814,7 @@ static ULONG STDMETHODCALLTYPE hkHeapRelease(ID3D12DescriptorHeap* This)
  HRESULT ResTrack_Dx12::hkCreateDescriptorHeap(ID3D12Device* This, D3D12_DESCRIPTOR_HEAP_DESC* pDescriptorHeapDesc,
                                                REFIID riid, void** ppvHeap)
  {
@@ -8626,7 +9679,7 @@ index c96a6660..a2d068c4 100644
      auto result = o_CreateDescriptorHeap(This, pDescriptorHeapDesc, riid, ppvHeap);
  
      if (State::Instance().skipHeapCapture)
-@@ -784,6 +847,11 @@ HRESULT ResTrack_Dx12::hkCreateDescriptorHeap(ID3D12Device* This, D3D12_DESCRIPT
+@@ -784,6 +851,11 @@ HRESULT ResTrack_Dx12::hkCreateDescriptorHeap(ID3D12Device* This, D3D12_DESCRIPT
  
          LOG_TRACE("Heap: {:X}, Heap type: {}, Cpu: {}-{}, Gpu: {}-{}, Desc count: {}", (size_t) *ppvHeap, type,
                    cpuStart, cpuEnd, gpuStart, gpuEnd, numDescriptors);
@@ -8638,7 +9691,7 @@ index c96a6660..a2d068c4 100644
          {
              std::unique_lock lock(_heapRegistryMutex);
              size_t count = fgHeaps.size();
-@@ -793,8 +861,7 @@ HRESULT ResTrack_Dx12::hkCreateDescriptorHeap(ID3D12Device* This, D3D12_DESCRIPT
+@@ -793,8 +865,7 @@ HRESULT ResTrack_Dx12::hkCreateDescriptorHeap(ID3D12Device* This, D3D12_DESCRIPT
                  if (fgHeaps[i] != nullptr && !fgHeaps[i]->active.load(std::memory_order_acquire))
                  {
  
@@ -8648,7 +9701,7 @@ index c96a6660..a2d068c4 100644
  
                      gHeapGeneration.fetch_add(1, std::memory_order_release);
                      foundEmpty = true;
-@@ -809,8 +876,7 @@ HRESULT ResTrack_Dx12::hkCreateDescriptorHeap(ID3D12Device* This, D3D12_DESCRIPT
+@@ -809,8 +880,7 @@ HRESULT ResTrack_Dx12::hkCreateDescriptorHeap(ID3D12Device* This, D3D12_DESCRIPT
                  if (fgHeaps.capacity() == fgHeaps.size())
                      fgHeaps.reserve(fgHeaps.size() + 65536);
  
@@ -8658,7 +9711,7 @@ index c96a6660..a2d068c4 100644
  
                  gHeapGeneration.fetch_add(1, std::memory_order_release);
                  LOG_DEBUG("Adding new heap slot: {}", fgHeaps.size() - 1);
-@@ -830,17 +896,18 @@ HRESULT ResTrack_Dx12::hkCreateDescriptorHeap(ID3D12Device* This, D3D12_DESCRIPT
+@@ -830,17 +900,27 @@ HRESULT ResTrack_Dx12::hkCreateDescriptorHeap(ID3D12Device* This, D3D12_DESCRIPT
      return result;
  }
  
@@ -8670,21 +9723,33 @@ index c96a6660..a2d068c4 100644
 -        return o_Release(This);
 +        return original(This);
  
++    const bool timed = LongSession::ShouldSampleWait(LongSession::WaitStage::TrackedReleaseMutex);
      std::vector<TrackedResourceSlot> toClean;
      {
-         std::lock_guard lock(_trackedResourcesMutex);
+-        std::lock_guard lock(_trackedResourcesMutex);
++        std::unique_lock lock(_trackedResourcesMutex, std::defer_lock);
++        {
++            LongSession::SampledWaitScope timing(LongSession::WaitStage::TrackedReleaseMutex, timed);
++            lock.lock();
++        }
  
-         This->AddRef();
+-        This->AddRef();
 -        auto refCount = o_Release(This);
-+        auto refCount = original(This);
++        ULONG refCount;
++        {
++            LongSession::SampledWaitScope timing(LongSession::WaitStage::TrackedReleaseProbe, timed);
++            This->AddRef();
++            refCount = original(This);
++        }
  
          if (refCount <= 1)
          {
-@@ -861,7 +928,36 @@ ULONG ResTrack_Dx12::hkRelease(ID3D12Resource* This)
+@@ -861,7 +941,37 @@ ULONG ResTrack_Dx12::hkRelease(ID3D12Resource* This)
              heap->ClearSlotIfMatches(slot.index, This);
      }
  
 -    return o_Release(This);
++    LongSession::SampledWaitScope timing(LongSession::WaitStage::TrackedReleaseNative, timed);
 +    return original(This);
 +}
 +
@@ -8718,7 +9783,7 @@ index c96a6660..a2d068c4 100644
  }
  
  void ResTrack_Dx12::hkCopyDescriptors(ID3D12Device* This, UINT NumDestDescriptorRanges,
-@@ -1733,7 +1829,8 @@ void ResTrack_Dx12::hkDispatch(ID3D12GraphicsCommandList* This, UINT ThreadGroup
+@@ -1733,7 +1843,8 @@ void ResTrack_Dx12::hkDispatch(ID3D12GraphicsCommandList* This, UINT ThreadGroup
  
  void ResTrack_Dx12::HookResource(ID3D12Device* InDevice)
  {
@@ -8728,7 +9793,7 @@ index c96a6660..a2d068c4 100644
          return;
  
      ID3D12Resource* tmp = nullptr;
-@@ -1745,15 +1842,31 @@ void ResTrack_Dx12::HookResource(ID3D12Device* InDevice)
+@@ -1745,15 +1856,31 @@ void ResTrack_Dx12::HookResource(ID3D12Device* InDevice)
  
      if (hr == S_OK)
      {
@@ -8765,7 +9830,7 @@ index c96a6660..a2d068c4 100644
  
              if (detourResult != NO_ERROR)
              {
-@@ -1763,7 +1876,8 @@ void ResTrack_Dx12::HookResource(ID3D12Device* InDevice)
+@@ -1763,7 +1890,8 @@ void ResTrack_Dx12::HookResource(ID3D12Device* InDevice)
              }
              else
              {
@@ -8775,7 +9840,7 @@ index c96a6660..a2d068c4 100644
              }
          }
          else
-@@ -1775,7 +1889,7 @@ void ResTrack_Dx12::HookResource(ID3D12Device* InDevice)
+@@ -1775,7 +1903,7 @@ void ResTrack_Dx12::HookResource(ID3D12Device* InDevice)
  
  void ResTrack_Dx12::HookCommandList(ID3D12Device* InDevice)
  {
@@ -8784,7 +9849,7 @@ index c96a6660..a2d068c4 100644
      if (o_OMSetRenderTargets != nullptr)
          return;
  
-@@ -1865,50 +1979,143 @@ void ResTrack_Dx12::HookCommandList(ID3D12Device* InDevice)
+@@ -1865,50 +1993,143 @@ void ResTrack_Dx12::HookCommandList(ID3D12Device* InDevice)
      }
  }
  
@@ -8926,7 +9991,7 @@ index c96a6660..a2d068c4 100644
 +                o_CommandListRelease = nullptr;
 +            }
 +        }
-+    }
+     }
 +    XeFGDiagnostics::RecordObserverInstallation(XeFGDiagnostics::LifetimeObserver::CommandSubmission, installed);
 +    XeFGDiagnostics::RecordObserverInstallation(XeFGDiagnostics::LifetimeObserver::CommandReset, installed);
 +    XeFGDiagnostics::RecordObserverInstallation(XeFGDiagnostics::LifetimeObserver::CommandRelease, installed);
@@ -8942,7 +10007,7 @@ index c96a6660..a2d068c4 100644
 +    {
 +        list->Close();
 +        list->Release();
-     }
++    }
 +    if (allocator != nullptr)
 +        allocator->Release();
 +    if (temporaryQueue != nullptr)
@@ -8961,7 +10026,7 @@ index c96a6660..a2d068c4 100644
      if (o_CreateDescriptorHeap != nullptr || State::Instance().activeFgInput == FGInput::NvngxFG)
          return;
  
-@@ -1998,7 +2205,16 @@ void ResTrack_Dx12::HookDevice(ID3D12Device* device)
+@@ -1998,7 +2219,16 @@ void ResTrack_Dx12::HookDevice(ID3D12Device* device)
  
  void ResTrack_Dx12::ReleaseDeviceHooks()
  {
@@ -8978,7 +10043,7 @@ index c96a6660..a2d068c4 100644
  
      DetourTransactionBegin();
      DetourUpdateThread(GetCurrentThread());
-@@ -2046,6 +2262,10 @@ void ResTrack_Dx12::ReleaseDeviceHooks()
+@@ -2046,6 +2276,10 @@ void ResTrack_Dx12::ReleaseDeviceHooks()
  
      if (o_Close != nullptr)
          DetourDetach(&(PVOID&) o_Close, hkClose);
@@ -8989,7 +10054,7 @@ index c96a6660..a2d068c4 100644
  
      if (o_ExecuteBundle != nullptr)
          DetourDetach(&(PVOID&) o_ExecuteBundle, hkExecuteBundle);
-@@ -2080,6 +2300,15 @@ void ResTrack_Dx12::ReleaseDeviceHooks()
+@@ -2080,6 +2314,15 @@ void ResTrack_Dx12::ReleaseDeviceHooks()
          o_DrawInstanced = nullptr;
          o_Dispatch = nullptr;
          o_Close = nullptr;
@@ -9005,7 +10070,7 @@ index c96a6660..a2d068c4 100644
          o_ExecuteBundle = nullptr;
  
          // Resource
-@@ -2089,6 +2318,7 @@ void ResTrack_Dx12::ReleaseDeviceHooks()
+@@ -2089,6 +2332,7 @@ void ResTrack_Dx12::ReleaseDeviceHooks()
  
  void ResTrack_Dx12::ReleaseHooks()
  {

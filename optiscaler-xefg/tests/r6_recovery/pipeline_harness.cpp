@@ -9,6 +9,7 @@
 #include <framegen/xefg/XeFGRecovery.h>
 #include <misc/XeFGPresentDiagnostics.h>
 #include <misc/LongSessionTiming.h>
+#include <misc/XeFGProgressDiagnostics.h>
 #include <cstdint>
 #include <format>
 #include <iostream>
@@ -194,6 +195,8 @@ struct XeFG_Dx12 {
     void RequestHistoryReset(){++historyRequests;}uint64_t PendingHistoryResetToken(uint64_t){return historyRequests;}
     void AcknowledgeHistoryReset(uint64_t){}
     bool TryBeginRecoveryTrial(UINT64);void NoteRecoveryFault(UINT64,const char*,int32_t);
+    // Progress methods execute against their real bodies in r7_progress.
+    void PollGpuProgress() {}
     void PreparePresent();void MarkFrameConstantsReady(UINT64);UINT64 PresentRecoveryToken();
     void ObservePresentStatus(UINT64,HRESULT,int32_t,uint32_t,int32_t,bool);void Activate();
     bool Dispatch();bool IsLowResMV()const{return true;}
@@ -260,6 +263,7 @@ struct XeFG_Dx12 {
     unsigned updateTargetCalls=0;
     void UpdateTarget() {++updateTargetCalls;}
     void Deactivate() { active = false; }
+    void DeactivateForReason(XeFGProgress::DeactivateReason) { Deactivate(); }
     void SetResourceReady(FG_ResourceType type, int slot) { _resourceReady[slot][type] = true; ++readinessCalls; }
     bool SetResource(Dx12Resource* inputResource);
 };

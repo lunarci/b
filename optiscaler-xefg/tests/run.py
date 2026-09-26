@@ -49,6 +49,9 @@ def main():
         ("R5 installed lifetime observers, playable recovery and release propagation", here / "r5_lifetime_recovery/run.py"),
         ("R6 coherent recovery, native provider status and memory error reporting", here / "r6_recovery/run.py"),
         ("FFX context registry concurrency and atomic removal", here / "r6_ffx_registry/run.py"),
+        ("R7 sparse GPU progress, bounded observation and lifecycle safety", here / "r7_progress/run.py"),
+        ("R7 native submission observation and generation ticket ordering", here / "r7_tracking/run.py"),
+        ("R7 allocation provenance, bounded accounting and observer timing", here / "r7_allocation/run.py"),
     ]
     report = {"passed": False, "gpu_game_tested": False, "tests": []}
     try:

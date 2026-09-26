@@ -43,6 +43,7 @@ recovery_bodies = '\n'.join(body('OptiScaler/framegen/xefg/XeFG_Dx12.cpp', sig) 
 
 harness = r'''
 #include "framegen/FGWorkGate.h"
+#include "misc/XeFGProgressDiagnostics.h"
 #include "misc/XeFGWorkDiagnostics.h"
 #include "misc/XeFGPresentDiagnostics.h"
 #include "framegen/xefg/XeFGRecovery.h"
@@ -146,7 +147,7 @@ struct XeFG_Dx12 {
     void PublishPendingLocked() {}
     bool _uiCommandListResetted[BUFFER_COUNT]{};
     int GetIndex(){return 0;} bool SubmitUICommandList(int){order.push_back('S');return true;}
-    bool DeactivateImpl(bool); void RestoreProviderState(bool);
+    bool DeactivateImpl(bool,XeFGProgress::DeactivateReason=XeFGProgress::DeactivateReason::External); void RestoreProviderState(bool);
     bool DiscardPendingCommandRecordings(){order.push_back('C');return discardOk;}
     void CreateObjects(ID3D12Device*); bool CommandObjectsReady() const;
     void RequestHistoryReset(){order.push_back('H');}
@@ -328,6 +329,7 @@ with tempfile.TemporaryDirectory(prefix='xefg_lifetime_') as temp:
 release_commands = body('OptiScaler/framegen/xefg/XeFG_Dx12.cpp', 'void XeFG_Dx12::ReleaseCommandObjects()')
 release_objects = body('OptiScaler/framegen/xefg/XeFG_Dx12.cpp', 'void XeFG_Dx12::ReleaseObjects()')
 cleanup_harness = r'''
+#include "misc/XeFGWorkDiagnostics.h"
 #include "misc/XeFGResourceDiagnostics.h"
 #include <cassert>
 #include <cstdint>
@@ -359,8 +361,11 @@ struct XeFG_Dx12 {
     std::unordered_map<int,Object*> _resourceCopy[BUFFER_COUNT];
     Object* _uiFence=nullptr; Object* _scFence=nullptr;
     void* _uiFenceEvent=nullptr; void* _scFenceEvent=nullptr; UINT64 _uiFenceValue=3;
-    struct Entry { Object* fence=nullptr; void* event=nullptr; Object* queue=nullptr; };
+    struct Entry { Object* fence=nullptr; void* event=nullptr; Object* queue=nullptr; Object* progressFence=nullptr; };
     Entry _lifetimeQueues[8]{}; size_t _lifetimeQueueCount=0; std::mutex _lifetimeQueueMutex;
+    std::mutex _gpuProgressMutex; uint64_t _nextGpuProgressPollMs=999;
+    unsigned progressPublications=0;
+    void PublishGpuProgressLocked(uint64_t) { assert(_lifetimeQueueCount==0); ++progressPublications; }
     Object* _gameCommandQueue=nullptr;
     std::unique_ptr<int> _renderUI,_hudlessCompare,_mvFlip,_depthFlip,_depthInvert;
     void ReleaseCommandObjects(); void ReleaseObjects();
@@ -368,7 +373,7 @@ struct XeFG_Dx12 {
 '''
 cleanup_tests = r'''
 int main(){
-    XeFG_Dx12 x; Object own,borrowed,uiFence,scFence,queueFence,queue,command;
+    XeFG_Dx12 x; Object own,borrowed,uiFence,scFence,queueFence,queue,command,progressFence;
     x._resourceCopy[0][0]=&own;
     x._resourceDiagnostics.BeginContext();
     x._resourceDiagnostics.OnAllocate(65536);
@@ -377,6 +382,7 @@ int main(){
     x._uiFence=&uiFence; x._scFence=&scFence;
     x._uiFenceEvent=reinterpret_cast<void*>(1); x._scFenceEvent=reinterpret_cast<void*>(2);
     x._lifetimeQueues[0]={&queueFence,reinterpret_cast<void*>(3),&queue}; x._lifetimeQueueCount=1;
+    x._lifetimeQueues[0].progressFence=&progressFence;
     Object uiSlotFence,scSlotFence; x._uiSlotFences[0]=&uiSlotFence;x._scSlotFences[3]=&scSlotFence;
     x._uiSubmissionFailed[0]=x._scSubmissionFailed[3]=true;
     x._uiCommandList[0]=&command; x._gameCommandQueue=&queue;
@@ -387,6 +393,7 @@ int main(){
     assert(own.releases==1 && borrowed.releases==0 && command.releases==1);
     assert(uiSlotFence.releases==1 && scSlotFence.releases==1 && !x._uiSubmissionFailed[0] && !x._scSubmissionFailed[3]);
     assert(uiFence.releases==1 && scFence.releases==1 && queueFence.releases==1 && queue.releases==1);
+    assert(progressFence.releases==1 && x._nextGpuProgressPollMs==0 && x.progressPublications==1);
     assert(x._frameResources[0].empty() && x._resourceCopy[0].empty() && closes==3);
     assert(!x._lifecycleFailed && x._gameCommandQueue==nullptr);
     assert(x._copyAllocationInfo[0].empty());
@@ -394,6 +401,7 @@ int main(){
     assert(counters.liveCopies==0 && counters.liveBytes==0 && counters.releases==1);
     assert(counters.releasedBytes==65536 && counters.accountingErrors==0);
     x.ReleaseObjects(); assert(own.releases==1 && borrowed.releases==0 && closes==3);
+    assert(progressFence.releases==1);
     assert(x._resourceDiagnostics.Read().counters.releases==1);
     std::cout << "XeFG cleanup ownership/quiescence gates passed\n";
 }
