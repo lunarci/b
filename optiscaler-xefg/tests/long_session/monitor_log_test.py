@@ -27,7 +27,9 @@ static std::vector<std::string> lines;
 template<class... T> void Capture(std::format_string<T...> text,T&&... args) {
     lines.push_back(std::format(text,std::forward<T>(args)...));
 }
-#define LOG_WARN(FMT, ...) Capture(FMT __VA_OPT__(,) __VA_ARGS__)
+// Forward the entire argument list: works with MSVC legacy preprocessing
+// and still instantiates Capture(std::format_string<...>) for format checks.
+#define LOG_WARN(...) Capture(__VA_ARGS__)
 namespace LongSession {
 '''
 actual = helpers.extract_function(monitor, "struct Sample") + ";\nclass Monitor { public: LogBudget _logBudget;\n"
