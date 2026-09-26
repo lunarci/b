@@ -1,8 +1,16 @@
 diff --git a/OptiScaler/Config.cpp b/OptiScaler/Config.cpp
-index ea38b300..bff07ad7 100644
+index ea38b300..a080f404 100644
 --- a/OptiScaler/Config.cpp
 +++ b/OptiScaler/Config.cpp
-@@ -420,6 +420,7 @@ bool Config::Reload(std::filesystem::path iniPath)
+@@ -213,6 +213,7 @@ bool Config::Reload(std::filesystem::path iniPath)
+ 
+         {
+             FGXeFGInterpolationCount.set_from_config(readInt("XeFG", "InterpolationCount"));
++            FGXeFGLowMemoryMode.set_from_config(readBool("XeFG", "LowMemoryMode"));
+             // Anything in range here survives a reload; out of range is reset to
+             // the default rather than clamped, so an over-large value would look
+             // like the setting silently reverting to 2X.
+@@ -420,6 +421,7 @@ bool Config::Reload(std::filesystem::path iniPath)
              LogSingleFile.set_from_config(readBool("Log", "SingleFile"));
              LogAsync.set_from_config(readBool("Log", "LogAsync"));
              LogAsyncThreads.set_from_config(readInt("Log", "LogAsyncThreads"));
@@ -10,7 +18,15 @@ index ea38b300..bff07ad7 100644
  
              {
                  auto setting = readString("Log", "LogFileName", false);
-@@ -1013,9 +1014,9 @@ bool Config::SaveIni()
+@@ -1006,6 +1008,7 @@ bool Config::SaveIni()
+     {
+         ini.SetValue("XeFG", "InterpolationCount",
+                      GetIntValue(Instance()->FGXeFGInterpolationCount.value_for_config()).c_str());
++        ini.SetValue("XeFG", "LowMemoryMode", GetBoolValue(Instance()->FGXeFGLowMemoryMode.value_for_config()).c_str());
+         ini.SetValue("XeFG", "UnlockMFG", GetBoolValue(Instance()->FGXeFGUnlockEnabled.value_for_config()).c_str());
+         ini.SetValue("XeFG", "MaxInterpolatedFrames",
+                      GetIntValue(Instance()->FGXeFGMaxInterpolatedFrames.value_for_config()).c_str());
+@@ -1013,9 +1016,9 @@ bool Config::SaveIni()
          ini.SetValue("XeFG", "IgnoreInitChecks",
                       GetBoolValue(Instance()->FGXeFGIgnoreInitChecks.value_for_config()).c_str());
          ini.SetValue("XeFG", "UIComposition", GetBoolValue(Instance()->FGXeFGUIComposition.value_for_config()).c_str());
@@ -23,7 +39,7 @@ index ea38b300..bff07ad7 100644
          ini.SetValue("XeFG", "DebugView", GetBoolValue(Instance()->FGXeFGDebugView.value_for_config()).c_str());
          ini.SetValue("XeFG", "ForceBorderless",
                       GetBoolValue(Instance()->FGXeFGForceBorderless.value_for_config()).c_str());
-@@ -1448,6 +1449,8 @@ bool Config::SaveIni()
+@@ -1448,6 +1451,8 @@ bool Config::SaveIni()
                       wstring_to_string(Instance()->LogFileName.value_for_config_or(L"auto")).c_str());
          ini.SetValue("Log", "LogAsync", GetBoolValue(Instance()->LogAsync.value_for_config()).c_str());
          ini.SetValue("Log", "LogAsyncThreads", GetIntValue(Instance()->LogAsyncThreads.value_for_config()).c_str());
@@ -32,7 +48,7 @@ index ea38b300..bff07ad7 100644
      }
  
      // NvApi
-@@ -1612,9 +1615,9 @@ bool Config::SaveIni()
+@@ -1612,9 +1617,9 @@ bool Config::SaveIni()
  
  bool Config::SaveXeFG()
  {
@@ -46,7 +62,7 @@ index ea38b300..bff07ad7 100644
      auto pathWStr = absoluteFileName.wstring();
      LOG_INFO("Trying to save ini to: {0}", wstring_to_string(pathWStr));
 diff --git a/OptiScaler/Config.h b/OptiScaler/Config.h
-index b01e2cf5..3ae88f09 100644
+index b01e2cf5..6cee73da 100644
 --- a/OptiScaler/Config.h
 +++ b/OptiScaler/Config.h
 @@ -46,6 +46,20 @@ template <class T, HasDefaultValue defaultState = WithDefault> class CustomOptio
@@ -80,6 +96,54 @@ index b01e2cf5..3ae88f09 100644
      // XeSS
      CustomOptional<bool> BuildPipelines { true };
      CustomOptional<int32_t> NetworkModel { 0 };
+@@ -590,39 +607,19 @@ class Config
+ 
+     // XeFG
+     //
+-    // The ceiling for the whole XeFG path, in interpolations: 7 is an 8X
+-    // multiplier. This is the limit itself, not a sanity bound with the real one
+-    // living somewhere else - FGXeFGMaxInterpolatedFrames defaults to it, the
+-    // unlock patches report it to the provider as maxSupportedInterpolations,
+-    // and XeFG_Dx12 declares it as the swapchain's maxInterpolatedFrames at init,
+-    // so one number decides what the provider accepts, what the menu offers, and
+-    // what the ini may ask for.
+-    //
+-    // It used to be 31 - a bound nothing enforced, so the menu went to 32X while
+-    // the provider was still told 31 on every launch. Past 8X the burst outruns
+-    // any display and the extra frames only buy latency, so 8X is where it stops.
+-    //
+-    // The patch that raises the provider's reported maximum writes a 4 byte
+-    // immediate, so the encoding has never been what limited this.
++    // Compile-time safety ceiling in interpolated frames (7 means 8X).
++    // The configured/device support ceiling and initialized session capacity
++    // are separate: LowMemoryMode can reserve less without hiding choices.
+     static constexpr int32_t XeFGMaxInterpolations = 7;
+ 
+     CustomOptional<bool> FGXeFGIgnoreInitChecks { false };
+     CustomOptional<int> FGXeFGInterpolationCount { 1 };
++    // Reserve the 3X/4X shared capacity for explicit low multipliers. Changes
++    // take effect only at the next swapchain initialization (normally restart).
++    CustomOptional<bool> FGXeFGLowMemoryMode { true };
+     CustomOptional<bool> FGXeFGUnlockEnabled { true };
+-    // What the unlock patch reports to the provider as its maximum, and what
+-    // the multiplier menu lets you pick. Those are not two settings: the number
+-    // written into the U3/U4/U5 patches is read back as
+-    // xefg_swapchain_properties_t::maxSupportedInterpolations, and
+-    // XeFG_Dx12 fills xefg_swapchain_d3d12_init_params_t::maxInterpolatedFrames
+-    // from it at swapchain init - so raising the menu ceiling necessarily
+-    // declares the same number to the provider at init on every launch.
+-    //
+-    // It used to be 5, which is what capped the menu at 6X; the ceiling above is
+-    // now 8X and is what this defaults to. Setting it lower narrows both the menu
+-    // and what the provider is told, which is the supported way to go back down:
+-    // if the provider sizes anything from this at init, the symptom would be a
+-    // failed init or exhausted VRAM, and a value it rejects is clamped in
+-    // XeFGUnlock to the ceiling rather than passed through.
++    // Capability exposed by the unlock patch and multiplier menu. Initial
++    // allocation capacity is selected separately by XeFGCapacityPolicy.
+     CustomOptional<int> FGXeFGMaxInterpolatedFrames { XeFGMaxInterpolations };
+     CustomOptional<bool> FGXeFGExtraPacing { true };
+     CustomOptional<bool> FGXeFGUIComposition { false };
 diff --git a/OptiScaler/NVNGX_Parameter.cpp b/OptiScaler/NVNGX_Parameter.cpp
 index 453565e6..f23e4623 100644
 --- a/OptiScaler/NVNGX_Parameter.cpp
@@ -94,6 +158,46 @@ index 453565e6..f23e4623 100644
  
              // Only on change, this can be called on every NGX parameter query
              static int lastReported = 0;
+diff --git a/OptiScaler/OptiScaler.vcxproj b/OptiScaler/OptiScaler.vcxproj
+index 9d700171..a2cde4b2 100644
+--- a/OptiScaler/OptiScaler.vcxproj
++++ b/OptiScaler/OptiScaler.vcxproj
+@@ -445,6 +445,7 @@ copy NUL "$(SolutionDir)x64\Release\a\!! EXTRACT ALL FILES TO GAME FOLDER !!" /Y
+     <ClInclude Include="inputs\FG\FSR3_Dx12_FG.h" />
+     <ClInclude Include="inputs\FG\Streamline_Inputs_Dx12.h" />
+     <ClInclude Include="framegen\xefg\XeFG_Dx12.h" />
++    <ClInclude Include="framegen\xefg\XeFGCapacityPolicy.h" />
+     <ClInclude Include="hooks\Advapi32_Hooks.h" />
+     <ClInclude Include="hooks\Crypt32_Hooks.h" />
+     <ClInclude Include="hooks\Gdi32_Hooks.h" />
+@@ -855,4 +856,4 @@ copy NUL "$(SolutionDir)x64\Release\a\!! EXTRACT ALL FILES TO GAME FOLDER !!" /Y
+   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+   <ImportGroup Label="ExtensionTargets">
+   </ImportGroup>
+-</Project>
+\ No newline at end of file
++</Project>
+diff --git a/OptiScaler/OptiScaler.vcxproj.filters b/OptiScaler/OptiScaler.vcxproj.filters
+index e70b9998..1096c533 100644
+--- a/OptiScaler/OptiScaler.vcxproj.filters
++++ b/OptiScaler/OptiScaler.vcxproj.filters
+@@ -491,6 +491,9 @@
+     <ClInclude Include="framegen\xefg\XeFG_Dx12.h">
+       <Filter>Header Files</Filter>
+     </ClInclude>
++    <ClInclude Include="framegen\xefg\XeFGCapacityPolicy.h">
++      <Filter>Header Files</Filter>
++    </ClInclude>
+     <ClInclude Include="hooks\Ntdll_Hooks.h">
+       <Filter>Header Files</Filter>
+     </ClInclude>
+@@ -1551,4 +1554,4 @@
+     </None>
+     <None Include="shaders\magnifier\precompile\Magnifier_Shader_Vk.spv" />
+   </ItemGroup>
+-</Project>
+\ No newline at end of file
++</Project>
 diff --git a/OptiScaler/Source.def b/OptiScaler/Source.def
 index da6f1fee..63cb0c08 100644
 --- a/OptiScaler/Source.def
@@ -631,7 +735,7 @@ index 3cb12cff..0685c611 100644
  {
      if (index < 0)
 diff --git a/OptiScaler/framegen/IFGFeature.h b/OptiScaler/framegen/IFGFeature.h
-index 1a64bab2..75ff35f8 100644
+index 1a64bab2..4eff5cdf 100644
 --- a/OptiScaler/framegen/IFGFeature.h
 +++ b/OptiScaler/framegen/IFGFeature.h
 @@ -3,6 +3,7 @@
@@ -694,6 +798,15 @@ index 1a64bab2..75ff35f8 100644
      void SetInterpolationRect(UINT64 width, UINT height, int index = -1);
      void GetInterpolationRect(UINT64& width, UINT& height, int index = -1);
      void SetInterpolationPos(UINT left, UINT top, int index = -1);
+@@ -149,6 +163,8 @@ class IFGFeature
+     void SetResourceReady(FG_ResourceType type, int index = -1);
+     UINT GetInterpolatedFrameCount() const;
+     int GetMaxInterpolationCount() const;
++    // Capability remains the menu ceiling; the current context can reserve less.
++    virtual int GetInitializedInterpolationCapacity() const { return _maxInterpolationCount; }
+     bool GetDMFGSupport() const;
+ 
+     void ResetCounters();
 diff --git a/OptiScaler/framegen/IFGFeature_Dx12.cpp b/OptiScaler/framegen/IFGFeature_Dx12.cpp
 index 0eee70e4..692425ca 100644
 --- a/OptiScaler/framegen/IFGFeature_Dx12.cpp
@@ -1246,6 +1359,36 @@ index 00000000..8bee2d98
 +            _pending.store(false, std::memory_order_release);
 +    }
 +};
+diff --git a/OptiScaler/framegen/xefg/XeFGCapacityPolicy.h b/OptiScaler/framegen/xefg/XeFGCapacityPolicy.h
+new file mode 100644
+index 00000000..c422e116
+--- /dev/null
++++ b/OptiScaler/framegen/xefg/XeFGCapacityPolicy.h
+@@ -0,0 +1,24 @@
++#pragma once
++
++// Counts are interpolated frames: two means 3X, three means 4X.
++// Keep device support separate from the capacity of an existing SDK context.
++namespace XeFGCapacity
++{
++constexpr int SelectInitialCapacity(int supported, int requested, bool explicitRequest,
++                                    bool dynamicApi, bool lowMemory)
++{
++    if (supported < 1)
++        supported = 1;
++    if (!dynamicApi)
++        return requested >= 1 && requested <= supported ? requested : 1;
++    // Auto can receive a higher game request after swapchain initialization.
++    if (!lowMemory || !explicitRequest || requested < 1 || requested > 3)
++        return supported;
++    return supported < 3 ? supported : 3;
++}
++
++constexpr bool CanApply(int requested, int capacity)
++{
++    return requested >= 1 && capacity >= 1 && requested <= capacity;
++}
++}
 diff --git a/OptiScaler/framegen/xefg/XeFGRecovery.h b/OptiScaler/framegen/xefg/XeFGRecovery.h
 new file mode 100644
 index 00000000..d416cd50
@@ -1499,17 +1642,112 @@ index 00000000..d416cd50
 +    }
 +};
 diff --git a/OptiScaler/framegen/xefg/XeFG_Dx12.cpp b/OptiScaler/framegen/xefg/XeFG_Dx12.cpp
-index 1dbb3831..485e3d0c 100644
+index 1dbb3831..7b20938f 100644
 --- a/OptiScaler/framegen/xefg/XeFG_Dx12.cpp
 +++ b/OptiScaler/framegen/xefg/XeFG_Dx12.cpp
-@@ -1,5 +1,6 @@
+@@ -1,5 +1,7 @@
  #include "pch.h"
  #include "XeFG_Dx12.h"
++#include "XeFGCapacityPolicy.h"
 +#include <misc/LongSessionTiming.h>
  #include <hudfix/Hudfix_Dx12.h>
  #include <menu/menu_overlay_dx.h>
  #include <resource_tracking/ResTrack_dx12.h>
-@@ -73,6 +74,17 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
+@@ -26,6 +28,93 @@ static int GameRequestedInterpolationCount()
+     return StreamlineHooks::GameRequestedInterpolationCount();
+ }
+ 
++void XeFG_Dx12::LogCapacityRequirements(const xefg_swapchain_d3d12_init_params_t& params,
++                                        uint32_t width, uint32_t height, DXGI_FORMAT format)
++{
++    // Queries describe SDK heap requirements, not measured resident VRAM. Run
++    // only at initialization; no allocation or resource release is requested.
++    const auto query = XeFGProxy::D3D12GetProperties();
++    if (query == nullptr)
++        return;
++#ifndef DONT_USE_XMX
++    ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
++#endif
++    for (const uint32_t count : { 2u, 3u, 5u })
++    {
++        if (count > static_cast<uint32_t>(_maxInterpolationCount))
++            continue;
++        auto candidate = params;
++        candidate.maxInterpolatedFrames = count;
++        xefg_swapchain_properties_t props {};
++        const auto result = query(_swapChainContext, &candidate, width, height, format, &props);
++        LOG_INFO("[XeFGCapacity] heap_query requested={}X result={} buffer={} texture={} constants={} "
++                 "scope=sdk_requirements_not_resident_vram",
++                 count + 1, static_cast<int32_t>(result), props.tempBufferHeapSize,
++                 props.tempTextureHeapSize, props.constantBufferSize);
++    }
++}
++
++void XeFG_Dx12::RecordInitializedCapacity(const xefg_swapchain_d3d12_init_params_t& params)
++{
++    int capacity = static_cast<int>(params.maxInterpolatedFrames);
++    bool readbackValid = false;
++    int32_t readbackResult = 0;
++#ifndef DONT_USE_XMX
++    ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
++#endif
++    if (const auto readback = XeFGProxy::D3D12GetInitializationParameters(); readback != nullptr)
++    {
++        xefg_swapchain_d3d12_init_params_t actual {};
++        const auto result = readback(_swapChainContext, &actual);
++        readbackResult = static_cast<int32_t>(result);
++        if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS && actual.maxInterpolatedFrames >= 1 &&
++            actual.maxInterpolatedFrames <= static_cast<uint32_t>(_maxInterpolationCount))
++        {
++            capacity = static_cast<int>(actual.maxInterpolatedFrames);
++            readbackValid = true;
++        }
++    }
++    _initializedInterpolationCapacity.store(capacity, std::memory_order_release);
++    _lastCapacityRequest = -1;
++    auto* config = Config::Instance();
++    XeFGDiagnostics::RecordInterpolationCapacity(static_cast<uint32_t>(capacity),
++        config->FGXeFGInterpolationCount.value_or_default(), config->FGXeFGInterpolationCount.has_value());
++    // Old SDKs use the initialized count directly; dynamic SDKs report an
++    // applied count after the first successful SetNumInterpolatedFrames call.
++    if (XeFGProxy::SetNumInterpolatedFrames() == nullptr)
++    {
++        _framesToInterpolate = capacity;
++        XeFGDiagnostics::RecordInterpolationActive(static_cast<uint32_t>(capacity));
++    }
++    else
++    {
++        // A new SDK context must receive the selected count even if this
++        // provider object was reused and its old context used the same count.
++        _framesToInterpolate = -1;
++    }
++    LOG_INFO("[XeFGCapacity] supported={}X init_requested={}X initialized={}X selected={}X explicit={} "
++             "low_memory={} readback_valid={} readback_result={}",
++             _maxInterpolationCount + 1, params.maxInterpolatedFrames + 1, capacity + 1,
++             config->FGXeFGInterpolationCount.value_or_default() + 1,
++             config->FGXeFGInterpolationCount.has_value(), config->FGXeFGLowMemoryMode.value_or_default(),
++             readbackValid, readbackResult);
++    if (!readbackValid || capacity != static_cast<int>(params.maxInterpolatedFrames))
++        LOG_WARN("[XeFGCapacity] initialization readback unavailable or different; initialized={}X "
++                 "is the runtime limit, VRAM saving requires measurement", capacity + 1);
++
++    xefg_swapchain_properties_t props {};
++    const auto result = XeFGProxy::GetProperties()(_swapChainContext, &props);
++    if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
++    {
++        XeFGDiagnostics::RecordHeapRequirements(props.tempBufferHeapSize, props.tempTextureHeapSize,
++                                                props.constantBufferSize);
++        LOG_INFO("[XeFGCapacity] initialized_heap_requirements buffer={} texture={} constants={} "
++                 "reported_max={}X scope=sdk_requirements_not_resident_vram",
++                 props.tempBufferHeapSize, props.tempTextureHeapSize, props.constantBufferSize,
++                 props.maxSupportedInterpolations + 1);
++    }
++}
++
+ void XeFG_Dx12::xefgLogCallback(const char* message, xefg_swapchain_logging_level_t level, void* userData)
+ {
+     switch (level)
+@@ -73,6 +162,17 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
          }
  
          LOG_INFO("XeFG context created");
@@ -1527,7 +1765,7 @@ index 1dbb3831..485e3d0c 100644
          result = XeFGProxy::SetLoggingCallback()(_swapChainContext, XEFG_SWAPCHAIN_LOGGING_LEVEL_DEBUG, xefgLogCallback,
                                                   nullptr);
  
-@@ -168,6 +180,7 @@ feature_version XeFG_Dx12::Version()
+@@ -168,6 +268,7 @@ feature_version XeFG_Dx12::Version()
      if (XeFGProxy::InitXeFG())
      {
          auto ver = XeFGProxy::Version();
@@ -1535,7 +1773,7 @@ index 1dbb3831..485e3d0c 100644
          return feature_version(ver.major, ver.minor, ver.patch);
      }
  
-@@ -180,8 +193,13 @@ bool XeFG_Dx12::DestroySwapchainContext()
+@@ -180,8 +281,13 @@ bool XeFG_Dx12::DestroySwapchainContext()
  {
      LOG_DEBUG("");
  
@@ -1550,7 +1788,7 @@ index 1dbb3831..485e3d0c 100644
          auto context = _swapChainContext;
          _swapChainContext = nullptr;
  
-@@ -193,6 +211,7 @@ bool XeFG_Dx12::DestroySwapchainContext()
+@@ -193,10 +299,13 @@ bool XeFG_Dx12::DestroySwapchainContext()
          if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
          {
              _swapChainContext = context;
@@ -1558,7 +1796,13 @@ index 1dbb3831..485e3d0c 100644
          }
          else
          {
-@@ -275,19 +294,9 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
+             State::Instance().currentFGSwapchain = nullptr;
++            _initializedInterpolationCapacity.store(0, std::memory_order_release);
++            _lastCapacityRequest = -1;
+         }
+     }
+ 
+@@ -275,19 +384,9 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
          else if (readyToRelease)
          {
              LOG_INFO("Releasing old swapchain");
@@ -1580,7 +1824,7 @@ index 1dbb3831..485e3d0c 100644
          }
          else
          {
-@@ -296,6 +305,8 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
+@@ -296,6 +395,8 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
          }
      }
  
@@ -1589,37 +1833,75 @@ index 1dbb3831..485e3d0c 100644
      if (_swapChainContext == nullptr)
      {
          LOG_DEBUG("Creating swapchain context for the first time");
-@@ -316,6 +327,8 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
+@@ -311,11 +412,15 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
+         _width = desc->BufferDesc.Width;
+         _height = desc->BufferDesc.Height;
+ 
++        _maxInterpolationCount = (std::max)(1, XeFGUnlock::InterpolationLimit());
+         xefg_swapchain_properties_t props {};
+         auto result = XeFGProxy::GetProperties()(_swapChainContext, &props);
          if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
          {
-             _maxInterpolationCount = props.maxSupportedInterpolations;
+-            _maxInterpolationCount = props.maxSupportedInterpolations;
++            _maxInterpolationCount = (std::max)(static_cast<int>(props.maxSupportedInterpolations),
++                                                XeFGUnlock::InterpolationLimit());
 +            XeFGDiagnostics::RecordHeapRequirements(props.tempBufferHeapSize, props.tempTextureHeapSize,
 +                                                    props.constantBufferSize);
              LOG_INFO("Max supported interpolations: {}", props.maxSupportedInterpolations);
          }
          else
-@@ -429,6 +442,8 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
+@@ -377,25 +482,13 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
+ 
+     xefg_swapchain_d3d12_init_params_t params {};
+ 
+-    int intTarget = _maxInterpolationCount;
+-
+-    // For old libxess_fg versions we use max to control interpolation count
+-    if (XeFGProxy::SetNumInterpolatedFrames() == nullptr)
+-        intTarget = Config::Instance()->FGXeFGInterpolationCount.value_or_default();
+-
+-    if (intTarget < 1 || intTarget > _maxInterpolationCount)
+-    {
+-        LOG_WARN("Invalid XeFG interpolation count: {}, max count: {}", intTarget, _maxInterpolationCount);
+-
+-        intTarget = 1;
+-    }
+-
+-    if (_framesToInterpolate > intTarget)
+-        Config::Instance()->FGXeFGInterpolationCount.set_volatile_value(intTarget);
+-
+-    if (Config::Instance()->ForceXeLL.value_or_default())
+-        params.maxInterpolatedFrames = 1;
+-
++    auto* config = Config::Instance();
++    int intTarget = XeFGCapacity::SelectInitialCapacity(
++        _maxInterpolationCount, config->FGXeFGInterpolationCount.value_or_default(),
++        config->FGXeFGInterpolationCount.has_value(), XeFGProxy::SetNumInterpolatedFrames() != nullptr,
++        config->FGXeFGLowMemoryMode.value_or_default());
++    if (const int fixedCapacity = XeFGUnlock::InitialCapacityOverride(); fixedCapacity > 0)
++        intTarget = fixedCapacity;
+     params.maxInterpolatedFrames = intTarget;
+ 
+     params.initFlags = XEFG_SWAPCHAIN_INIT_FLAG_NONE;
+@@ -429,6 +522,9 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
      ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
  #endif // !DONT_USE_XMX
  
 +    TrackLifetimeQueue(realQueue);
 +
++    LogCapacityRequirements(params, scDesc.Width, scDesc.Height, scDesc.Format);
      xefg_swapchain_result_t result;
      result = XeFGProxy::D3D12InitFromSwapChainDesc()(_swapChainContext, hwnd, &scDesc, &fsDesc, realQueue, factory12,
                                                       &params);
-@@ -439,6 +454,11 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
+@@ -439,6 +535,7 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
          return false;
      }
  
-+    XeFGDiagnostics::RecordInterpolationCapacity(params.maxInterpolatedFrames,
-+        Config::Instance()->FGXeFGInterpolationCount.value_or_default(),
-+        Config::Instance()->FGXeFGInterpolationCount.has_value());
-+    if (XeFGProxy::SetNumInterpolatedFrames() == nullptr)
-+        XeFGDiagnostics::RecordInterpolationActive(params.maxInterpolatedFrames);
++    RecordInitializedCapacity(params);
      LOG_INFO("XeFG swapchain created");
      result = XeFGProxy::D3D12GetSwapChainPtr()(_swapChainContext, IID_PPV_ARGS(swapChain));
      if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
-@@ -450,13 +470,22 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
+@@ -450,13 +547,22 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
      // When forcing XeLL, always tell XeFG that FG is active, even tho we don't send anything
      if (State::Instance().activeFgInput == FGInput::ForceXeLL)
      {
@@ -1643,7 +1925,7 @@ index 1dbb3831..485e3d0c 100644
      return true;
  }
  
-@@ -480,19 +509,9 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
+@@ -480,19 +586,9 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
          else if (readyToRelease)
          {
              LOG_INFO("Releasing old swapchain");
@@ -1665,7 +1947,7 @@ index 1dbb3831..485e3d0c 100644
          }
          else
          {
-@@ -501,6 +520,8 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
+@@ -501,6 +597,8 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
          }
      }
  
@@ -1674,37 +1956,75 @@ index 1dbb3831..485e3d0c 100644
      if (_swapChainContext == nullptr)
      {
          if (State::Instance().currentD3D12Device == nullptr)
-@@ -519,6 +540,8 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
+@@ -514,11 +612,15 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
+         _width = desc->Width;
+         _height = desc->Height;
+ 
++        _maxInterpolationCount = (std::max)(1, XeFGUnlock::InterpolationLimit());
+         xefg_swapchain_properties_t props {};
+         auto result = XeFGProxy::GetProperties()(_swapChainContext, &props);
          if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
          {
-             _maxInterpolationCount = props.maxSupportedInterpolations;
+-            _maxInterpolationCount = props.maxSupportedInterpolations;
++            _maxInterpolationCount = (std::max)(static_cast<int>(props.maxSupportedInterpolations),
++                                                XeFGUnlock::InterpolationLimit());
 +            XeFGDiagnostics::RecordHeapRequirements(props.tempBufferHeapSize, props.tempTextureHeapSize,
 +                                                    props.constantBufferSize);
              LOG_INFO("Max supported interpolations: {}", props.maxSupportedInterpolations);
          }
          else
-@@ -592,6 +615,8 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
+@@ -544,25 +646,13 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
+ 
+     xefg_swapchain_d3d12_init_params_t params {};
+ 
+-    int intTarget = _maxInterpolationCount;
+-
+-    // For old libxess_fg versions we use max to control interpolation count
+-    if (XeFGProxy::SetNumInterpolatedFrames() == nullptr)
+-        intTarget = Config::Instance()->FGXeFGInterpolationCount.value_or_default();
+-
+-    if (intTarget < 1 || intTarget > _maxInterpolationCount)
+-    {
+-        LOG_WARN("Invalid XeFG interpolation count: {}, max count: {}", intTarget, _maxInterpolationCount);
+-
+-        intTarget = 1;
+-    }
+-
+-    if (_framesToInterpolate > intTarget)
+-        Config::Instance()->FGXeFGInterpolationCount.set_volatile_value(intTarget);
+-
+-    if (Config::Instance()->ForceXeLL.value_or_default())
+-        params.maxInterpolatedFrames = 1;
+-
++    auto* config = Config::Instance();
++    int intTarget = XeFGCapacity::SelectInitialCapacity(
++        _maxInterpolationCount, config->FGXeFGInterpolationCount.value_or_default(),
++        config->FGXeFGInterpolationCount.has_value(), XeFGProxy::SetNumInterpolatedFrames() != nullptr,
++        config->FGXeFGLowMemoryMode.value_or_default());
++    if (const int fixedCapacity = XeFGUnlock::InitialCapacityOverride(); fixedCapacity > 0)
++        intTarget = fixedCapacity;
+     params.maxInterpolatedFrames = intTarget;
+ 
+     params.initFlags = XEFG_SWAPCHAIN_INIT_FLAG_NONE;
+@@ -592,6 +682,9 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
      if (Config::Instance()->FGXeFGHighResMV.value_or_default())
          _constants.flags |= FG_Flags::DisplayResolutionMVs;
  
 +    TrackLifetimeQueue(realQueue);
 +
++    LogCapacityRequirements(params, desc->Width, desc->Height, desc->Format);
      xefg_swapchain_result_t result;
  
      {
-@@ -608,6 +633,11 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
+@@ -608,6 +701,7 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
          return false;
      }
  
-+    XeFGDiagnostics::RecordInterpolationCapacity(params.maxInterpolatedFrames,
-+        Config::Instance()->FGXeFGInterpolationCount.value_or_default(),
-+        Config::Instance()->FGXeFGInterpolationCount.has_value());
-+    if (XeFGProxy::SetNumInterpolatedFrames() == nullptr)
-+        XeFGDiagnostics::RecordInterpolationActive(params.maxInterpolatedFrames);
++    RecordInitializedCapacity(params);
      LOG_INFO("XeFG swapchain created");
      result = XeFGProxy::D3D12GetSwapChainPtr()(_swapChainContext, IID_PPV_ARGS(swapChain));
      if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
-@@ -619,42 +649,235 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
+@@ -619,42 +713,235 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
      // When forcing XeLL, always tell XeFG that FG is active, even tho we don't send anything
      if (State::Instance().activeFgInput == FGInput::ForceXeLL)
      {
@@ -1844,7 +2164,7 @@ index 1dbb3831..485e3d0c 100644
 +            XeFGPacing::RequestReset();
 +            RequestHistoryReset();
 +        }
-     }
++    }
 +    return _recovery.AllowsInput(frame);
 +}
 +
@@ -1895,7 +2215,7 @@ index 1dbb3831..485e3d0c 100644
 +    {
 +        _isActive = false;
 +        _waitingNewFrameData = false;
-+    }
+     }
 +    const bool terminal = IsTerminalXeFGResult(static_cast<int32_t>(result));
 +    _recovery.Disabled(ticket, success, now, terminal);
 +    if (terminal)
@@ -1952,7 +2272,7 @@ index 1dbb3831..485e3d0c 100644
      auto currentFeature = State::Instance().currentFeature;
      bool nativeAA = false;
      if (State::Instance().activeFgInput == FGInput::Upscaler && currentFeature != nullptr)
-@@ -664,7 +887,10 @@ void XeFG_Dx12::Activate()
+@@ -664,7 +951,10 @@ void XeFG_Dx12::Activate()
          (IsLowResMV() || nativeAA || (State::Instance().gameQuirks & GameQuirk::ForceFGRenderSizeMVs) ||
           Config::Instance()->FGXeFGIgnoreInitChecks.value_or_default()))
      {
@@ -1963,7 +2283,7 @@ index 1dbb3831..485e3d0c 100644
  
          if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
          {
-@@ -672,37 +898,45 @@ void XeFG_Dx12::Activate()
+@@ -672,37 +962,45 @@ void XeFG_Dx12::Activate()
              _lastDispatchedFrame = 0;
          }
  
@@ -2023,7 +2343,7 @@ index 1dbb3831..485e3d0c 100644
              if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
                  _isActive = false;
          }
-@@ -712,39 +946,112 @@ void XeFG_Dx12::Deactivate()
+@@ -712,39 +1010,112 @@ void XeFG_Dx12::Deactivate()
          }
  
          //_lastDispatchedFrame = 0;
@@ -2151,7 +2471,7 @@ index 1dbb3831..485e3d0c 100644
      LOG_FUNC();
  
      UINT64 willDispatchFrame = 0;
-@@ -757,14 +1064,20 @@ bool XeFG_Dx12::Dispatch()
+@@ -757,14 +1128,20 @@ bool XeFG_Dx12::Dispatch()
  
      LOG_DEBUG("_frameCount: {}, willDispatchFrame: {}, fIndex: {}", _frameCount, willDispatchFrame, fIndex);
  
@@ -2177,20 +2497,72 @@ index 1dbb3831..485e3d0c 100644
  
      auto& state = State::Instance();
  
-@@ -819,21 +1132,25 @@ bool XeFG_Dx12::Dispatch()
-         {
-             LOG_INFO("Interpolation count changed {} -> {}", _framesToInterpolate, targetCount);
+@@ -792,13 +1169,6 @@ bool XeFG_Dx12::Dispatch()
  
--            state.WAR_xefgRequestFGToggle = true;
+     if (XeFGProxy::SetNumInterpolatedFrames() != nullptr)
+     {
+-        if (Config::Instance()->FGXeFGInterpolationCount.value_or_default() > _maxInterpolationCount)
+-        {
+-            Config::Instance()->FGXeFGInterpolationCount = _maxInterpolationCount;
+-            LOG_WARN("Requested interpolation count is higher than max supported, setting to max: {}",
+-                     _maxInterpolationCount);
+-        }
 -
+         // No value set means "auto": follow the multiplier of the game's own DLSSG setting, and keep
+         // using the value we already have as long as no DLSSG request has been seen yet
+         int targetCount = Config::Instance()->FGXeFGInterpolationCount.value_or_default();
+@@ -807,33 +1177,55 @@ bool XeFG_Dx12::Dispatch()
+         {
+             if (const int gameCount = GameRequestedInterpolationCount(); gameCount > 0)
+             {
+-                targetCount = gameCount > _maxInterpolationCount ? _maxInterpolationCount : gameCount;
+-
+-                if (targetCount != gameCount)
+-                    LOG_WARN("Game requested interpolation count {} but max supported is {}, capping to max", gameCount,
+-                             _maxInterpolationCount);
++                targetCount = gameCount;
+             }
+         }
+ 
+-        if (_framesToInterpolate != targetCount)
++        const int capacity = _initializedInterpolationCapacity.load(std::memory_order_acquire);
++        const bool canApply = XeFGCapacity::CanApply(targetCount, capacity) &&
++                              XeFGCapacity::CanApply(targetCount, _maxInterpolationCount);
++        if (!canApply && _lastCapacityRequest != targetCount)
+         {
+-            LOG_INFO("Interpolation count changed {} -> {}", _framesToInterpolate, targetCount);
+-
+-            state.WAR_xefgRequestFGToggle = true;
++            LOG_WARN("[XeFGCapacity] request={}X active={}X initialized={}X supported={}X; "
++                     "request preserved, requested SDK call skipped; {}",
++                     targetCount + 1, _framesToInterpolate + 1, capacity + 1, _maxInterpolationCount + 1,
++                     targetCount >= 1 && targetCount <= _maxInterpolationCount
++                         ? "save settings and restart to apply"
++                         : "choose a supported multiplier; this request exceeds provider support");
++        }
++        _lastCapacityRequest = targetCount;
++
++        // A new context has no previously confirmed active count. If the
++        // configured request is unsupported, establish a safe active count once
++        // while preserving that request for the UI and the next launch.
++        const int applyCount = !canApply && _framesToInterpolate < 1
++                                   ? (std::min)(capacity, _maxInterpolationCount) : targetCount;
++        const bool canApplyNow = XeFGCapacity::CanApply(applyCount, capacity) &&
++                                 XeFGCapacity::CanApply(applyCount, _maxInterpolationCount);
++        if (canApplyNow && _framesToInterpolate != applyCount)
++        {
++            LOG_INFO("Interpolation count changed {} -> {} (requested {})", _framesToInterpolate,
++                     applyCount, targetCount);
+ 
  #ifndef DONT_USE_XMX
              ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
  #endif // !DONT_USE_XMX
  
-             auto intResult = XeFGProxy::SetNumInterpolatedFrames()(_swapChainContext, targetCount);
- 
--            _framesToInterpolate = targetCount;
+-            auto intResult = XeFGProxy::SetNumInterpolatedFrames()(_swapChainContext, targetCount);
 -
+-            _framesToInterpolate = targetCount;
++            auto intResult = XeFGProxy::SetNumInterpolatedFrames()(_swapChainContext, applyCount);
+ 
              if (intResult != XEFG_SWAPCHAIN_RESULT_SUCCESS)
              {
                  LOG_ERROR("SetNumInterpolatedFrames error: {} ({})", magic_enum::enum_name(intResult),
@@ -2198,8 +2570,8 @@ index 1dbb3831..485e3d0c 100644
              }
 +            else
 +            {
-+                _framesToInterpolate = targetCount;
-+                XeFGDiagnostics::RecordInterpolationActive(static_cast<uint32_t>(targetCount));
++                _framesToInterpolate = applyCount;
++                XeFGDiagnostics::RecordInterpolationActive(static_cast<uint32_t>(applyCount));
 +                state.WAR_xefgRequestFGToggle = true;
 +                XeFGPacing::RequestReset();
 +                RequestHistoryReset();
@@ -2207,7 +2579,7 @@ index 1dbb3831..485e3d0c 100644
          }
      }
  
-@@ -844,7 +1161,8 @@ bool XeFG_Dx12::Dispatch()
+@@ -844,7 +1236,8 @@ bool XeFG_Dx12::Dispatch()
  
          state.fgChanged = true;
          UpdateTarget();
@@ -2217,7 +2589,7 @@ index 1dbb3831..485e3d0c 100644
      }
  
      if (!_haveHudless.has_value())
-@@ -866,7 +1184,7 @@ bool XeFG_Dx12::Dispatch()
+@@ -866,7 +1259,7 @@ bool XeFG_Dx12::Dispatch()
              _haveHudless = usingHudless;
              state.fgChanged = true;
              UpdateTarget();
@@ -2226,7 +2598,7 @@ index 1dbb3831..485e3d0c 100644
  
              return false;
          }
-@@ -879,7 +1197,8 @@ bool XeFG_Dx12::Dispatch()
+@@ -879,7 +1272,8 @@ bool XeFG_Dx12::Dispatch()
          {
              res->validity = FG_ResourceValidity::UntilPresentFromDispatch;
              res->frameIndex = fIndex;
@@ -2236,7 +2608,7 @@ index 1dbb3831..485e3d0c 100644
          }
      }
  
-@@ -890,10 +1209,14 @@ bool XeFG_Dx12::Dispatch()
+@@ -890,10 +1284,14 @@ bool XeFG_Dx12::Dispatch()
          {
              res->validity = FG_ResourceValidity::UntilPresentFromDispatch;
              res->frameIndex = fIndex;
@@ -2252,7 +2624,7 @@ index 1dbb3831..485e3d0c 100644
      XeFGProxy::EnableDebugFeature()(_swapChainContext, XEFG_SWAPCHAIN_DEBUG_FEATURE_TAG_INTERPOLATED_FRAMES,
                                      Config::Instance()->FGXeFGDebugView.value_or_default(), nullptr);
      static bool lastOnlyFG = false;
-@@ -956,37 +1279,19 @@ bool XeFG_Dx12::Dispatch()
+@@ -956,37 +1354,19 @@ bool XeFG_Dx12::Dispatch()
      constData.motionVectorScaleX = _mvScaleX[fIndex];
      constData.motionVectorScaleY = _mvScaleY[fIndex];
  
@@ -2297,7 +2669,7 @@ index 1dbb3831..485e3d0c 100644
  
      if (!(frameRenderTime > 0.0))
          frameRenderTime = state.lastFGFrameTime;
-@@ -1021,9 +1326,8 @@ bool XeFG_Dx12::Dispatch()
+@@ -1021,9 +1401,8 @@ bool XeFG_Dx12::Dispatch()
      {
          LOG_ERROR("TagFrameConstants error: {} ({})", magic_enum::enum_name(result), (UINT) result);
  
@@ -2309,7 +2681,7 @@ index 1dbb3831..485e3d0c 100644
  
          return false;
      }
-@@ -1033,9 +1337,8 @@ bool XeFG_Dx12::Dispatch()
+@@ -1033,9 +1412,8 @@ bool XeFG_Dx12::Dispatch()
      {
          LOG_ERROR("SetPresentId error: {} ({})", magic_enum::enum_name(result), (UINT) result);
  
@@ -2321,7 +2693,7 @@ index 1dbb3831..485e3d0c 100644
  
          return false;
      }
-@@ -1084,12 +1387,16 @@ bool XeFG_Dx12::Dispatch()
+@@ -1084,12 +1462,16 @@ bool XeFG_Dx12::Dispatch()
          {
              LOG_ERROR("D3D12TagFrameResource Backbuffer error: {} ({})", magic_enum::enum_name(result), (UINT) result);
  
@@ -2341,7 +2713,7 @@ index 1dbb3831..485e3d0c 100644
      LOG_DEBUG("Result: Ok");
  
      return true;
-@@ -1099,7 +1406,19 @@ void* XeFG_Dx12::FrameGenerationContext() { return _fgContext; }
+@@ -1099,7 +1481,19 @@ void* XeFG_Dx12::FrameGenerationContext() { return _fgContext; }
  
  void* XeFG_Dx12::SwapchainContext() { return _swapChainContext; }
  
@@ -2362,7 +2734,7 @@ index 1dbb3831..485e3d0c 100644
  
  bool XeFG_Dx12::SetInterpolatedFrameCount(UINT interpolatedFrameCount) { return true; }
  
-@@ -1123,6 +1442,13 @@ void XeFG_Dx12::EvaluateState(ID3D12Device* device, FG_Constants& fgConstants)
+@@ -1123,6 +1517,13 @@ void XeFG_Dx12::EvaluateState(ID3D12Device* device, FG_Constants& fgConstants)
  
      _infiniteDepth = static_cast<bool>(fgConstants.flags & FG_Flags::InfiniteDepth);
  
@@ -2376,7 +2748,7 @@ index 1dbb3831..485e3d0c 100644
      // If FG Enabled from menu
      if (Config::Instance()->FGEnabled.value_or_default())
      {
-@@ -1139,7 +1465,7 @@ void XeFG_Dx12::EvaluateState(ID3D12Device* device, FG_Constants& fgConstants)
+@@ -1139,7 +1540,7 @@ void XeFG_Dx12::EvaluateState(ID3D12Device* device, FG_Constants& fgConstants)
          else if (state.fgChanged)
          {
              LOG_DEBUG("FGChanged");
@@ -2385,7 +2757,7 @@ index 1dbb3831..485e3d0c 100644
  
              // Pause for 10 frames
              UpdateTarget();
-@@ -1155,7 +1481,7 @@ void XeFG_Dx12::EvaluateState(ID3D12Device* device, FG_Constants& fgConstants)
+@@ -1155,7 +1556,7 @@ void XeFG_Dx12::EvaluateState(ID3D12Device* device, FG_Constants& fgConstants)
      else
      {
          LOG_DEBUG("!FGEnabled");
@@ -2394,7 +2766,7 @@ index 1dbb3831..485e3d0c 100644
  
          state.clearCapturedHudlesses = true;
          Hudfix_Dx12::ResetCounters();
-@@ -1180,7 +1506,7 @@ void XeFG_Dx12::EvaluateState(ID3D12Device* device, FG_Constants& fgConstants)
+@@ -1180,7 +1581,7 @@ void XeFG_Dx12::EvaluateState(ID3D12Device* device, FG_Constants& fgConstants)
      state.scChanged = false;
  }
  
@@ -2403,7 +2775,7 @@ index 1dbb3831..485e3d0c 100644
  {
      for (size_t i = 0; i < BUFFER_COUNT; i++)
      {
-@@ -1188,6 +1514,9 @@ void XeFG_Dx12::ReleaseObjects()
+@@ -1188,6 +1589,9 @@ void XeFG_Dx12::ReleaseObjects()
          SAFE_RELEASE(_uiCommandList[i]);
          SAFE_RELEASE(_scCommandAllocator[i]);
          SAFE_RELEASE(_scCommandList[i]);
@@ -2413,7 +2785,7 @@ index 1dbb3831..485e3d0c 100644
  
          // Reset command list state
          _scCommandListResetted[i] = false;
-@@ -1197,6 +1526,71 @@ void XeFG_Dx12::ReleaseObjects()
+@@ -1197,6 +1601,71 @@ void XeFG_Dx12::ReleaseObjects()
          _uiAllocatorFenceValues[i] = 0;
      }
  
@@ -2485,7 +2857,7 @@ index 1dbb3831..485e3d0c 100644
      _renderUI.reset();
      _hudlessCompare.reset();
      _mvFlip.reset();
-@@ -1204,138 +1598,111 @@ void XeFG_Dx12::ReleaseObjects()
+@@ -1204,138 +1673,111 @@ void XeFG_Dx12::ReleaseObjects()
      _depthInvert.reset();
  }
  
@@ -2580,9 +2952,7 @@ index 1dbb3831..485e3d0c 100644
              {
 -                LOG_ERROR("_uiCommandList[{}]->Close: {:X}", i, (unsigned long) result);
 -                break;
-+                SAFE_RELEASE(_uiCommandList[i]); // Newly created, never submitted.
-+                return;
-             }
+-            }
 -
 -            if (_uiFence == nullptr)
 -            {
@@ -2592,21 +2962,11 @@ index 1dbb3831..485e3d0c 100644
 -                    LOG_ERROR("Create UI fence failed: {:X}", (UINT) result);
 -                    break;
 -                }
--            }
++                SAFE_RELEASE(_uiCommandList[i]); // Newly created, never submitted.
++                return;
+             }
 -
 -            if (_uiFenceEvent == nullptr)
--            {
--                _uiFenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
--                if (_uiFenceEvent == nullptr)
--                {
--                    LOG_ERROR("CreateEvent for UI fence failed");
--                    break;
--                }
--            }
--
--            result =
--                InDevice->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&_scCommandAllocator[i]));
--            if (result != S_OK)
 +        }
 +        if (_scCommandAllocator[i] == nullptr)
 +        {
@@ -2614,11 +2974,23 @@ index 1dbb3831..485e3d0c 100644
 +                                                                 IID_PPV_ARGS(&_scCommandAllocator[i]));
 +            if (FAILED(result))
              {
--                LOG_ERROR("CreateCommandAllocators _scCommandAllocator[{}]: {:X}", i, (unsigned long) result);
--                break;
+-                _uiFenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+-                if (_uiFenceEvent == nullptr)
+-                {
+-                    LOG_ERROR("CreateEvent for UI fence failed");
+-                    break;
+-                }
 +                LOG_ERROR("Create SC allocator failed, slot {}, result {:X}", i, (UINT) result);
 +                return;
              }
+-
+-            result =
+-                InDevice->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&_scCommandAllocator[i]));
+-            if (result != S_OK)
+-            {
+-                LOG_ERROR("CreateCommandAllocators _scCommandAllocator[{}]: {:X}", i, (unsigned long) result);
+-                break;
+-            }
 -
              _scCommandAllocator[i]->SetName(std::format(L"_scCommandAllocator[{}]", i).c_str());
 -            if (CheckForRealObject(__FUNCTION__, _scCommandAllocator[i], (IUnknown**) &allocator))
@@ -2649,17 +3021,17 @@ index 1dbb3831..485e3d0c 100644
 -
 -            result = _scCommandList[i]->Close();
 -            if (result != S_OK)
--            {
--                LOG_ERROR("_scCommandList[{}]->Close: {:X}", i, (unsigned long) result);
--                break;
--            }
--
--            if (_scFence == nullptr)
 +            ID3D12GraphicsCommandList* realList = nullptr;
 +            if (CheckForRealObject(__FUNCTION__, _scCommandList[i], (IUnknown**) &realList))
 +                _scCommandList[i] = realList;
 +            if (FAILED(_scCommandList[i]->Close()))
              {
+-                LOG_ERROR("_scCommandList[{}]->Close: {:X}", i, (unsigned long) result);
+-                break;
+-            }
+-
+-            if (_scFence == nullptr)
+-            {
 -                result = InDevice->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&_scFence));
 -                if (FAILED(result))
 -                {
@@ -2701,7 +3073,7 @@ index 1dbb3831..485e3d0c 100644
      auto fIndex = GetIndexWillBeDispatched();
      LOG_DEBUG("fIndex: {}", fIndex);
  
-@@ -1363,7 +1730,8 @@ bool XeFG_Dx12::Present()
+@@ -1363,7 +1805,8 @@ bool XeFG_Dx12::Present()
                  else if (_renderUI->IsInit())
                  {
                      auto commandList = GetSCCommandList(fIndex);
@@ -2711,7 +3083,7 @@ index 1dbb3831..485e3d0c 100644
                  }
              }
          }
-@@ -1393,8 +1761,9 @@ bool XeFG_Dx12::Present()
+@@ -1393,8 +1836,9 @@ bool XeFG_Dx12::Present()
                      if (_hudlessCompare->IsInit())
                      {
                          auto commandList = GetSCCommandList(fIndex);
@@ -2723,7 +3095,7 @@ index 1dbb3831..485e3d0c 100644
                      }
                  }
              }
-@@ -1409,33 +1778,8 @@ bool XeFG_Dx12::Present()
+@@ -1409,33 +1853,8 @@ bool XeFG_Dx12::Present()
  
      // if (IsActive() && !IsPaused())
      {
@@ -2759,7 +3131,7 @@ index 1dbb3831..485e3d0c 100644
      }
  
      if ((_fgFramePresentId - _lastFGFramePresentId) > 3 && IsActive() && !_waitingNewFrameData)
-@@ -1453,11 +1797,22 @@ bool XeFG_Dx12::Present()
+@@ -1453,11 +1872,22 @@ bool XeFG_Dx12::Present()
  
  bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
  {
@@ -2786,7 +3158,7 @@ index 1dbb3831..485e3d0c 100644
  
      // For late sent SL resources
      // we use provided frame index
-@@ -1465,7 +1820,18 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1465,7 +1895,18 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
      if (fIndex < 0)
          fIndex = GetIndex();
  
@@ -2806,7 +3178,7 @@ index 1dbb3831..485e3d0c 100644
  
      std::unique_lock<std::shared_mutex> lock(_resourceMutex[fIndex]);
  
-@@ -1480,7 +1846,7 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1480,7 +1921,7 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
      if (type == FG_ResourceType::HudlessColor)
      {
          if (Config::Instance()->FGDisableHudless.value_or_default())
@@ -2815,7 +3187,7 @@ index 1dbb3831..485e3d0c 100644
  
          // Making a copy if it's just valid now to be able to use it later
          if (State::Instance().fgHudlessCompare && inputResource->validity == FG_ResourceValidity::ValidNow)
-@@ -1488,20 +1854,20 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1488,20 +1929,20 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
  
          if (!_noHudless[fIndex] && (_frameResources[fIndex][type].validity == FG_ResourceValidity::ValidNow))
          {
@@ -2839,7 +3211,7 @@ index 1dbb3831..485e3d0c 100644
  
          // Making a copy if it's just valid now
          if (Config::Instance()->FGDrawUIOverFG.value_or_default() &&
-@@ -1512,7 +1878,7 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1512,7 +1953,7 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
  
          if (!_noUi[fIndex] && (_frameResources[fIndex][type].validity == FG_ResourceValidity::ValidNow))
          {
@@ -2848,7 +3220,7 @@ index 1dbb3831..485e3d0c 100644
          }
      }
  
-@@ -1520,28 +1886,36 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1520,28 +1961,36 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
      {
          if (!_noDistortionField[fIndex] && (_frameResources[fIndex][type].validity == FG_ResourceValidity::ValidNow))
          {
@@ -2889,7 +3261,7 @@ index 1dbb3831..485e3d0c 100644
      fResource->type = type;
      fResource->state = inputResource->state;
      fResource->validity = inputResource->validity;
-@@ -1556,6 +1930,18 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1556,6 +2005,18 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
                      Config::Instance()->FGResourceFlip.value_or_default() &&
                      (type == FG_ResourceType::Velocity || type == FG_ResourceType::Depth);
  
@@ -2908,7 +3280,7 @@ index 1dbb3831..485e3d0c 100644
      // Resource flipping
      if (willFlip && _device != nullptr)
          FlipResource(fResource);
-@@ -1574,12 +1960,20 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1574,12 +2035,20 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
          }
          else if (_depthInvert->IsInit())
          {
@@ -2929,7 +3301,7 @@ index 1dbb3831..485e3d0c 100644
                  _depthInvert->SetBufferState(cmdList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
  
                  if (_depthInvert->Dispatch(cmdList, fResource->GetResource(), _depthInvert->Buffer()))
-@@ -1597,18 +1991,24 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1597,18 +2066,24 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
      {
          LOG_DEBUG("Making a resource copy of: {}", magic_enum::enum_name(type));
  
@@ -2960,7 +3332,7 @@ index 1dbb3831..485e3d0c 100644
          _resourceCopy[fIndex][type]->SetName(std::format(L"_resourceCopy[{}][{}]", fIndex, (UINT) type).c_str());
          fResource->copy = copyOutput;
          fResource->state = D3D12_RESOURCE_STATE_COPY_DEST;
-@@ -1633,19 +2033,21 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1633,19 +2108,21 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
  
          if (type == FG_ResourceType::HudlessColor)
          {
@@ -2990,7 +3362,7 @@ index 1dbb3831..485e3d0c 100644
  
          // SDK version 2.1.1 fixes those issues
          if (version < feature_version { 1, 2, 2 })
-@@ -1661,53 +2063,345 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1661,53 +2138,345 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
              // https://github.com/intel/xess/issues/47
              if (inputResource->state == D3D12_RESOURCE_STATE_COPY_SOURCE)
              {
@@ -3078,10 +3450,9 @@ index 1dbb3831..485e3d0c 100644
      LOG_TRACE("_frameResources[{}][{}]: {:X}", fIndex, magic_enum::enum_name(type), (size_t) fResource->GetResource());
  
 +    observation.Accept();
-     return true;
- }
- 
--void XeFG_Dx12::SetCommandQueue(FG_ResourceType type, ID3D12CommandQueue* queue) { _gameCommandQueue = queue; }
++    return true;
++}
++
 +void XeFG_Dx12::SetCommandQueue(FG_ResourceType type, ID3D12CommandQueue* queue)
 +{
 +    auto work = AcquireWork();
@@ -3118,9 +3489,10 @@ index 1dbb3831..485e3d0c 100644
 +    _pendingCommandLists[_pendingCommandListCount++] = {realList, ++_pendingGeneration, XeFGDiagnostics::WorkNowMs()};
 +    ++_pendingStats.registered;
 +    PublishPendingLocked();
-+    return true;
-+}
-+
+     return true;
+ }
+ 
+-void XeFG_Dx12::SetCommandQueue(FG_ResourceType type, ID3D12CommandQueue* queue) { _gameCommandQueue = queue; }
 +uint64_t XeFG_Dx12::BeforeCommandSubmission(ID3D12CommandQueue* queue, UINT count,
 +                                       ID3D12CommandList* const* lists)
 +{
@@ -3354,7 +3726,7 @@ index 1dbb3831..485e3d0c 100644
  
  bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
  {
-@@ -1729,27 +2423,281 @@ bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
+@@ -1729,27 +2498,281 @@ bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
          LOG_TRACE("Accuired Mutex: {}", Mutex.getOwner());
      }
  
@@ -3649,10 +4021,10 @@ index 1dbb3831..485e3d0c 100644
 +    _depthInvert.release();
 +}
 diff --git a/OptiScaler/framegen/xefg/XeFG_Dx12.h b/OptiScaler/framegen/xefg/XeFG_Dx12.h
-index f54de2b3..5b720e31 100644
+index f54de2b3..52e870d4 100644
 --- a/OptiScaler/framegen/xefg/XeFG_Dx12.h
 +++ b/OptiScaler/framegen/xefg/XeFG_Dx12.h
-@@ -12,6 +12,12 @@
+@@ -12,20 +12,121 @@
  #include <xefg_swapchain.h>
  #include <xefg_swapchain_d3d12.h>
  #include <xefg_swapchain_debug.h>
@@ -3665,7 +4037,17 @@ index f54de2b3..5b720e31 100644
  
  class XeFG_Dx12 : public virtual IFGFeature_Dx12
  {
-@@ -24,8 +30,98 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
+   private:
+     xefg_swapchain_handle_t _swapChainContext = nullptr;
+     xefg_swapchain_handle_t _fgContext = nullptr;
++    std::atomic<int> _initializedInterpolationCapacity { 0 };
++    int _lastCapacityRequest = -1;
++    void LogCapacityRequirements(const xefg_swapchain_d3d12_init_params_t& params,
++                                 uint32_t width, uint32_t height, DXGI_FORMAT format);
++    void RecordInitializedCapacity(const xefg_swapchain_d3d12_init_params_t& params);
+ 
+     uint32_t _width = 0;
+     uint32_t _height = 0;
      bool _infiniteDepth = false;
      std::optional<bool> _haveHudless = std::nullopt;
      bool _uiComposition = false;
@@ -3764,7 +4146,18 @@ index f54de2b3..5b720e31 100644
  
      static void xefgLogCallback(const char* message, xefg_swapchain_logging_level_t level, void* userData);
  
-@@ -55,6 +151,8 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
+@@ -42,6 +143,10 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
+   public:
+     // IFGFeature
+     const char* Name() override final;
++    int GetInitializedInterpolationCapacity() const override final
++    {
++        return _initializedInterpolationCapacity.load(std::memory_order_acquire);
++    }
+     feature_version Version() override final;
+     HWND Hwnd() override final;
+ 
+@@ -55,6 +160,8 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
      bool ReleaseSwapchain(HWND hwnd) override final;
  
      void CreateContext(ID3D12Device* device, FG_Constants& fgConstants) override final;
@@ -3773,7 +4166,7 @@ index f54de2b3..5b720e31 100644
      void Activate() override final;
      void Deactivate() override final;
      void DestroyFGContext() override final;
-@@ -63,15 +161,34 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
+@@ -63,15 +170,34 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
      void EvaluateState(ID3D12Device* device, FG_Constants& fgConstants) override final;
  
      bool Present() override final;
@@ -5942,6 +6335,140 @@ index 44369f14..2b9778c0 100644
  
      if (result != NO_ERROR)
      {
+diff --git a/OptiScaler/menu/menu_common.cpp b/OptiScaler/menu/menu_common.cpp
+index 88d66316..67dfdbec 100644
+--- a/OptiScaler/menu/menu_common.cpp
++++ b/OptiScaler/menu/menu_common.cpp
+@@ -4008,6 +4008,15 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
+         ShowHelpMarker("Enable Frame Generation");
+ 
+         auto maxInterpolationCount = fgOutput->GetMaxInterpolationCount();
++        const int initializedCapacity = fgOutput->GetInitializedInterpolationCapacity();
++        const bool dynamicInterpolation = XeFGProxy::SetNumInterpolatedFrames() != nullptr;
++        bool lowMemory = config->FGXeFGLowMemoryMode.value_or_default();
++        if (ImGui::Checkbox("Low-memory capacity (restart)", &lowMemory))
++            config->FGXeFGLowMemoryMode = lowMemory;
++        ShowHelpMarker("On the next game launch, explicit 2X-4X selections share a 4X capacity.\n"
++                       "3X and 4X can switch during play. 5X/6X remain available after saving\n"
++                       "the selected multiplier and restarting. Auto reserves full capacity.\n"
++                       "Changing this option requires Save settings and a game restart.");
+ 
+         if (maxInterpolationCount > 1)
+         {
+@@ -4043,7 +4052,20 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
+             const bool autoMode = !config->FGXeFGInterpolationCount.has_value();
+ 
+             const int currentCount = (int) fgOutput->GetInterpolatedFrameCount();
+-            const int currentSet = currentCount - 1;
++            const int selectedCount = autoMode ? currentCount : config->FGXeFGInterpolationCount.value_or_default();
++            const int currentSet = selectedCount - 1;
++            const bool unsupportedSelection = !autoMode && selectedCount > maxInterpolationCount;
++            const bool pendingRestart = !autoMode && !unsupportedSelection && initializedCapacity > 0 &&
++                                         (selectedCount > initializedCapacity ||
++                                          (!dynamicInterpolation && selectedCount != currentCount));
++            auto selectMultiplier = [&](int count)
++            {
++                config->FGXeFGInterpolationCount = count;
++                // A request above current capacity is queued for the next launch.
++                // Do not disrupt the currently active multiplier while it waits.
++                if (dynamicInterpolation && count <= initializedCapacity)
++                    state.fgChanged = true;
++            };
+ 
+             // Only an explicit choice can be "custom". While auto is following the game
+             // the count is just as likely to land above 4X, and showing that as a custom
+@@ -4062,7 +4084,8 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
+                 std::snprintf(currentLabel, sizeof(currentLabel), currentCount > 0 ? "Auto (%dX)" : "Auto",
+                               currentCount + 1);
+             else if (custom)
+-                std::snprintf(currentLabel, sizeof(currentLabel), "%dX (custom)", currentCount + 1);
++                std::snprintf(currentLabel, sizeof(currentLabel), pendingRestart ? "%dX (restart)" : "%dX (custom)",
++                              selectedCount + 1);
+             else
+                 std::snprintf(currentLabel, sizeof(currentLabel), "%s",
+                               intModes[currentSet >= 0 && currentSet < namedCount ? currentSet : 0]);
+@@ -4078,7 +4101,8 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
+                     // game. An unset value is also what the ini gets - it is written back
+                     // as "auto" rather than as whatever auto last resolved to.
+                     LOG_INFO("MFG menu: Auto selected, following the game's frame generation multiplier");
+-                    state.fgChanged = true;
++                    if (dynamicInterpolation)
++                        state.fgChanged = true;
+                     config->FGXeFGInterpolationCount = std::nullopt;
+                 }
+ 
+@@ -4087,8 +4111,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
+                     if (ImGui::Selectable(intModes[i], (currentSet == i)))
+                     {
+                         LOG_DEBUG("XeFG Interpolation Count set to: {}", i + 1);
+-                        state.fgChanged = true;
+-                        config->FGXeFGInterpolationCount = i + 1;
++                        selectMultiplier(i + 1);
+                     }
+                 }
+ 
+@@ -4099,8 +4122,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
+ 
+                     LOG_INFO("MFG menu: Custom selected, asking for {}X (interpolation count {})", customMultiplier,
+                              customMultiplier - 1);
+-                    state.fgChanged = true;
+-                    config->FGXeFGInterpolationCount = customMultiplier - 1;
++                    selectMultiplier(customMultiplier - 1);
+                 }
+ 
+                 ImGui::EndCombo();
+@@ -4112,8 +4134,8 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
+             {
+                 // The value in the config is the interpolation count, so the
+                 // multiplier is always one more than it.
+-                if (customMultiplier - 1 != currentCount)
+-                    customMultiplier = currentCount + 1;
++                if (customMultiplier - 1 != selectedCount)
++                    customMultiplier = selectedCount + 1;
+ 
+                 // On its own line rather than a SameLine off the MFG combo above.
+                 // The menu window is AlwaysAutoResize, so its width is the width of
+@@ -4130,8 +4152,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
+ 
+                     LOG_INFO("MFG menu: custom multiplier set to {}X (interpolation count {})", customMultiplier,
+                              customMultiplier - 1);
+-                    state.fgChanged = true;
+-                    config->FGXeFGInterpolationCount = customMultiplier - 1;
++                    selectMultiplier(customMultiplier - 1);
+                 }
+ 
+                 ImGui::PopItemWidth();
+@@ -4155,7 +4176,8 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
+                           "Set XeFG interpolation count\n\n"
+                           "Auto (the default) follows the multiplier of the game's own\n"
+                           "frame generation setting, and is what an unset value means.\n\n"
+-                          "2X-4X work on their own.\n\n"
++                          "3X/4X share capacity in low-memory mode.\n"
++                          "Higher selections may require Save settings and restart.\n\n"
+                           "Above 4X the generated frames are presented faster than\n"
+                           "the display refreshes, so VSync (or a frame rate cap) is\n"
+                           "required - without it the extra frames tear and judder.\n\n"
+@@ -4163,6 +4185,20 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
+                           maxMultiplier);
+ 
+             ShowHelpMarker(mfgTip);
++            if (unsupportedSelection)
++                ImGui::TextWrapped("Selected %dX exceeds the supported %dX. Choose a supported multiplier; currently %dX.",
++                                   selectedCount + 1, maxInterpolationCount + 1,
++                                   currentCount > 0 ? currentCount + 1 : 1);
++            else if (pendingRestart)
++                ImGui::TextColored(toneMapColor(ImVec4(1.f, 0.8f, 0.f, 1.f)),
++                    "Save settings and restart to apply %dX; currently %dX",
++                    selectedCount + 1, currentCount > 0 ? currentCount + 1 : 1);
++            else if (autoMode && !dynamicInterpolation)
++                ImGui::TextWrapped("This XeFG version applies multiplier changes after Save settings and a game restart.");
++            else if (autoMode && initializedCapacity > 0 && initializedCapacity < maxInterpolationCount)
++                ImGui::TextWrapped("Auto currently has up to %dX capacity. Save settings and restart "
++                                   "to allow the full %dX range.", initializedCapacity + 1, maxInterpolationCount + 1);
++
+         }
+ 
+         ImGui::SameLine(0.0f, 16.0f);
 diff --git a/OptiScaler/misc/GpuAllocationDiagnostics.h b/OptiScaler/misc/GpuAllocationDiagnostics.h
 new file mode 100644
 index 00000000..19ddc87a
@@ -9369,10 +9896,39 @@ index 00000000..5eb61d41
 +}
 +} // namespace XeFGPacingGuard
 diff --git a/OptiScaler/proxies/XeFGUnlock.h b/OptiScaler/proxies/XeFGUnlock.h
-index 18b6c09b..ab3313db 100644
+index 18b6c09b..70902411 100644
 --- a/OptiScaler/proxies/XeFGUnlock.h
 +++ b/OptiScaler/proxies/XeFGUnlock.h
-@@ -73,8 +73,11 @@ class XeFGUnlock
+@@ -16,7 +16,10 @@
+ //   U4  0x1A45C2   mov dword [rdi+0x16c], 1 -> mov dword [rdi+0x16c], N
+ //                                when the provider decides MFG is unavailable
+ //                                it pins the override to a single interpolated
+-//                                frame; pin it to the configured count instead
++//                                frame; pin it to the selected startup capacity.
++//                                This is an initialization override, not merely
++//                                an advertised capability: using the full unlock
++//                                limit here overrides a smaller SDK init request.
+ //   U5  0x20973B   mov eax,1 -> mov eax,N
+ //                                xefgSwapChainGetProperties reports
+ //                                maxSupportedInterpolations = 1 whenever the
+@@ -46,9 +49,15 @@ class XeFGUnlock
+ {
+   public:
+     static bool Applied() { return _applied; }
++    // Keep selectable support separate from this process's initial capacity.
++    // With newer XeLL, GetProperties can report U4 rather than the U5 limit.
++    static int InterpolationLimit() { return _applied ? _interpolationLimit : 0; }
++    static int InitialCapacityOverride() { return _applied ? _initialCapacityOverride : 0; }
+ 
+     // Returns true when every patch was applied. Safe to call more than once.
+-    static bool Apply(HMODULE module)
++    // initialCapacity is selected before initializing the provider using the same
++    // policy as its swapchain initializer. Zero preserves the full-capacity path.
++    static bool Apply(HMODULE module, int initialCapacity = 0)
+     {
+         if (_applied)
+             return true;
+@@ -73,8 +82,11 @@ class XeFGUnlock
          }
  
          if (nt->FileHeader.TimeDateStamp != KnownBuildStamp || nt->OptionalHeader.SizeOfImage != KnownSizeOfImage)
@@ -9385,7 +9941,38 @@ index 18b6c09b..ab3313db 100644
          else
              LOG_INFO("XeFG unlock: recognised provider build {:#010x}", KnownBuildStamp);
  
-@@ -119,6 +122,18 @@ class XeFGUnlock
+@@ -83,6 +95,9 @@ class XeFGUnlock
+         if (maxInterp < 1 || maxInterp > MaxReportedInterpolations)
+             maxInterp = MaxReportedInterpolations;
+ 
++        if (initialCapacity < 1 || initialCapacity > maxInterp)
++            initialCapacity = maxInterp;
++
+         // A reported count of 1 is plain 2X, which is what the unpatched
+         // provider already does - so at that setting we leave it alone.
+         const bool unlock = maxInterp > 1;
+@@ -103,14 +118,14 @@ class XeFGUnlock
+         static const uint8_t u5New[] = { 0xB8, 0x00, 0x00, 0x00, 0x00 };
+ 
+         // immOffset is the offset of a little endian imm32 inside `replacement`
+-        // that gets overwritten with the configured interpolation count, so the
++        // that gets overwritten with the selected interpolation count, so the
+         // count is baked into the bytes we write rather than patched in later.
+         const Patch patches[] = {
+-            { 0x20DA4F, u1Old, u1New, sizeof(u1Old), -1, unlock, "U1/frame-count-fallback" },
+-            { 0x1A5DE4, u2Old, u2New, sizeof(u2Old), -1, unlock, "U2/model-downgrade" },
+-            { 0x1A517D, u3Old, u3New, sizeof(u3Old), 1, unlock, "U3/default-ceiling" },
+-            { 0x1A45C2, u4Old, u4New, sizeof(u4Old), 6, unlock, "U4/override-clamp" },
+-            { 0x20973B, u5Old, u5New, sizeof(u5Old), 1, unlock, "U5/reported-maximum" },
++            { 0x20DA4F, u1Old, u1New, sizeof(u1Old), -1, unlock, "U1/frame-count-fallback", false },
++            { 0x1A5DE4, u2Old, u2New, sizeof(u2Old), -1, unlock, "U2/model-downgrade", false },
++            { 0x1A517D, u3Old, u3New, sizeof(u3Old), 1, unlock, "U3/default-ceiling", false },
++            { 0x1A45C2, u4Old, u4New, sizeof(u4Old), 6, unlock, "U4/override-clamp", true },
++            { 0x20973B, u5Old, u5New, sizeof(u5Old), 1, unlock, "U5/reported-maximum", false },
+         };
+ 
+         constexpr int32_t PatchCount = static_cast<int32_t>(sizeof(patches) / sizeof(patches[0]));
+@@ -119,6 +134,18 @@ class XeFGUnlock
          int32_t appliedCount = 0;
          int32_t skipped = 0;
  
@@ -9404,7 +9991,20 @@ index 18b6c09b..ab3313db 100644
          for (const auto& patch : patches)
          {
              if (!patch.enabled)
-@@ -157,6 +172,10 @@ class XeFGUnlock
+@@ -149,14 +176,19 @@ class XeFGUnlock
+ 
+             if (patch.immOffset >= 0)
+             {
++                const int32_t count = patch.useInitialCapacity ? initialCapacity : maxInterp;
+                 memcpy(buffer, patch.replacement, patch.size);
+-                buffer[patch.immOffset + 0] = static_cast<uint8_t>(maxInterp & 0xFF);
+-                buffer[patch.immOffset + 1] = static_cast<uint8_t>((maxInterp >> 8) & 0xFF);
+-                buffer[patch.immOffset + 2] = static_cast<uint8_t>((maxInterp >> 16) & 0xFF);
+-                buffer[patch.immOffset + 3] = static_cast<uint8_t>((maxInterp >> 24) & 0xFF);
++                buffer[patch.immOffset + 0] = static_cast<uint8_t>(count & 0xFF);
++                buffer[patch.immOffset + 1] = static_cast<uint8_t>((count >> 8) & 0xFF);
++                buffer[patch.immOffset + 2] = static_cast<uint8_t>((count >> 16) & 0xFF);
++                buffer[patch.immOffset + 3] = static_cast<uint8_t>((count >> 24) & 0xFF);
                  replacement = buffer;
              }
  
@@ -9415,7 +10015,7 @@ index 18b6c09b..ab3313db 100644
              if (!WriteVerified(dst, replacement, patch.size))
              {
                  LOG_WARN("XeFG unlock: {} at {:#x} failed write verification, aborting", patch.name, patch.rva);
-@@ -164,23 +183,23 @@ class XeFGUnlock
+@@ -164,22 +196,26 @@ class XeFGUnlock
                  return false;
              }
  
@@ -9436,20 +10036,40 @@ index 18b6c09b..ab3313db 100644
 +            return false;
 +        }
  
++        _interpolationLimit = maxInterp;
++        _initialCapacityOverride = initialCapacity;
 +        _applied = true;
          LOG_INFO("XeFG unlock: {} of {} patches applied ({} skipped), MFG enabled up to {}X", appliedCount, PatchCount,
                   skipped, maxInterp + 1);
- 
+-
 -        // The provider emits every generated frame of a burst back to back above
 -        // 2X, which is only reachable now that the multi frame path is unlocked.
 -        // Independent of the patches above, and harmless if it fails.
 -        if (unlock && Config::Instance()->FGXeFGExtraPacing.value_or_default())
 -            XeFGPacing::Install(base);
--
++        LOG_INFO("XeFG unlock: startup allocation override {}X, selectable limit {}X",
++                 initialCapacity + 1, maxInterp + 1);
+ 
          return true;
      }
+@@ -207,6 +243,7 @@ class XeFGUnlock
+         int32_t immOffset;
+         bool enabled;
+         const char* name;
++        bool useInitialCapacity;
+     };
  
-@@ -250,10 +269,10 @@ class XeFGUnlock
+     struct Edited
+@@ -217,6 +254,8 @@ class XeFGUnlock
+     };
+ 
+     inline static bool _applied = false;
++    inline static int _interpolationLimit = 0;
++    inline static int _initialCapacityOverride = 0;
+ 
+     static IMAGE_NT_HEADERS* NtHeaders(uint8_t* base)
+     {
+@@ -250,10 +289,10 @@ class XeFGUnlock
  
      static bool Contains(const IMAGE_SECTION_HEADER* section, uint32_t rva, uint32_t size)
      {
@@ -9463,7 +10083,7 @@ index 18b6c09b..ab3313db 100644
      }
  
      static void WriteRaw(uint8_t* dst, const uint8_t* bytes, uint32_t size)
-@@ -282,10 +301,14 @@ class XeFGUnlock
+@@ -282,10 +321,14 @@ class XeFGUnlock
              return;
  
          // Undo newest first so the image ends up exactly as the provider shipped it.
@@ -9480,6 +10100,39 @@ index 18b6c09b..ab3313db 100644
      }
  
      static std::string ToHex(const uint8_t* bytes, uint32_t size)
+diff --git a/OptiScaler/proxies/XeFG_Proxy.h b/OptiScaler/proxies/XeFG_Proxy.h
+index a4893545..58ddbe5b 100644
+--- a/OptiScaler/proxies/XeFG_Proxy.h
++++ b/OptiScaler/proxies/XeFG_Proxy.h
+@@ -5,6 +5,7 @@
+ #include "Config.h"
+ #include "Logger.h"
+ #include "XeFGUnlock.h"
++#include <framegen/xefg/XeFGCapacityPolicy.h>
+ 
+ #include <proxies/Ntdll_Proxy.h>
+ #include <proxies/KernelBase_Proxy.h>
+@@ -177,7 +178,19 @@ class XeFGProxy
+         // Patch the provider in memory before anything calls into it - the MFG
+         // gate is evaluated during swapchain init, so it has to happen here.
+         // A failure just leaves the provider as Intel shipped it.
+-        XeFGUnlock::Apply(_dll);
++        // The provider's U4 setting can override maxInterpolatedFrames during
++        // initialization, so it must agree with the C++ startup capacity policy.
++        // Resolve this optional export directly: the proxy pointers are filled below.
++        const bool hasDynamicInterpolation = _dll != nullptr &&
++            KernelBaseProxy::GetProcAddress_()(_dll, "xefgSwapChainSetNumInterpolatedFrames") != nullptr;
++        int supportedInterpolations = Config::Instance()->FGXeFGMaxInterpolatedFrames.value_or_default();
++        if (supportedInterpolations < 1 || supportedInterpolations > Config::XeFGMaxInterpolations)
++            supportedInterpolations = Config::XeFGMaxInterpolations;
++        const int initialCapacity = XeFGCapacity::SelectInitialCapacity(
++            supportedInterpolations, Config::Instance()->FGXeFGInterpolationCount.value_or_default(),
++            Config::Instance()->FGXeFGInterpolationCount.has_value(), hasDynamicInterpolation,
++            Config::Instance()->FGXeFGLowMemoryMode.value_or_default());
++        XeFGUnlock::Apply(_dll, initialCapacity);
+ 
+         {
+             ScopedSkipDxgiLoadChecks skipDxgiLoadChecks {};
 diff --git a/OptiScaler/proxies/XeLLUnLock.h b/OptiScaler/proxies/XeLLUnLock.h
 index 18b9abab..ef7f01d2 100644
 --- a/OptiScaler/proxies/XeLLUnLock.h

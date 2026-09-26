@@ -52,6 +52,7 @@ def main():
         ("R7 sparse GPU progress, bounded observation and lifecycle safety", here / "r7_progress/run.py"),
         ("R7 native submission observation and generation ticket ordering", here / "r7_tracking/run.py"),
         ("R7 allocation provenance, bounded accounting and observer timing", here / "r7_allocation/run.py"),
+        ("R8 XeFG initialization capacity and requested/active multiplier boundaries", here / "r8_capacity/run.py"),
     ]
     report = {"passed": False, "gpu_game_tested": False, "tests": []}
     try:

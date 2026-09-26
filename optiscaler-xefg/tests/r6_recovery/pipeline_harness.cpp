@@ -7,6 +7,7 @@
 #include <latch>
 #include <thread>
 #include <framegen/xefg/XeFGRecovery.h>
+#include <framegen/xefg/XeFGCapacityPolicy.h>
 #include <misc/XeFGPresentDiagnostics.h>
 #include <misc/LongSessionTiming.h>
 #include <misc/XeFGProgressDiagnostics.h>
@@ -202,6 +203,10 @@ struct XeFG_Dx12 {
     bool Dispatch();bool IsLowResMV()const{return true;}
     bool _uiComposition=false,_infiniteDepth=false;std::optional<bool> _haveHudless;
     int _maxInterpolationCount=5,_framesToInterpolate=5;
+    // This recovery fixture starts with an already initialized full-capacity
+    // context. R8 tests exercise smaller capacities and pending requests.
+    std::atomic<int> _initializedInterpolationCapacity{5};
+    int _lastCapacityRequest=-1;
     int GameRequestedInterpolationCount(){return 5;}
     UINT64 _lastFGFrame=0;
     int GetDispatchIndex(UINT64& frame);

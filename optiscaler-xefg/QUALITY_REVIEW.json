@@ -1,311 +1,1640 @@
 {
-  "schema_version": 2,
-  "revision": "R7",
-  "reviewed_at_utc": "2026-09-26T16:35:58.770369+00:00",
-  "baseline_source_commit": "5cd4f61dd44c03eb2bfa9c54eaad4dd22607b9fb",
-  "baseline_description": "Verified R6 source snapshot imported for R7; prior R6 quality review preserved in R6 branch.",
-  "scope": "Source-level quality/profile/algorithm preservation relative to R6, not GPU rendering equivalence or real-game FPS validation.",
+  "schema_version": 3,
+  "revision": "R8",
+  "reviewed_at_utc": "2026-09-26T18:56:03.814071+00:00",
+  "baseline_source_commit": "b7a125652f5983f13f69f1bf6b35eb9d73caca37",
+  "scope": "Source preservation relative to delivered R7; startup XeFG capacity and multiplier UI are intentional changes, not renderer equivalence measurements.",
   "passed": true,
-  "prior_core_file_count": 13,
-  "byte_identical_core_file_count": 11,
-  "core_files": [
+  "byte_identical_files": [
     {
-      "path": "OptiScaler/Config.cpp",
-      "identical_to_r6": false,
-      "sha256": "dce598db7b8d16b294164b897d90e80c3ea5cc78b9db02495c19b005dc88c9f7",
-      "baseline_sha256": "95132e6d1508a5c95abda3767bf093398e65daa6df561970801844b3afbd2ed3",
-      "semantically_preserved_quality": true,
-      "review": "Only startup Diagnostics.GpuAllocationTracking (default true) load/save/default added. Removing those exact additions reproduces R6 bytes; all quality/pacing/multiplier defaults unchanged."
+      "path": "OptiScaler/framegen/IFGFeature.cpp",
+      "sha256": "4931196c964e2061bb1e5295671b57f0ebd9f82d518012b1a539365d0782e5a5"
     },
     {
-      "path": "OptiScaler/Config.h",
-      "identical_to_r6": false,
-      "sha256": "e5265d73980ef51db84dd7734be430ae7d08a1ead91e74aacc253d0488b8aa6c",
-      "baseline_sha256": "2dc26c030e50da25a2f702ec6b3a06004c5f1d306030272d7bd4b6a54597cc75",
-      "semantically_preserved_quality": true,
-      "review": "Only startup Diagnostics.GpuAllocationTracking (default true) load/save/default added. Removing those exact additions reproduces R6 bytes; all quality/pacing/multiplier defaults unchanged."
+      "path": "OptiScaler/framegen/IFGFeature_Dx12.h",
+      "sha256": "4d9c2aa40c684ff64c16019d37d630fba1fc3bf570f28fb91adda75265c01b14"
     },
     {
-      "path": "OptiScaler/NVNGX_Parameter.cpp",
-      "identical_to_r6": true,
-      "sha256": "44ed999f681ed821c0019d6c69fcbb73e2d0790dd93565ba2924387274e29d20",
-      "baseline_sha256": "44ed999f681ed821c0019d6c69fcbb73e2d0790dd93565ba2924387274e29d20"
+      "path": "OptiScaler/framegen/xefg/XeFGRecovery.h",
+      "sha256": "3442606f886c2abe7cea8a34cf857798eca35786ba20c9cb5358736608e53235"
     },
     {
-      "path": "OptiScaler/proxies/XeFGUnlock.h",
-      "identical_to_r6": true,
-      "sha256": "96032aa374bc6800317d72cb44ac14b7b803b8ca2e00e800bb55b0d80e5cf762",
-      "baseline_sha256": "96032aa374bc6800317d72cb44ac14b7b803b8ca2e00e800bb55b0d80e5cf762"
+      "path": "OptiScaler/hudfix/Hudfix_Dx12.cpp",
+      "sha256": "69af1d7557d08e61f6b96ac89713741cdaa3ebd193a11a457f82754951b709a7"
     },
     {
-      "path": "OptiScaler/proxies/XeLLUnLock.h",
-      "identical_to_r6": true,
-      "sha256": "fab080cf89e34472dbc2e50f6afdd3918717b8b6231bf62b29658e69300480bf",
-      "baseline_sha256": "fab080cf89e34472dbc2e50f6afdd3918717b8b6231bf62b29658e69300480bf"
+      "path": "OptiScaler/hudfix/Hudfix_Dx12.h",
+      "sha256": "a94e0efa408b85686fb3f453ab31d669d87b0afde9bc8f01a1ed54be17eab4fa"
     },
     {
-      "path": "OptiScaler/proxies/XeFGPacing.h",
-      "identical_to_r6": true,
-      "sha256": "58ce5f43bd1409086db18ef9906ac1a5b42ead502e8b8b6f3e20b9dbd4980b06",
-      "baseline_sha256": "58ce5f43bd1409086db18ef9906ac1a5b42ead502e8b8b6f3e20b9dbd4980b06"
+      "path": "OptiScaler/include/fsr2/dx11/shaders/ffx_fsr2_shaders_dx11.h",
+      "sha256": "497d0bdb5051d3fb69f222c2ba7197840bdcff338129c275e8dbcf259756ac96"
     },
     {
-      "path": "OptiScaler/proxies/XeFGPacingGuard.h",
-      "identical_to_r6": true,
-      "sha256": "03bdc66d40c7d27d2860892f7d4df1da753fe933c15294b47a49380b67920758",
-      "baseline_sha256": "03bdc66d40c7d27d2860892f7d4df1da753fe933c15294b47a49380b67920758"
+      "path": "OptiScaler/include/fsr2/dx12/shaders/ffx_fsr2_shaders_dx12.h",
+      "sha256": "c2db83f9c6310d723198d1e7dbf864a67be4c8807371a657d83c8e60b59dacb7"
     },
     {
-      "path": "OptiScaler/hooks/Streamline_Hooks.cpp",
-      "identical_to_r6": true,
-      "sha256": "cfab569047bdb05832e0dd48b04d91fdc8a04eef86c01fc1f271a6af16a7f521",
-      "baseline_sha256": "cfab569047bdb05832e0dd48b04d91fdc8a04eef86c01fc1f271a6af16a7f521"
+      "path": "OptiScaler/include/fsr2/shaders/ffx_fsr2_common.h",
+      "sha256": "58c702f243836396502ebe65a7780c6ccb9dc3f3a5d7b9c6072efd0966c99772"
     },
     {
-      "path": "OptiScaler/inputs/FG/Streamline_Inputs_Dx12.cpp",
-      "identical_to_r6": true,
-      "sha256": "026572b0c9203b00bd31626f9d76945b5a4b7527fd6635f0f645bcd401b1e0c9",
-      "baseline_sha256": "026572b0c9203b00bd31626f9d76945b5a4b7527fd6635f0f645bcd401b1e0c9"
+      "path": "OptiScaler/include/fsr2/shaders/ffx_fsr2_resources.h",
+      "sha256": "83b26719e35957348ad6ab707cb107e1c50742df1322bc7c1e50c683e4400360"
     },
     {
-      "path": "OptiScaler/upscalers/ffx/FFXFeature_Dx12.cpp",
-      "identical_to_r6": true,
-      "sha256": "44861f8e08e1e40747c81f2fce814a4bd858ce031ffaee4adb9d6f927c09e5a9",
-      "baseline_sha256": "44861f8e08e1e40747c81f2fce814a4bd858ce031ffaee4adb9d6f927c09e5a9"
+      "path": "OptiScaler/include/fsr2/vk/shaders/ffx_fsr2_shaders_vk.h",
+      "sha256": "fb25c29b3b9590f2bb521223b6cd116dc2b5c0844a73a31914e37f69182b684d"
     },
     {
-      "path": "OptiScaler/upscalers/ffx/FFXFeature_Dx12.h",
-      "identical_to_r6": true,
-      "sha256": "e9c402e94dd6b83a4a3f6e8898d22968e13736ca36e89b6be55308c443b2b30f",
-      "baseline_sha256": "e9c402e94dd6b83a4a3f6e8898d22968e13736ca36e89b6be55308c443b2b30f"
+      "path": "OptiScaler/include/fsr2_212/dx12/shaders/ffx_fsr2_shaders_dx12.h",
+      "sha256": "118d3c52f68ad953dbd2e6aa6e8e2b82d80840ae0fefd7456022f94f2d4637a1"
     },
     {
-      "path": "OptiScaler/upscalers/ffx/FFXFeature.cpp",
-      "identical_to_r6": true,
-      "sha256": "0118d4710a5b978118a9d4ffa03c243eb03628e642e47cf8cea20b37a9b7c5ce",
-      "baseline_sha256": "0118d4710a5b978118a9d4ffa03c243eb03628e642e47cf8cea20b37a9b7c5ce"
+      "path": "OptiScaler/include/fsr2_212/shaders/ffx_fsr2_common.h",
+      "sha256": "5bdfe531b82aab43032ffffa84461dd0ca2554c67d6e6993d8c4925f664ab4da"
     },
     {
-      "path": "OptiScaler/upscalers/IFeature_Dx12.cpp",
-      "identical_to_r6": true,
-      "sha256": "76bdf475b972a9443cb5cca5be6c3315444db8b5c58f8be947fbcb76e2e1e1c9",
-      "baseline_sha256": "76bdf475b972a9443cb5cca5be6c3315444db8b5c58f8be947fbcb76e2e1e1c9"
-    }
-  ],
-  "semantically_reviewed_inputs": [
-    {
-      "path": "OptiScaler/inputs/FG/Streamline_Inputs_Dx12.cpp",
-      "identical_to_r6": true,
-      "sha256": "026572b0c9203b00bd31626f9d76945b5a4b7527fd6635f0f645bcd401b1e0c9",
-      "baseline_sha256": "026572b0c9203b00bd31626f9d76945b5a4b7527fd6635f0f645bcd401b1e0c9"
+      "path": "OptiScaler/include/fsr2_212/shaders/ffx_fsr2_resources.h",
+      "sha256": "867b02cb07c346cada761cadcea1e26d3e3d0e9679970ac2c177f9a2993315f8"
     },
     {
-      "path": "OptiScaler/inputs/FG/Streamline_Inputs_Sl1_Dx12.cpp",
-      "identical_to_r6": true,
-      "sha256": "4f02a2d3d64cda49c41afa4894fbf0547a090f015a31f45d964dd93a97bdcb94",
-      "baseline_sha256": "4f02a2d3d64cda49c41afa4894fbf0547a090f015a31f45d964dd93a97bdcb94"
+      "path": "OptiScaler/include/fsr2_212/vk/shaders/ffx_fsr2_shaders_vk.h",
+      "sha256": "8cce6e5f07af4032369953d68e597ac8dbcaa98d30d967b49c34af7cf637dc91"
     },
     {
-      "path": "OptiScaler/inputs/FG/Streamline_Inputs_Sl1_Dx12.h",
-      "identical_to_r6": true,
-      "sha256": "8638e0676ec1c02b88ea844fe87f9c139b1c62bdb1e6ce6a632d1bdc15f5bb45",
-      "baseline_sha256": "8638e0676ec1c02b88ea844fe87f9c139b1c62bdb1e6ce6a632d1bdc15f5bb45"
+      "path": "OptiScaler/include/fsr31/shaders/ffx_fsr3upscaler_common.h",
+      "sha256": "2c7985966ab3208ae1dfcdc8f7a5e81a43828ac17888e4c88994251b01e78c8a"
+    },
+    {
+      "path": "OptiScaler/include/fsr31/shaders/ffx_fsr3upscaler_resources.h",
+      "sha256": "183966b084ccc96c16eb23136369a7d0ebb1483d37091325337692b9cfd4cc7a"
     },
     {
       "path": "OptiScaler/inputs/FG/FSR3_Dx12_FG.cpp",
-      "identical_to_r6": true,
-      "sha256": "41d9107a8de4ac4098fdc1bdfa713ee75db66844465c7998da2988a465ba422d",
-      "baseline_sha256": "41d9107a8de4ac4098fdc1bdfa713ee75db66844465c7998da2988a465ba422d"
+      "sha256": "41d9107a8de4ac4098fdc1bdfa713ee75db66844465c7998da2988a465ba422d"
+    },
+    {
+      "path": "OptiScaler/inputs/FG/FSR3_Dx12_FG.h",
+      "sha256": "29c829ec93d84003e28a5f114283736b64544ad6ac33a854dda57522fcbe1316"
     },
     {
       "path": "OptiScaler/inputs/FG/FfxApi_Dx12_FG.cpp",
-      "identical_to_r6": true,
-      "sha256": "4a418408cbd391f1e755fed6560e7e607b3a59f2491aecb4f21ee05305d3882a",
-      "baseline_sha256": "4a418408cbd391f1e755fed6560e7e607b3a59f2491aecb4f21ee05305d3882a"
+      "sha256": "4a418408cbd391f1e755fed6560e7e607b3a59f2491aecb4f21ee05305d3882a"
+    },
+    {
+      "path": "OptiScaler/inputs/FG/FfxApi_Dx12_FG.h",
+      "sha256": "b55214e6b8f8cf4e0d0188b411f667b24c0b08e531b8b6c4b151cea4efd04363"
+    },
+    {
+      "path": "OptiScaler/inputs/FG/Streamline_Inputs_Dx12.cpp",
+      "sha256": "026572b0c9203b00bd31626f9d76945b5a4b7527fd6635f0f645bcd401b1e0c9"
+    },
+    {
+      "path": "OptiScaler/inputs/FG/Streamline_Inputs_Dx12.h",
+      "sha256": "e69af6454e13fb21db343ecc37c3b9924875bee36a76003c703c9feaa6037588"
+    },
+    {
+      "path": "OptiScaler/inputs/FG/Streamline_Inputs_Sl1_Dx12.cpp",
+      "sha256": "4f02a2d3d64cda49c41afa4894fbf0547a090f015a31f45d964dd93a97bdcb94"
+    },
+    {
+      "path": "OptiScaler/inputs/FG/Streamline_Inputs_Sl1_Dx12.h",
+      "sha256": "8638e0676ec1c02b88ea844fe87f9c139b1c62bdb1e6ce6a632d1bdc15f5bb45"
     },
     {
       "path": "OptiScaler/inputs/FG/Upscaler_Inputs_Dx11wDx12.cpp",
-      "identical_to_r6": true,
-      "sha256": "7acc7b43757a8895c9ff59c91e07916d80e34d47b5e0783cee6cdbb1866bb2b4",
-      "baseline_sha256": "7acc7b43757a8895c9ff59c91e07916d80e34d47b5e0783cee6cdbb1866bb2b4"
+      "sha256": "7acc7b43757a8895c9ff59c91e07916d80e34d47b5e0783cee6cdbb1866bb2b4"
+    },
+    {
+      "path": "OptiScaler/inputs/FG/Upscaler_Inputs_Dx11wDx12.h",
+      "sha256": "ebec5e4ff1e8d934b0e6fef252e7cc67f951a2a2c9d486de9db8038e0cb9f1e7"
     },
     {
       "path": "OptiScaler/inputs/FG/Upscaler_Inputs_Dx12.cpp",
-      "identical_to_r6": true,
-      "sha256": "b9ea5d3946fda98a8d4a2a675afdd426fc0ab9e453023256ec1a826181c8ed29",
-      "baseline_sha256": "b9ea5d3946fda98a8d4a2a675afdd426fc0ab9e453023256ec1a826181c8ed29"
-    }
-  ],
-  "exact_body_checks": [
-    {
-      "path": "OptiScaler/framegen/IFGFeature.cpp",
-      "signature": "IFGFeature::StartNewFrame(",
-      "sha256": "7bc1b1e4e196be7a3c1cffd0a24e35c1dc82c6cba7c33db9ca9970888f65af85",
-      "baseline_sha256": "7bc1b1e4e196be7a3c1cffd0a24e35c1dc82c6cba7c33db9ca9970888f65af85",
-      "identical_to_r6": true
+      "sha256": "b9ea5d3946fda98a8d4a2a675afdd426fc0ab9e453023256ec1a826181c8ed29"
     },
     {
-      "path": "OptiScaler/framegen/IFGFeature.cpp",
-      "signature": "IFGFeature::SetFrameCount(",
-      "sha256": "8ddf6d0e886e59f325fd44e14c68f72cd4311bf0184c6260cb435cccb4304ffd",
-      "baseline_sha256": "8ddf6d0e886e59f325fd44e14c68f72cd4311bf0184c6260cb435cccb4304ffd",
-      "identical_to_r6": true
+      "path": "OptiScaler/inputs/FG/Upscaler_Inputs_Dx12.h",
+      "sha256": "334a706be8ad3ff87a9623c72c8bfcc24bc1ed4c8f5ffe3c96abfd6ae1cb70c6"
     },
     {
-      "path": "OptiScaler/framegen/xefg/XeFG_Dx12.cpp",
-      "signature": "XeFG_Dx12::GetResourceData(",
-      "sha256": "65f5201c0285093bf0ead8cce4fab24694fb236a11e1c1d16a354822bebc700e",
-      "baseline_sha256": "65f5201c0285093bf0ead8cce4fab24694fb236a11e1c1d16a354822bebc700e",
-      "identical_to_r6": true
+      "path": "OptiScaler/inputs/FSR2_Dx11.cpp",
+      "sha256": "b0bdd067dc8cafaa9f2feeb6641356a5da8677a1ed2a67c07b33b85697939421"
     },
     {
-      "path": "OptiScaler/framegen/xefg/XeFG_Dx12.cpp",
-      "signature": "XeFG_Dx12::CreateContext(",
-      "sha256": "904765fa1b3009dd9ae80d95cc6cc7a707c66581b6ed46a97150f5852624b72a",
-      "baseline_sha256": "904765fa1b3009dd9ae80d95cc6cc7a707c66581b6ed46a97150f5852624b72a",
-      "identical_to_r6": true
+      "path": "OptiScaler/inputs/FSR2_Dx11.h",
+      "sha256": "5b5b29d1fa8e616b543d8235b00644ad597fef847929492b9ac6aa235073411a"
     },
     {
-      "path": "OptiScaler/framegen/xefg/XeFG_Dx12.cpp",
-      "signature": "XeFG_Dx12::CreateSwapchain(",
-      "sha256": "e550c40a0499d83810a6dc11a583e7b9bfe7dccb1be7a8c62f4abea5b84a9f94",
-      "baseline_sha256": "e550c40a0499d83810a6dc11a583e7b9bfe7dccb1be7a8c62f4abea5b84a9f94",
-      "identical_to_r6": true
+      "path": "OptiScaler/inputs/FSR2_Dx12.cpp",
+      "sha256": "d76444216d3bf662a8e760ab3fb70973a7f541565367f001ce07909eac6cd94c"
     },
     {
-      "path": "OptiScaler/framegen/xefg/XeFG_Dx12.cpp",
-      "signature": "XeFG_Dx12::CreateSwapchain1(",
-      "sha256": "66dd64df5bf8138272862a02e38e06db9a1b4a53f39e9886ac055483d378e10f",
-      "baseline_sha256": "66dd64df5bf8138272862a02e38e06db9a1b4a53f39e9886ac055483d378e10f",
-      "identical_to_r6": true
+      "path": "OptiScaler/inputs/FSR2_Dx12.h",
+      "sha256": "8cdbc68d20eb063fc0c155f87f0d2876c4a564696b069dc1c2181f4b7b8ceda7"
     },
     {
-      "path": "OptiScaler/framegen/xefg/XeFG_Dx12.cpp",
-      "signature": "XeFG_Dx12::StartNewFrame(",
-      "sha256": "340bf4dc8e119e897dfc5377bb81ad97c5ba01b729a5167578769637ea93eb24",
-      "baseline_sha256": "340bf4dc8e119e897dfc5377bb81ad97c5ba01b729a5167578769637ea93eb24",
-      "identical_to_r6": true
+      "path": "OptiScaler/inputs/FSR2_Vk.cpp",
+      "sha256": "cdb3d14ce29c3279124be78a6abf3f7d65a11c7659a2e089ed9db0709ff2f5c1"
     },
     {
-      "path": "OptiScaler/framegen/xefg/XeFG_Dx12.cpp",
-      "signature": "XeFG_Dx12::SetFrameCount(",
-      "sha256": "fc584378e9ce07f0d689e23b1785092a234c0d73390fe545f6f1753c68899241",
-      "baseline_sha256": "fc584378e9ce07f0d689e23b1785092a234c0d73390fe545f6f1753c68899241",
-      "identical_to_r6": true
+      "path": "OptiScaler/inputs/FSR2_Vk.h",
+      "sha256": "612202272bfb5349a2e581b4a88cb148c30dd94525759f942305fb4b67a5abaf"
     },
     {
-      "path": "OptiScaler/framegen/xefg/XeFG_Dx12.cpp",
-      "signature": "XeFG_Dx12::SetResource(",
-      "sha256": "c632bf462dbf714ad267b46eecfe2ef4bde62fca77660455633e4f8d6ac870f3",
-      "baseline_sha256": "c632bf462dbf714ad267b46eecfe2ef4bde62fca77660455633e4f8d6ac870f3",
-      "identical_to_r6": true
+      "path": "OptiScaler/inputs/FSR3_Dx12.cpp",
+      "sha256": "f368501b4ba5bf8e29e19b1bc800ab4d711dae387370e2397dce1e4816fc2087"
     },
     {
-      "path": "OptiScaler/framegen/xefg/XeFG_Dx12.cpp",
-      "signature": "XeFG_Dx12::Activate(",
-      "sha256": "af31b2b920a501ef9c401fba105c6fce641af21390f1c93600301aae0708b279",
-      "baseline_sha256": "af31b2b920a501ef9c401fba105c6fce641af21390f1c93600301aae0708b279",
-      "identical_to_r6": true
+      "path": "OptiScaler/inputs/FSR3_Dx12.h",
+      "sha256": "bd022df91bb559a9feec84eb458fba4cb495f6683f2162fa78eb286519fa0a07"
     },
     {
-      "path": "OptiScaler/framegen/xefg/XeFG_Dx12.cpp",
-      "signature": "XeFG_Dx12::Dispatch(",
-      "sha256": "8747e58ffd26dd4f2b1eca15a9de5d98612517e659108abf59b21738b025229e",
-      "baseline_sha256": "d24cc94b24298702580bce594341b2cd22bba770a629d2b84328e011b0cb7ce5",
-      "identical_to_r6": false,
-      "identical_after_normalizing_diagnostic_reason_only": true,
-      "review": "Only reason argument selects diagnostic counter; DeactivateForReason keeps original admission + DeactivateImpl call. Frame/input math, SDK calls, count selection and algorithms unchanged."
+      "path": "OptiScaler/inputs/FfxApiExe_Dx12.cpp",
+      "sha256": "aab67b4eed2592dd7b43b11ff8134d85ca34bceecbb26e8cabf98ac1053cbb31"
     },
     {
-      "path": "OptiScaler/framegen/xefg/XeFG_Dx12.cpp",
-      "signature": "XeFG_Dx12::EvaluateState(",
-      "sha256": "bd55de62bc39e7dd2807ab57953e67fe8380bf6da65c5208410cf333d9df8c6c",
-      "baseline_sha256": "baa16d22400045b29ddb60d71b31df008ddfddd87414cd1da1d82b1d7c0b8e98",
-      "identical_to_r6": false,
-      "identical_after_normalizing_diagnostic_reason_only": true,
-      "review": "Only reason argument selects diagnostic counter; DeactivateForReason keeps original admission + DeactivateImpl call. Frame/input math, SDK calls, count selection and algorithms unchanged."
+      "path": "OptiScaler/inputs/FfxApiExe_Dx12.h",
+      "sha256": "4cf06eeb4b3751d0d3e79961e5c779aad849b7895bce864922c257cf475abc66"
+    },
+    {
+      "path": "OptiScaler/inputs/FfxApi_Dx12.cpp",
+      "sha256": "6b49ef4fd7e692e6b2d34d0196a064f87b1f9b83a1796c256b38577a3455d501"
+    },
+    {
+      "path": "OptiScaler/inputs/FfxApi_Dx12.h",
+      "sha256": "1cb702a4a6772628a3a97f8b30813be4733136dcd792619fef05da97b7763b4c"
+    },
+    {
+      "path": "OptiScaler/inputs/FfxApi_Vk.cpp",
+      "sha256": "22b034da7b00c3ec802b2db7cb77b21555ad54840f2ec42627ac44aa11892b19"
+    },
+    {
+      "path": "OptiScaler/inputs/FfxApi_Vk.h",
+      "sha256": "d39ff67f28507fe86b90fd3edfa3ef9aa4499e7134a9e7b6fa7368ee39982a81"
+    },
+    {
+      "path": "OptiScaler/inputs/NVNGX.cpp",
+      "sha256": "089e440336f717ef1044e8615fa59d0c82dc45da9da4e616b494c8aca8b4bc59"
+    },
+    {
+      "path": "OptiScaler/inputs/NVNGX_DLSS.h",
+      "sha256": "b6f70617ba973756bcec577e761d19be48a9f842fc709dbf5368217594b47800"
+    },
+    {
+      "path": "OptiScaler/inputs/NVNGX_DLSS_Dx11.cpp",
+      "sha256": "c4c6452e1abd77ef87271b3c24e3c50c80f704b639e710b50ee301ebbee2cf7c"
+    },
+    {
+      "path": "OptiScaler/inputs/NVNGX_DLSS_Dx12.cpp",
+      "sha256": "e0b60589ad5af55bcfa14079e494f9dc27600d11c9aa77020b1bd01567806d18"
+    },
+    {
+      "path": "OptiScaler/inputs/NVNGX_DLSS_Vk.cpp",
+      "sha256": "309f53c5ebbea063a717e05f4bd8a0d8b32bdeb4efd865173f103a535c586a1f"
+    },
+    {
+      "path": "OptiScaler/inputs/XeSS_Base.cpp",
+      "sha256": "7f623037d8f8480fe16cbda4f30d3c133fb0143174939bdcd65c097b1f0e8a57"
+    },
+    {
+      "path": "OptiScaler/inputs/XeSS_Base.h",
+      "sha256": "2bc19ea969c221b7c857424074e0409fc1d4b22564ca551893aac71c2f09cbb1"
+    },
+    {
+      "path": "OptiScaler/inputs/XeSS_Common.cpp",
+      "sha256": "9e1464531dce21bd881fb74908ec15f2ee7ab5eeda93f026931f02b545a11a22"
+    },
+    {
+      "path": "OptiScaler/inputs/XeSS_Common.h",
+      "sha256": "c8b8f27ecb640d85094e3b84b52f42c1ae62560ffe6a93875b4552ff9abba896"
+    },
+    {
+      "path": "OptiScaler/inputs/XeSS_Dbg.cpp",
+      "sha256": "8e7719025a7e760f8ccbb2bd4e9495e750a2736434fbd76bbb0a1dbaf8d05cff"
+    },
+    {
+      "path": "OptiScaler/inputs/XeSS_Dbg.h",
+      "sha256": "b9fe95487c059dc3b5744ad4a63070d8d8bd57ad7fdea38e92737b60276e660e"
+    },
+    {
+      "path": "OptiScaler/inputs/XeSS_Debug.cpp",
+      "sha256": "da4c84cdf70c45e912c4a85fc450a987d22312c575d8ca51e6d66a0fc9049c5d"
+    },
+    {
+      "path": "OptiScaler/inputs/XeSS_Dx11.cpp",
+      "sha256": "b46f770cd41fa92c0108bd44833ef81880e87d5046a5285ee1ee0edbc5b9c5b9"
+    },
+    {
+      "path": "OptiScaler/inputs/XeSS_Dx11.h",
+      "sha256": "a8438e6b81dc413d9c52709a3ea9d890316310fbfabd9272ab9d1f6afedc6040"
+    },
+    {
+      "path": "OptiScaler/inputs/XeSS_Dx12.cpp",
+      "sha256": "b5e0fc90f8f4552130032fc05b5d65084f7c0eacc9a30a2611bc6a14346e7f56"
+    },
+    {
+      "path": "OptiScaler/inputs/XeSS_Dx12.h",
+      "sha256": "85f66a4fd1b0a67c704b4be0248a6ade1980a9364a41a59e9302db4d25f5a1da"
+    },
+    {
+      "path": "OptiScaler/inputs/XeSS_Vulkan.cpp",
+      "sha256": "e16bf3ea93caa7a31985e815782a68202143f077e0fff4f9e1932fd031690872"
+    },
+    {
+      "path": "OptiScaler/inputs/XeSS_Vulkan.h",
+      "sha256": "925101b8300db36443672ef603b0922a75c8c94dba404b842dad6500a7a2d747"
+    },
+    {
+      "path": "OptiScaler/misc/FrameLimit.cpp",
+      "sha256": "0ccd2ea6c4ebdac6068aa1d3343c740c8a562502f937330b00fde41957392d09"
+    },
+    {
+      "path": "OptiScaler/misc/FrameLimit.h",
+      "sha256": "2c62c384106a862203042ce9cb3884febf79492396b8299f6a0335ded9fd19db"
+    },
+    {
+      "path": "OptiScaler/misc/GpuAllocationDiagnostics.h",
+      "sha256": "34e188d3ddced329d24f5280a2d2c2d1c049cb8b223c665f889c050155507a85"
+    },
+    {
+      "path": "OptiScaler/misc/HiddenWindow.h",
+      "sha256": "44d5bee1c5251c769717a3e1772972b6d5660656c0789599d2f7f9ec8c3da969"
+    },
+    {
+      "path": "OptiScaler/misc/IdentifyGpu.cpp",
+      "sha256": "e5b44de5c539dd3caa69c00ca5ac821dfa1045201e811048a9915ed24bf655bc"
+    },
+    {
+      "path": "OptiScaler/misc/IdentifyGpu.h",
+      "sha256": "29578427a45d92060c323ed900277af02a4895d1cbfcd62e57e8044c7cc794f5"
+    },
+    {
+      "path": "OptiScaler/misc/LongSessionMonitor.h",
+      "sha256": "9975168623cf40e2c8c6208769f57a1ab3b129bbae5c113664ddade8b810d6a9"
+    },
+    {
+      "path": "OptiScaler/misc/LongSessionState.h",
+      "sha256": "3b960da0e593dcec815217185307ef407f684e623d10a4b7c84f5716e22fd421"
+    },
+    {
+      "path": "OptiScaler/misc/LongSessionTiming.h",
+      "sha256": "15be9f1f2dca0d5b6d8cff4b25619f3497d051bcec0e9fb608696a6290b2f49c"
+    },
+    {
+      "path": "OptiScaler/misc/Quirks.h",
+      "sha256": "e1132bdb4e6ae0b53fd632bc98e43027d692f9d9958b4248c0955b0b03a08ca1"
+    },
+    {
+      "path": "OptiScaler/misc/ResidencyDiagnostics.h",
+      "sha256": "9b32e66f9928c695d2cedfb278e2af247c527ffb2116d2617c7d6569832e7f40"
+    },
+    {
+      "path": "OptiScaler/misc/SkipSpoof.cpp",
+      "sha256": "e26ece3f6d1d6de0900e38bdcc251d7ba58c947c5368ce889b715d9d2b16f20e"
+    },
+    {
+      "path": "OptiScaler/misc/SkipSpoof.h",
+      "sha256": "98d0f6c732cb407cfaa341d5d2af1878ac683031e7174dae531ad90be0409dbc"
+    },
+    {
+      "path": "OptiScaler/misc/XeFGPresentDiagnostics.h",
+      "sha256": "54709d1ad4941944e21efd318f9fc957546de0529ed6cfabc25d1ce27c861100"
+    },
+    {
+      "path": "OptiScaler/misc/XeFGProgressDiagnostics.h",
+      "sha256": "d9edc69d00f1622ed93af0912f63df4cc138f89e149255bec840bbbc10ac6075"
+    },
+    {
+      "path": "OptiScaler/misc/XeFGResourceDiagnostics.h",
+      "sha256": "eb1aaee362b46bb41d1fead52228545d67d9fc0f2319deee49f92b73647ccad0"
+    },
+    {
+      "path": "OptiScaler/misc/XeFGWorkDiagnostics.h",
+      "sha256": "10b8eb236ec2734fca001b29244f1f68e61ff015e690ee82becb7178d61bb826"
+    },
+    {
+      "path": "OptiScaler/proxies/FfxApi_Proxy.h",
+      "sha256": "b64be8a90eb79e0b91aa2c7f73392d661ac27ea25af147c7f1423ab669a5b25c"
+    },
+    {
+      "path": "OptiScaler/proxies/FfxContextRegistry.h",
+      "sha256": "2406b2c8eeff65bf0cdec2f8a2277497169dd6e1fbf79f9a3ec10dc6f19271b6"
+    },
+    {
+      "path": "OptiScaler/proxies/XeFGPacing.h",
+      "sha256": "58ce5f43bd1409086db18ef9906ac1a5b42ead502e8b8b6f3e20b9dbd4980b06"
+    },
+    {
+      "path": "OptiScaler/proxies/XeFGPacingGuard.h",
+      "sha256": "03bdc66d40c7d27d2860892f7d4df1da753fe933c15294b47a49380b67920758"
+    },
+    {
+      "path": "OptiScaler/resource_tracking/ResTrack_dx12.cpp",
+      "sha256": "988e5a86f35bede2f5ebebcd75a744b86d61415c68b19f77441eb68a4eb9b2b6"
+    },
+    {
+      "path": "OptiScaler/resource_tracking/ResTrack_dx12.h",
+      "sha256": "7c1a9a324097a259d5fddea5200b22c12bd3257f734c58f20f358fdeb02c8b25"
+    },
+    {
+      "path": "OptiScaler/shaders/Shader_Common.cpp",
+      "sha256": "7d26f49fae5f3bcccec5be3e4dd3dc2d4386b64b4f8af2df2f6e75b72fac2a5e"
+    },
+    {
+      "path": "OptiScaler/shaders/Shader_Common.h",
+      "sha256": "8e0c3efc0a35d011b4b3bce62598730cc573fca8231cf53ba05c24b529b81137"
+    },
+    {
+      "path": "OptiScaler/shaders/Shader_Dx11.cpp",
+      "sha256": "53998ae23e810d8edee59306767b924ec1b0c93bcec9298720efb3d3ef96eb8c"
+    },
+    {
+      "path": "OptiScaler/shaders/Shader_Dx11.h",
+      "sha256": "c0b795b296c211ebad793277020d093bc21bcb086e2357281cf7d5742d12b927"
+    },
+    {
+      "path": "OptiScaler/shaders/Shader_Dx12.cpp",
+      "sha256": "06f5f2260f4a507bca6e4dc97ef08d89cbb7d76cb7c3cc8464b6e2b8afa84b04"
+    },
+    {
+      "path": "OptiScaler/shaders/Shader_Dx12.h",
+      "sha256": "e36787ad0c4d3282c06168620431e90de96f0cb80df58d3aa28ec2d91270fa2a"
+    },
+    {
+      "path": "OptiScaler/shaders/Shader_Dx12Utils.h",
+      "sha256": "09da3686a2b5a7df28fbef15ebdbf37a37840739e4fb826538174ed394e7d894"
+    },
+    {
+      "path": "OptiScaler/shaders/Shader_Vk.cpp",
+      "sha256": "52df43cb49c602b5343d39d5313a394b9a01a533a15e35cf9a7c2eca93dba022"
+    },
+    {
+      "path": "OptiScaler/shaders/Shader_Vk.h",
+      "sha256": "54145324f709579634132ba976a678f1e7b91a76411f10555b497fe3cb459519"
+    },
+    {
+      "path": "OptiScaler/shaders/Shader_VkUtils.h",
+      "sha256": "0e5c890e8f5ff4b848a048811aef052b4a55229a1b54a0739b12b95beebecc59"
+    },
+    {
+      "path": "OptiScaler/shaders/bias/Bias_Common.h",
+      "sha256": "d9917d8d2e2320064efd533b92810f363a317b2488b82af49d1cc0bfa8e09265"
+    },
+    {
+      "path": "OptiScaler/shaders/bias/Bias_Dx11.cpp",
+      "sha256": "4b6951af59eb37512d16814104e627cd462d47f3e71c09068f837225ee351bee"
+    },
+    {
+      "path": "OptiScaler/shaders/bias/Bias_Dx11.h",
+      "sha256": "94f069b5c7391a2c7cf35f38795f766e7954e776351b5bb915f4495d1e73de28"
+    },
+    {
+      "path": "OptiScaler/shaders/bias/Bias_Dx12.cpp",
+      "sha256": "2751b076c02d67cec631dbf98d44321f869972a3482085d4f0512a072feb164a"
+    },
+    {
+      "path": "OptiScaler/shaders/bias/Bias_Dx12.h",
+      "sha256": "b628c77e27366ebde069fa71db40a7b24446edc9b672e521bacb0c2125f1b9af"
+    },
+    {
+      "path": "OptiScaler/shaders/bias/precompile/Bias_Shader.cso",
+      "sha256": "b81dc2c3262d8b543ce98f68455ce0616edfb1a4daf8416298b82af152e25dd2"
+    },
+    {
+      "path": "OptiScaler/shaders/bias/precompile/Bias_Shader.h",
+      "sha256": "b7b52679f2ebdb789f4733826a597507c1327b3d1791c2fe8ab2711fd8ec9e43"
+    },
+    {
+      "path": "OptiScaler/shaders/bias/precompile/Bias_Shader_Dx11.cso",
+      "sha256": "59343e2a08a70bd740a1b857290762985057da0d1faac41edc556018c30bcde5"
+    },
+    {
+      "path": "OptiScaler/shaders/bias/precompile/Bias_Shader_Dx11.h",
+      "sha256": "5ac1ea8771057460274a57e7b80557838f6b26b56de3c0fee9fab8aaeec4eadc"
+    },
+    {
+      "path": "OptiScaler/shaders/bias/precompile/bias.hlsl",
+      "sha256": "17143f4651373150fa657acc4ecf5a05509a6b9365330f2cfdb12700c68b647a"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_invert/DI_Common.h",
+      "sha256": "cfa575b15f07abdbca63693233702db4f74f07fb8ebf1e404ad1717f4335e732"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_invert/DI_Dx12.cpp",
+      "sha256": "df95c119b0b530ebc9b9b0ec2b7dfd797c2c38f050403645f7d9ec0e295c5384"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_invert/DI_Dx12.h",
+      "sha256": "a95f03c58b9aea90a1febab14649b8784f35740400ddb5eac3229c4113edc717"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_invert/precompiled/DI.hlsl",
+      "sha256": "9f59e530b0c94915638cb99847ff737026c3293eb8fd5b69add90984e75f2f6a"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_invert/precompiled/DI_Shader.cso",
+      "sha256": "d3dabc1dd4a5accfc2cd0c1f32661e23ce0b072a5fddb084f296216d7645056c"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_invert/precompiled/DI_Shader.h",
+      "sha256": "8ea9396cd15384bada4d39fd7db947ab885e912a3cd3b28df1625bb469ace790"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_scale/DS_Common.h",
+      "sha256": "1163d7e99ca11b2815180fe6f0d6d1242c49922b59e3edf0d9de34bf86db59b9"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_scale/DS_Dx12.cpp",
+      "sha256": "74f1e56869f0b688f781e3f164fb0caf0cebd5e6c14f8e3f941d8d278f7ffe3d"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_scale/DS_Dx12.h",
+      "sha256": "16f37cb6c5462e8b5de48df2f3b2784a0296452f39b0483b9edf8e2ba73d3bbf"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_scale/precompiled/DS.hlsl",
+      "sha256": "c5d8e46b9bdf6f8f5c1db1721c3bad9c5a0284c0c993959a4365d87ca6cb391b"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_scale/precompiled/DS_Shader.cso",
+      "sha256": "7f21e18044aefdff0f049528357b9f7406d9a2676368809a67ad749d4eb606d3"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_scale/precompiled/DS_Shader.h",
+      "sha256": "6b327ce9d872c418a1c0f8fbf344fe128543bddcd548b83f4839ec7fc85ab219"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_transfer/DT_Common.h",
+      "sha256": "f43898221bbcdcf90f9f8f8a16a1fcd4b195d54d92180e633c265d8b1d07a12a"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_transfer/DT_Dx11.cpp",
+      "sha256": "d92c9f7e0db12476cfd0b0f86058da852f97223c36872ee42dc134a214b9bfc2"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_transfer/DT_Dx11.h",
+      "sha256": "ff4772a6553a5095d7a9c7b1ff0ebaa5c5ffba4c63a53dc268c94bbee886e8ec"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_transfer/DT_Vk.cpp",
+      "sha256": "b2eda359840ceb37d62c667121b9d485a2c159a5d579055559a7a5beea195691"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_transfer/DT_Vk.h",
+      "sha256": "ccefea0c050808f3f267a3d58420699bcc7aaf800f575f3174e3e44bbe5227ce"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_transfer/precompile/dt.hlsl",
+      "sha256": "12cd26f9805c35bbebe8506a5adb7765f8ebc3e072e1d9bf5f0e5543d2435555"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_transfer/precompile/dt_Shader_Dx11.cso",
+      "sha256": "21d5014741190d7228414e580b586b0bacf1c57514102faea6b88663b6499011"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_transfer/precompile/dt_Shader_Dx11.h",
+      "sha256": "2ca4b26aebde4deb3a0ee895028494f36084c51ca06bd832764afc403fffb4da"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_transfer/precompile/dt_Shader_Vk.h",
+      "sha256": "c7261c5e3536e5e8ebc9302ccfe3c2711c71ea09f4614e35d26595c2df281004"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_transfer/precompile/dt_Shader_Vk.spv",
+      "sha256": "f873271af1b5f2ba56e163d6a0d37ed13b689876401ba2fe637a8620fd54bc2c"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_transfer/precompile/dt_dx11.hlsl",
+      "sha256": "2121bff034ab629ba621d316c8fd132aebb0831402078f8d947eaaa65fe04f16"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_transfer/precompile/dt_dx11_Shader_Dx11.cso",
+      "sha256": "011356acff435a0c73f0b1d591f21c005dbeec66fd9c9c2e15155dca75101f54"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_transfer/precompile/dt_dx11_Shader_Dx11.h",
+      "sha256": "90da48e911cff5d3d4f3d89ee6e7ee4dd360bfc6caecdfd046c9aa4021407782"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_transfer/precompile/dt_int.hlsl",
+      "sha256": "216c9a02bdcec7dfbfc65dd687a0d39ef21ab46be42ac4302812c824228daf28"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_transfer/precompile/dt_int_Shader_Vk.h",
+      "sha256": "c2a024623072592f11750c911ac8fcc1a6df4100640b1dc4c3c1b7633403ecce"
+    },
+    {
+      "path": "OptiScaler/shaders/depth_transfer/precompile/dt_int_Shader_Vk.spv",
+      "sha256": "a05aaadd725f260e0bbf90c5c3391368777258ad2fd45eb4dbd8d1a9a38f68ab"
+    },
+    {
+      "path": "OptiScaler/shaders/format_transfer/FT_Common.h",
+      "sha256": "ed732ce80a635f954ee1d6be7f38d8203eb045c44ddbcdd0ba38b3aa1820613d"
+    },
+    {
+      "path": "OptiScaler/shaders/format_transfer/FT_Dx12.cpp",
+      "sha256": "c5136e914ff836b690f670845b7ead1451f7b6b7d7e61569607308b7d90d3e7a"
+    },
+    {
+      "path": "OptiScaler/shaders/format_transfer/FT_Dx12.h",
+      "sha256": "d920cc09ae0d41110e2f4da1d88b6f1752593361ed54a8c1a0ac97847a8e618e"
+    },
+    {
+      "path": "OptiScaler/shaders/format_transfer/precompile/FT.hlsl",
+      "sha256": "b271357df5ed60ab358f7cdc6c615d425b7a516a2421a6c0b446ebdede9dfad1"
+    },
+    {
+      "path": "OptiScaler/shaders/format_transfer/precompile/FT_Shader.cso",
+      "sha256": "5d708d451360d7b1186975434ce1d18b9861768b76d5eaa942648b19f644d313"
+    },
+    {
+      "path": "OptiScaler/shaders/format_transfer/precompile/FT_Shader.h",
+      "sha256": "c93b148f1971fc97d7264e3a3320a5c2cf95933af030cb458463c73f21c5ba63"
+    },
+    {
+      "path": "OptiScaler/shaders/hud_copy/HudCopy_Common.h",
+      "sha256": "33e00154e830d1d60ec8ee4b2d5186ed834b53e24aef9371e7eec9873fffea06"
+    },
+    {
+      "path": "OptiScaler/shaders/hud_copy/HudCopy_Dx12.cpp",
+      "sha256": "1d3593da9af9399e93345fda18d35d5944e296a9a0a87d48b09e3cfd8c75e3d9"
+    },
+    {
+      "path": "OptiScaler/shaders/hud_copy/HudCopy_Dx12.h",
+      "sha256": "6358a81451a13ff0ed46353cab91d74f12863fd2bee69dfc57f4980fc9a28e66"
+    },
+    {
+      "path": "OptiScaler/shaders/hud_copy/precompile/HudCopy.hlsl",
+      "sha256": "865b05cddcf135322364639bf9e16037baf76519bec76e82b1c828f50c8c0bc0"
+    },
+    {
+      "path": "OptiScaler/shaders/hud_copy/precompile/HudCopy_Shader.cso",
+      "sha256": "34e589dceb2f539c704277d161f07f258194a226d0254167591f47714acc7ed4"
+    },
+    {
+      "path": "OptiScaler/shaders/hud_copy/precompile/HudCopy_Shader.h",
+      "sha256": "b6adf6c8ab7d9fb0d4eafd8b5f16c68918b3f9b5fcbc3a6951b196cf70d4e122"
+    },
+    {
+      "path": "OptiScaler/shaders/hudless_compare/HC_Common.h",
+      "sha256": "07e768fa0378b3ba58e24367c070f54a8a4112f6cdd9c097cc57ffb373e4be74"
+    },
+    {
+      "path": "OptiScaler/shaders/hudless_compare/HC_Dx12.cpp",
+      "sha256": "2726eddad5b9642f412609c6c2540683bade1d110645519157bfcedade42ae75"
+    },
+    {
+      "path": "OptiScaler/shaders/hudless_compare/HC_Dx12.h",
+      "sha256": "def878b8e11b1a6704805fed657715074b6877491d7cf1a899a6e4459c616093"
+    },
+    {
+      "path": "OptiScaler/shaders/hudless_compare/precompile/hudless_compare.hlsl",
+      "sha256": "713415b84ce5bbefcf310ee1b501080f981c438b5880422c442009a74392640d"
+    },
+    {
+      "path": "OptiScaler/shaders/hudless_compare/precompile/hudless_compare_PShader.cso",
+      "sha256": "12add7d8bea2ac7fcce9495a4114f73c03b6d53bb6aba3bd47aa73d00aae5a35"
+    },
+    {
+      "path": "OptiScaler/shaders/hudless_compare/precompile/hudless_compare_PShader.h",
+      "sha256": "daefefa14f4d6bd20dcff5b47fbdff5e0220207da29fe39ae476f1da5bf7d0a9"
+    },
+    {
+      "path": "OptiScaler/shaders/hudless_compare/precompile/hudless_compare_VShader.cso",
+      "sha256": "317768180743cdd6a26d776c322b17fe016f991cc18ed653014877ea05130784"
+    },
+    {
+      "path": "OptiScaler/shaders/hudless_compare/precompile/hudless_compare_VShader.h",
+      "sha256": "52aed6835eaa94f52dca49c602a01544ea44a0cae35704565852f2e237fa7c37"
+    },
+    {
+      "path": "OptiScaler/shaders/hudless_compare_compute/HCC_Common.h",
+      "sha256": "0f971aab4346be051ad0e43a5e9d8f4df5e1fbee16909a620cdde0706a0abec6"
+    },
+    {
+      "path": "OptiScaler/shaders/hudless_compare_compute/HCC_Dx12.cpp",
+      "sha256": "609f0cfb5922ac2f340068b27ee2fb284eae7dc6613038de06130430b54d318a"
+    },
+    {
+      "path": "OptiScaler/shaders/hudless_compare_compute/HCC_Dx12.h",
+      "sha256": "a8f6aafd0dc85ca7f00ee63a8809c5338468b9f58ac1b2261bd54d30113f541c"
+    },
+    {
+      "path": "OptiScaler/shaders/hudless_compare_compute/precompile/HCC.hlsl",
+      "sha256": "ab8a1beb3b182bab79a04c8f7975715c8550cace4522188da29a833f39e7b6b7"
+    },
+    {
+      "path": "OptiScaler/shaders/hudless_compare_compute/precompile/HCC_Shader.cso",
+      "sha256": "899b8ec79b4b008e43d05e84cc9f0c4700b299af8598eb59563d011aeda4bc9a"
+    },
+    {
+      "path": "OptiScaler/shaders/hudless_compare_compute/precompile/HCC_Shader.h",
+      "sha256": "ca32b5d2fa17caf627e08d27a1e366ec20c376fdc43cc8aea009cd870801fac9"
+    },
+    {
+      "path": "OptiScaler/shaders/magnifier/Magnifier_Common.cpp",
+      "sha256": "62d994d1f2618961d75e3e5aeb733878f23ae2f03f1f388c3e9086132fe3c745"
+    },
+    {
+      "path": "OptiScaler/shaders/magnifier/Magnifier_Common.h",
+      "sha256": "bd14e1679c830269df9fef4fdc3e196bcb0afbfd4d3c13bd60eb3e82f3477863"
+    },
+    {
+      "path": "OptiScaler/shaders/magnifier/Magnifier_Dx11.cpp",
+      "sha256": "c26498e907ae475fd394025272dc9e6664633f683b048d29acd3ec23e2209b12"
+    },
+    {
+      "path": "OptiScaler/shaders/magnifier/Magnifier_Dx11.h",
+      "sha256": "b4335f930eaffc9561c69d628d2a53643d267eb9df398fba71eb87f6b6396961"
+    },
+    {
+      "path": "OptiScaler/shaders/magnifier/Magnifier_Dx12.cpp",
+      "sha256": "c36306718227d0aa8783932454ce45ccaabc5de2df63d7b41609d4e101460f5e"
+    },
+    {
+      "path": "OptiScaler/shaders/magnifier/Magnifier_Dx12.h",
+      "sha256": "591d8d0fc998dc3121e58fc5ad61d5d60e451b5d7e43d411deaaa0b7320fe08c"
+    },
+    {
+      "path": "OptiScaler/shaders/magnifier/Magnifier_Vk.cpp",
+      "sha256": "449029347f697ecba393f032a928cff1177537ce7b5f4c286a1f3d78b589b8b6"
+    },
+    {
+      "path": "OptiScaler/shaders/magnifier/Magnifier_Vk.h",
+      "sha256": "97428447176011c1548c217009e978d10aec02adf4bddfe32156ff137e46b9bb"
+    },
+    {
+      "path": "OptiScaler/shaders/magnifier/precompile/Magnifier.hlsl",
+      "sha256": "4b607b6cc4e7b4088389603fefd2d79e24b6b1650ae25d7dc54c1cd5353e77a4"
+    },
+    {
+      "path": "OptiScaler/shaders/magnifier/precompile/Magnifier_Shader.cso",
+      "sha256": "cf40d593a68ba9e36915fed91f87c70ac40de565855dee2946c9a6cf6e86ba9c"
+    },
+    {
+      "path": "OptiScaler/shaders/magnifier/precompile/Magnifier_Shader.h",
+      "sha256": "0cd01f27b9f53d3074ea8f360d084fbb176d45eeb7c33cc7567dfc6315fe79ba"
+    },
+    {
+      "path": "OptiScaler/shaders/magnifier/precompile/Magnifier_Shader_Dx11.cso",
+      "sha256": "79bd8c89bd884485389fe740f039e3ff15f9fec6b5f11943ab7a527af5f1353e"
+    },
+    {
+      "path": "OptiScaler/shaders/magnifier/precompile/Magnifier_Shader_Dx11.h",
+      "sha256": "a426aef45276112769ef47c8b83087481ed5fc19d38be8b6f9e318b157dc1bdf"
+    },
+    {
+      "path": "OptiScaler/shaders/magnifier/precompile/Magnifier_Shader_Vk.h",
+      "sha256": "593c4830b335f124e5f555835cb6da7358d98e2adc44d3c92870236cdf688582"
+    },
+    {
+      "path": "OptiScaler/shaders/magnifier/precompile/Magnifier_Shader_Vk.spv",
+      "sha256": "91445639f44d083d5310aa19c1e302dddfee420cc7fab0e6653bfe4f324a04ce"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/OS_Common.h",
+      "sha256": "3c82ebf58fdba5a268c919b36de9d8ea3187ff5d376dc41214eda97c0880c506"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/OS_Dx11.cpp",
+      "sha256": "6c60d4ef6a82a7c094c1fcecb1c411dc8024fb270512edc4ce8a670266a71ab4"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/OS_Dx11.h",
+      "sha256": "dd081d5837c1d9e6fc3c84dea836c466091bde9d4d595618ffd6683bf255f931"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/OS_Dx12.cpp",
+      "sha256": "e0bcd97464d60eab05a7fb7ea61eac212326e74ec2ae7ae673f1a11861a0b752"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/OS_Dx12.h",
+      "sha256": "cfdacae77892ac60c78a0f90daa68ae24bbdea40bff04a460a75455ed7b6ba35"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/OS_Vk.cpp",
+      "sha256": "e0bc405c9b873a70d7f98816b8b2f8199aace0e4a18b7e410d7897effa2184e3"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/OS_Vk.h",
+      "sha256": "a2681bf3df4a6cb8639ebd27be4ee50bd16fd418e3d112494674066be59e33cc"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/fsr1/FSR_EASU_Shader.cso",
+      "sha256": "a5c89c900c44882ba202bf65328315793c3d2c7bb821524bb249fef964e4dedd"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/fsr1/FSR_EASU_Shader.h",
+      "sha256": "e717f224860ce9555a950359058c6ece7a6fab9f77ce2006ba6afb922917adf8"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/fsr1/FSR_EASU_Shader_Dx11.cso",
+      "sha256": "a5c89c900c44882ba202bf65328315793c3d2c7bb821524bb249fef964e4dedd"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/fsr1/FSR_EASU_Shader_Dx11.h",
+      "sha256": "e717f224860ce9555a950359058c6ece7a6fab9f77ce2006ba6afb922917adf8"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/fsr1/FSR_EASU_Shader_Vk.h",
+      "sha256": "9da203de22535a54d3552141407ebdb388ced1b4aea0d4a54de8ccece2a11516"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/fsr1/FSR_EASU_Shader_Vk.spv",
+      "sha256": "58b6ea4e5fb1d39229e0f84f84c8e8e26fc9cc813e1a9f54f7471d28872a0e9b"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/fsr1/FSR_RCAS_Shader.cso",
+      "sha256": "bdcd389e2985b63665d9671f7fca439153b5c58da98097038d018e71f969515d"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/fsr1/FSR_RCAS_Shader.h",
+      "sha256": "d8f202729244dce596e286af5880a534275aded0e5849a161b29426ff3830e61"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/fsr1/ffx_a.h",
+      "sha256": "85ed252dad68716f6e98e16dbab4078eeb422d5521cc72a1d3ecfe3659ce500a"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/fsr1/ffx_fsr1.h",
+      "sha256": "c7fd218790f452f254c7a50bde338dddb6519df46bf7530c145174c0931999fc"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/fsr1/fsr_easu.hlsl",
+      "sha256": "e9885923a8b27e007b6c974fecc92bc75b0ba75ceb47183b5b700898f3de849d"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/fsr1/fsr_rcas.hlsl",
+      "sha256": "63fbc55325d6531cf4b3fdf6cd4e449c17caecff271696c43a34fbab0745b14d"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/BCUS_Shader.cso",
+      "sha256": "e7a64857368c36f9abbc22fe6ba0fc5f46a1d1abb6c420609d436151d5dc6da6"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/BCUS_Shader.h",
+      "sha256": "ae7f305d0cb83aa135bfd6e1587d7ca37b7758c33f6508e933013f60c1e99691"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/BCUS_Shader_Dx11.cso",
+      "sha256": "e7a64857368c36f9abbc22fe6ba0fc5f46a1d1abb6c420609d436151d5dc6da6"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/BCUS_Shader_Dx11.h",
+      "sha256": "ae7f305d0cb83aa135bfd6e1587d7ca37b7758c33f6508e933013f60c1e99691"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_bicubic.hlsl",
+      "sha256": "426a9fb342dd469e5b5e81c65435a9935c8095204725bacea817090db5cf29ca"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_bicubic_Shader.cso",
+      "sha256": "5e3190943ad79cab04c2b16a4cfa436791a00cabb4341240e4a9beee76aefabc"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_bicubic_Shader.h",
+      "sha256": "563dda68d725cdc17f116f8c46243d3104f21daf3a99092e652d9f503c3ce313"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_bicubic_Shader_Dx11.cso",
+      "sha256": "5e3190943ad79cab04c2b16a4cfa436791a00cabb4341240e4a9beee76aefabc"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_bicubic_Shader_Dx11.h",
+      "sha256": "563dda68d725cdc17f116f8c46243d3104f21daf3a99092e652d9f503c3ce313"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_bicubic_Shader_Vk.h",
+      "sha256": "61395cb0cd7d8b0d44e9e7d992c1db843f02acc9ffe8eaa56ddb22f7f5bd40aa"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_bicubic_Shader_Vk.spv",
+      "sha256": "4ac02bc2c0195e7bb3534b429802d7755536f0fff1abfa9f93690bf890623a78"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_catmull.hlsl",
+      "sha256": "f5b2ca7ff84da9462d289069a0e6a95e4ff0f33f8bc81700c8808e92fd942403"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_catmull_Shader.cso",
+      "sha256": "d9805122f1ad3e78272c01366bcb28a77a2186b437393a8d8af1ab5afcbf592d"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_catmull_Shader.h",
+      "sha256": "11cd59e4825a1d46ad8bece6ad139972212de7353f731df51e8ed234e8237c76"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_catmull_Shader_Dx11.cso",
+      "sha256": "d9805122f1ad3e78272c01366bcb28a77a2186b437393a8d8af1ab5afcbf592d"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_catmull_Shader_Dx11.h",
+      "sha256": "11cd59e4825a1d46ad8bece6ad139972212de7353f731df51e8ed234e8237c76"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_catmull_Shader_Vk.h",
+      "sha256": "608e78f0e3520066e7ce7298eda565ad20f2e9814329d9e68ed2d8bd2eeecc13"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_catmull_Shader_Vk.spv",
+      "sha256": "5de62230c9fd7fdb3d72295d851eb623bab9a2601af3838b15499d93164b7bed"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_kaiser2.hlsl",
+      "sha256": "cb09cd0899109cb5cf24b51787dc7647626c6f5f7327de24b74e2c79b1c3f86e"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_kaiser2_Shader.cso",
+      "sha256": "4362fdbc19f94da3f27e6099b83829d99e5973cad7d0d1dce5550cb3369b6c07"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_kaiser2_Shader.h",
+      "sha256": "ad22eb190f53c8d4b6cdf1c0793084faf390d58b72fb01471e41e8c01688fe3c"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_kaiser2_Shader_Dx11.cso",
+      "sha256": "4362fdbc19f94da3f27e6099b83829d99e5973cad7d0d1dce5550cb3369b6c07"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_kaiser2_Shader_Dx11.h",
+      "sha256": "ad22eb190f53c8d4b6cdf1c0793084faf390d58b72fb01471e41e8c01688fe3c"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_kaiser2_Shader_Vk.h",
+      "sha256": "57605564e71e923eccda8323db306b69e40e41ffebc0fec4fb392fd420c99deb"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_kaiser2_Shader_Vk.spv",
+      "sha256": "5117ebca23f97ddacbb04abbe2a11fc433cc7a1dc99f198707b3e6ca31607cc8"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_kaiser3.hlsl",
+      "sha256": "9289c946c2a63ee2233cdffbf24b93934a1a7d049919175245c36939ea9ac870"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_kaiser3_Shader.cso",
+      "sha256": "1ee4ac3c118a48ba4c21ab0c63f69adf5b0944b3b3116ae0a863fa00a4cb3a5c"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_kaiser3_Shader.h",
+      "sha256": "a1146afd0cd63f461625d0637b4564d47f1b0b1f836b661b0b53c92fbafbb713"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_kaiser3_Shader_Dx11.cso",
+      "sha256": "1ee4ac3c118a48ba4c21ab0c63f69adf5b0944b3b3116ae0a863fa00a4cb3a5c"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_kaiser3_Shader_Dx11.h",
+      "sha256": "a1146afd0cd63f461625d0637b4564d47f1b0b1f836b661b0b53c92fbafbb713"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_kaiser3_Shader_Vk.h",
+      "sha256": "57b4c6fb8a39db0649b2ddb37bb1609b5a194c7e3c92db4eb32ceae9168bc8d3"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_kaiser3_Shader_Vk.spv",
+      "sha256": "5f6a2ca0abac100eee754d032d0cb99120473cb5f139e77abc351fc7faafc6d5"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_lanczos2.hlsl",
+      "sha256": "8c1248e510f2019ac43c62db5e0e93ff408bb035c0f2733ccb19ae3cc7e854f0"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_lanczos2_Shader.cso",
+      "sha256": "3ab260cf94265c267541669b730b210e83ea52b354472b72c593a45944ab5c80"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_lanczos2_Shader.h",
+      "sha256": "f54da919de6f59028cba39137085fd4c09b1122a41e6f5739851401b04b89aa8"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_lanczos2_Shader_Dx11.cso",
+      "sha256": "3ab260cf94265c267541669b730b210e83ea52b354472b72c593a45944ab5c80"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_lanczos2_Shader_Dx11.h",
+      "sha256": "f54da919de6f59028cba39137085fd4c09b1122a41e6f5739851401b04b89aa8"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_lanczos2_Shader_Vk.h",
+      "sha256": "1cc1770bf3068f87ec3b0fb57612c056e24754e0e9e708587a9decc8a5aed330"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_lanczos2_Shader_Vk.spv",
+      "sha256": "ee9ebbdc0e833309cebe42bf80e4acf05dceec8b1fa6aab7320a61edecc5f859"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_lanczos3.hlsl",
+      "sha256": "d50d850bd9819c3755fab3fe4404c3b117490c00270e02bb7436fdb6ba6619f9"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_lanczos3_Shader.cso",
+      "sha256": "dd1d6ac1a28a2f7a4cc538f7bedefc449f694bbf3d1586f43f467a43c942eab8"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_lanczos3_Shader.h",
+      "sha256": "ed5f9973cc31516e8176a4d5cb3d181246a1de22a3bb9804e24a730c913a35bb"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_lanczos3_Shader_Dx11.cso",
+      "sha256": "dd1d6ac1a28a2f7a4cc538f7bedefc449f694bbf3d1586f43f467a43c942eab8"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_lanczos3_Shader_Dx11.h",
+      "sha256": "ed5f9973cc31516e8176a4d5cb3d181246a1de22a3bb9804e24a730c913a35bb"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_lanczos3_Shader_Vk.h",
+      "sha256": "7bcce1e0c655928daf9877dc6a5efefaddcd4decddb2a7ac5d5f99388a6fbcab"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_lanczos3_Shader_Vk.spv",
+      "sha256": "5dcf95eb63a86c0d7fd3ac5e38ce46f1fb6e4de78ba7ad8c3272fbaf4f78f550"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_magc.hlsl",
+      "sha256": "bc9d1bf5bde9855cd36a085beaa772891e1c40999926cbd39c673a49465ab3f1"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_magc_Shader.cso",
+      "sha256": "8373823c5f7257347ccb3a7674cd7431f33daf32d17a07f16789688c706b9d8b"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_magc_Shader.h",
+      "sha256": "438dbd4a4bdf0676c78b86754a28d952ed0fec79d3d6a6bdfa8343cfe28814e9"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_magc_Shader_Dx11.cso",
+      "sha256": "8373823c5f7257347ccb3a7674cd7431f33daf32d17a07f16789688c706b9d8b"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_magc_Shader_Dx11.h",
+      "sha256": "438dbd4a4bdf0676c78b86754a28d952ed0fec79d3d6a6bdfa8343cfe28814e9"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_magc_Shader_Vk.h",
+      "sha256": "9bac7d92cb7b15ec575995d1365199e86f24ff5213a898e22f0532071e82f567"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcds_magc_Shader_Vk.spv",
+      "sha256": "7a144ff7c067c4e4d9002e997f8a4f93407e3a4f36b2afc80ff6ba3b7c780f19"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcus.hlsl",
+      "sha256": "a2c0d83a34dff92ad02fbc53c5a4733201d107823b550ab8777ec4a4319fc57b"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcus_Shader_Vk.h",
+      "sha256": "73f6e92f6e4b5e419b6c5618f6ce3901238949cb3346291fb539c7342972d395"
+    },
+    {
+      "path": "OptiScaler/shaders/output_scaling/precompile/bcus_Shader_Vk.spv",
+      "sha256": "f1317d2ebc422a4d2cc1f4cbf248463b344e0797dcd421777942af3cf6d9e8fa"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/RCAS_Common.cpp",
+      "sha256": "4bb19a417d81f7e09b940f870a3cc4f6fbd4d33c4f7e4b7d3f19c2dd70e33f0e"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/RCAS_Common.h",
+      "sha256": "94d426b99b5da7eeb5d0acb232d8da780696b850ff849c02efc58804b429409f"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/RCAS_Dx11.cpp",
+      "sha256": "d8e938058c0a3dd468bc3c6bac8557a72adc82be9c9e3cb221cffaec81911260"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/RCAS_Dx11.h",
+      "sha256": "aae42576b36f21d6ee13a273580f8609f3f5615255ef36fdab766130927a3856"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/RCAS_Dx12.cpp",
+      "sha256": "5154bfea1f4580db6e1b3b8fa81dc3d700ac9bac2c5416df9e36b115d41f27de"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/RCAS_Dx12.h",
+      "sha256": "5dabe50fa1d6149496085f5c9f0557a8d199680b240f28327b1e9d8f77b70016"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/RCAS_Vk.cpp",
+      "sha256": "984351f60482c9ad14766a6f3a86d45fc93cce5cd6352b1e42e3f7b7c7aa6c8b"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/RCAS_Vk.h",
+      "sha256": "741a817342e55b45310a46f2f0c7272d0ffe6788431d5f6cec85f171d8356699"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/precompile/RCAS_Shader.cso",
+      "sha256": "ecfde2eb465a012274a1b3cb7fa342ae4c17b419da44043249eaa3926c484460"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/precompile/RCAS_Shader.h",
+      "sha256": "951868117dc02e6cd1f5699a2bf05805e5f90c88d0ad167bbc447dfbd94345d5"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/precompile/RCAS_Shader_Dx11.cso",
+      "sha256": "1e3851f92284949ce2fc26e66ff6cd41b74dc33017c83930202dac50781c4772"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/precompile/RCAS_Shader_Dx11.h",
+      "sha256": "7648399db9befa1ee6892c4ff34f55f4f12fea3a59bcd1772f8ca4c18f396dc6"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/precompile/RCAS_Shader_Vk.h",
+      "sha256": "9164ee6f9f2c03e089aaaa128cc17d25fd4243af85dca68589156093860308f7"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/precompile/RCAS_Shader_Vk.spv",
+      "sha256": "be29681bc2f1824dade6fbebb508499bcf8ba951938fbd5e172bff1a12f92465"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/precompile/da_das_sharpen.hlsl",
+      "sha256": "406778c1ec35317ddc9635bf30821398d0509b02d43c67f71e9eb4c182465c6a"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/precompile/da_das_sharpen_Shader.cso",
+      "sha256": "4ed77bf9ffdb537be5add44b4fe720c292c6769be3ca0d8c899e67772d8a5c65"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/precompile/da_das_sharpen_Shader.h",
+      "sha256": "ef224008b5584684f7c62958f14ed3b8a6005ff660f20793ed29f379f38c07dc"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/precompile/da_das_sharpen_Shader_Dx11.cso",
+      "sha256": "4ed77bf9ffdb537be5add44b4fe720c292c6769be3ca0d8c899e67772d8a5c65"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/precompile/da_das_sharpen_Shader_Dx11.h",
+      "sha256": "ef224008b5584684f7c62958f14ed3b8a6005ff660f20793ed29f379f38c07dc"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/precompile/da_das_sharpen_Shader_Vk.h",
+      "sha256": "9963997571a5e1026ad948de2262c9cfb6b04e63cb5cbcbf89a87c1dd00bd98d"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/precompile/da_das_sharpen_Shader_Vk.spv",
+      "sha256": "281f6736acd58f24b8d5597c11f4559b872151b13a8ca400fda06d2413fe3e92"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/precompile/da_rcas_sharpen.hlsl",
+      "sha256": "13ebc5e91ad6238772b09f70b65da9afd20515ffbbd860bebc02eb37a932c06b"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/precompile/da_rcas_sharpen_Shader.cso",
+      "sha256": "0fc255576dda515623b8a4b221cdbed01846d308abe807a16f9fb27818a57655"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/precompile/da_rcas_sharpen_Shader.h",
+      "sha256": "9ccb22441c6fbf7a824eceb701f3198af1f2674ddc250ec0d2d1ed903c716869"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/precompile/da_rcas_sharpen_Shader_Dx11.cso",
+      "sha256": "0fc255576dda515623b8a4b221cdbed01846d308abe807a16f9fb27818a57655"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/precompile/da_rcas_sharpen_Shader_Dx11.h",
+      "sha256": "9ccb22441c6fbf7a824eceb701f3198af1f2674ddc250ec0d2d1ed903c716869"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/precompile/da_rcas_sharpen_Shader_Vk.h",
+      "sha256": "2bc8fa10dcf60cc5368f904a87fb80cd36ebeb82af9de4dcb571fce88605f2c3"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/precompile/da_rcas_sharpen_Shader_Vk.spv",
+      "sha256": "c7b6e61db51bfb5bfbfd73997375f193c854d53794227dbf4a4ed3dd931ea16a"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/precompile/rcas.hlsl",
+      "sha256": "349cfb7260f83a857f3c1e8175269064c5ebe19178f685a89b9429d112c64b81"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/shaders/DA_DAS_Shader.h",
+      "sha256": "b596b7c330989c5a9df3829d20e6366246aed10c32e59ab132fb12d5d3cfcf1b"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/shaders/DA_RCAS_Shader.h",
+      "sha256": "cd48bc6e1e944ad4069ba6b9e9d00d2f9137c8f2018d0b543db282893cd72106"
+    },
+    {
+      "path": "OptiScaler/shaders/rcas/shaders/RCAS_Shader.h",
+      "sha256": "e555b6fe4bea7bb5b3048ce0343809bdb37dfb435bfb59baa7fc63ff54c10353"
+    },
+    {
+      "path": "OptiScaler/shaders/render_ui/RUI_Common.h",
+      "sha256": "1eb3b24898a9d188ee0aa33337e957d3738420da3b14fd881634bbca503dcb65"
+    },
+    {
+      "path": "OptiScaler/shaders/render_ui/RUI_Dx12.cpp",
+      "sha256": "e1f328cfe351679817fa1a29d5d38cf20bbb1cd564622e21e57ca61338e4e20c"
+    },
+    {
+      "path": "OptiScaler/shaders/render_ui/RUI_Dx12.h",
+      "sha256": "e741a1793b5d38d3ff13b4d60abfe8b9624a62dbd3ec4e4dc975fb013cb9860c"
+    },
+    {
+      "path": "OptiScaler/shaders/render_ui/precompile/render_ui.hlsl",
+      "sha256": "9fec73f5dae12c91a623d1df2f0b4140af240d9c775ea509391f2d8dc61d8073"
+    },
+    {
+      "path": "OptiScaler/shaders/render_ui/precompile/render_ui_PShader.cso",
+      "sha256": "b3541ceb929c84c8e1358545afaf7a61872093236df7b7641790c87200f55630"
+    },
+    {
+      "path": "OptiScaler/shaders/render_ui/precompile/render_ui_PShader.h",
+      "sha256": "86ab2fb1353859043e52de2b2226507d6688bef530d414765930b030329201da"
+    },
+    {
+      "path": "OptiScaler/shaders/render_ui/precompile/render_ui_VShader.cso",
+      "sha256": "6b38788b9f6f3167b724eae2d66a5a2a84ccf783cbc9f804e56c441e606f3213"
+    },
+    {
+      "path": "OptiScaler/shaders/render_ui/precompile/render_ui_VShader.h",
+      "sha256": "91bbb4a334b8a24b5c9d63d6f9afd2843e548b86a867dbd8ace0508052c69d8e"
+    },
+    {
+      "path": "OptiScaler/shaders/render_ui/precompile/render_ui_pm.hlsl",
+      "sha256": "7cc820f0521d5c65aa369397899887b9205bcd5c6c5edf29307dd1044b0f25e3"
+    },
+    {
+      "path": "OptiScaler/shaders/render_ui/precompile/render_ui_pm_PShader.cso",
+      "sha256": "a9914a7eea42817d8bdcab1b0388538012dcbae9062d35c085580187dde708ba"
+    },
+    {
+      "path": "OptiScaler/shaders/render_ui/precompile/render_ui_pm_PShader.h",
+      "sha256": "dba7a491ee0bfd50524431976adabf31ecb37ce903fde3125965f8a2fa8b9262"
+    },
+    {
+      "path": "OptiScaler/shaders/render_ui/precompile/render_ui_pm_VShader.cso",
+      "sha256": "6b38788b9f6f3167b724eae2d66a5a2a84ccf783cbc9f804e56c441e606f3213"
+    },
+    {
+      "path": "OptiScaler/shaders/render_ui/precompile/render_ui_pm_VShader.h",
+      "sha256": "64588feb6475a2fc4189df279b203141b90ddb3913d48b77a708b78dc5b48561"
+    },
+    {
+      "path": "OptiScaler/shaders/resource_copy/RC_Vk.cpp",
+      "sha256": "1ea2cfed534d6895eb254f9145e3969d4b89f4723ba4138a17893bd9b0f05bbe"
+    },
+    {
+      "path": "OptiScaler/shaders/resource_copy/RC_Vk.h",
+      "sha256": "4b80bad80e7cf4a05008750091a8c4a0f962306e65112ca006d4b7ecb997971f"
+    },
+    {
+      "path": "OptiScaler/shaders/resource_copy/precompile/rc.hlsl",
+      "sha256": "0d6c57dc7efcefd17ab6479cfbd1b026340d1d5c0e8e1b2b2b67daed10c03902"
+    },
+    {
+      "path": "OptiScaler/shaders/resource_copy/precompile/rc_Shader_Vk.h",
+      "sha256": "b447e1523981841f5bb23d75da818a3ba7e47f3984f9020a6c40138dc2ae7b1a"
+    },
+    {
+      "path": "OptiScaler/shaders/resource_copy/precompile/rc_Shader_Vk.spv",
+      "sha256": "03495301263a0373ff444ea888f045450b53673df4455e05e1002b2942e82932"
+    },
+    {
+      "path": "OptiScaler/shaders/resource_flip/RF_Common.h",
+      "sha256": "7f48e8f98d72235390e5a8ef020ca576d040882536e61b7858a09000433e9987"
+    },
+    {
+      "path": "OptiScaler/shaders/resource_flip/RF_Dx12.cpp",
+      "sha256": "6a5f03f6bea88154e8373789f68782a5913cc19d8550a4f5fbe410c778517df8"
+    },
+    {
+      "path": "OptiScaler/shaders/resource_flip/RF_Dx12.h",
+      "sha256": "9469850fbca7d0a7407aa31d2014058a6bf6b9351f3e9fb47c95154065fab382"
+    },
+    {
+      "path": "OptiScaler/shaders/resource_flip/precompiled/RF.hlsl",
+      "sha256": "9872495030c6baceda71ebe1a60772f9f72f010160242a3bbdabfd6b28f58956"
+    },
+    {
+      "path": "OptiScaler/shaders/resource_flip/precompiled/RF_Shader.cso",
+      "sha256": "03677a360b9c0e403f1bb311232a5b9fff8c9c1276bcdd03b38d32e322edb2c3"
+    },
+    {
+      "path": "OptiScaler/shaders/resource_flip/precompiled/RF_Shader.h",
+      "sha256": "354c1d94727a0145d60738116c1c49865441d540e150c11a610edf87f041c8e2"
+    },
+    {
+      "path": "OptiScaler/shaders/shader_tools/build_precompiled_pixelshader.bat",
+      "sha256": "20a1e64ec42672406745f45c79aa20338290c786644e0e90d868919a72f3364d"
+    },
+    {
+      "path": "OptiScaler/shaders/shader_tools/build_precompiled_shader.bat",
+      "sha256": "0fd2c4877fe37bca51aa430f7e09b9e348d4e144b85625ff3f76ac7291de3861"
+    },
+    {
+      "path": "OptiScaler/shaders/shader_tools/build_precompiled_shader_fxc.bat",
+      "sha256": "d1ec590697b3d5bf16bb9d0d03a1fef0631323ad277cd2ba8f329fb6a629ba8c"
+    },
+    {
+      "path": "OptiScaler/shaders/shader_tools/build_precompiled_shader_vk.bat",
+      "sha256": "15a804ad2b6caff343d0d04561404c88892cdf451503a2d8197c8d31b8361c54"
+    },
+    {
+      "path": "OptiScaler/shaders/shader_tools/create_header.py",
+      "sha256": "2585317ebfbef001cc6427a46d8d031dd592a7a6488e04f937ae0ffa509b73d5"
+    },
+    {
+      "path": "OptiScaler/shaders/shader_tools/dxc.exe",
+      "sha256": "b9cff94181248e080804b385da8964b6319fd07760721baa9053a891cf7a727f"
+    },
+    {
+      "path": "OptiScaler/shaders/shader_tools/dxcompiler.dll",
+      "sha256": "b86a738ece4c05dbe2d9bbb29668a2ccb28a0740773c9b027cdc61e8d07b4d75"
+    },
+    {
+      "path": "OptiScaler/shaders/shader_tools/dxil.dll",
+      "sha256": "058f2f52a680c38b223a5615b7df969def21f77e577562e5099d971dede992de"
+    },
+    {
+      "path": "OptiScaler/shaders/shader_tools/dxv.exe",
+      "sha256": "91c1d4a6e0efb6ff1d89f648ac0621b9b1f91230d4d74ace00907e0e0794b7c3"
+    },
+    {
+      "path": "OptiScaler/shaders/shader_tools/fxc.exe",
+      "sha256": "31fa10504b1551337de4d06ec2194143885a76a8b5a81177999e2faa34729183"
+    },
+    {
+      "path": "OptiScaler/upscalers/FeatureProvider_Dx11.cpp",
+      "sha256": "a70e9ceeede120e8a83392fb7d933de013ce293c3826b23abd28a4a9a5c01650"
+    },
+    {
+      "path": "OptiScaler/upscalers/FeatureProvider_Dx11.h",
+      "sha256": "3b4d54a8c6e604a812cf45a772e798f2bf264595fa051fcfa1f7dffa0dc79800"
+    },
+    {
+      "path": "OptiScaler/upscalers/FeatureProvider_Dx12.cpp",
+      "sha256": "7a4fbe59abfe5a5affa99201c38344d5b5164a1455fdbd2da24a1b08b1954fba"
+    },
+    {
+      "path": "OptiScaler/upscalers/FeatureProvider_Dx12.h",
+      "sha256": "8fc3fb9e986ed3f5b5693b5fbf3d4e06de1d03828a1728b3f3bc0b0899b5c07f"
+    },
+    {
+      "path": "OptiScaler/upscalers/FeatureProvider_Vk.cpp",
+      "sha256": "df2d1368173963e14a986cb2091f32631dec45f3dc3873bebd74dbad0a988189"
+    },
+    {
+      "path": "OptiScaler/upscalers/FeatureProvider_Vk.h",
+      "sha256": "43d4eed46587ea78545e5a9945358c8edaee17c198b70b2044eee21b87e2404b"
+    },
+    {
+      "path": "OptiScaler/upscalers/IFeature.cpp",
+      "sha256": "802d3189560300c45a8546f1a3e48922a3fb8e3b69aaaa9c86f0e475fcd42b23"
+    },
+    {
+      "path": "OptiScaler/upscalers/IFeature.h",
+      "sha256": "a0136ad7ad243cccd36fdd471434b34af048ce4a3d0573a04fb962d54677f82b"
+    },
+    {
+      "path": "OptiScaler/upscalers/IFeature_Dx11.cpp",
+      "sha256": "ad294ded84e8a17e62f4d0cb3a6cfc6ab3b5ea418824b3afc343ac0f2f4bb99c"
+    },
+    {
+      "path": "OptiScaler/upscalers/IFeature_Dx11.h",
+      "sha256": "fe378c7bd5ed544b2974bd2a8a733c24c1ed01e78cc51a5a479b412230d0a7a9"
+    },
+    {
+      "path": "OptiScaler/upscalers/IFeature_Dx11wDx12.cpp",
+      "sha256": "35d38965225f1aa20625112a1890e85d6205adf773033f40e553de9bdd1f07f9"
+    },
+    {
+      "path": "OptiScaler/upscalers/IFeature_Dx11wDx12.h",
+      "sha256": "7e8a9ffc161fcb309d9c13a1d2eff19e93e0204150e0018dc5042d87f2db110e"
+    },
+    {
+      "path": "OptiScaler/upscalers/IFeature_Dx12.cpp",
+      "sha256": "76bdf475b972a9443cb5cca5be6c3315444db8b5c58f8be947fbcb76e2e1e1c9"
+    },
+    {
+      "path": "OptiScaler/upscalers/IFeature_Dx12.h",
+      "sha256": "68a1803b64dc63757c6e40eb074af62ad0412154e63b858dc79623e4cda7f4ed"
+    },
+    {
+      "path": "OptiScaler/upscalers/IFeature_Vk.cpp",
+      "sha256": "e34787cfeb046235d652be66ebb89f1a9d71347c5fa393c872758a7ecf128733"
+    },
+    {
+      "path": "OptiScaler/upscalers/IFeature_Vk.h",
+      "sha256": "24a0aaf42d9c81e283884bfec9e7bb6b9c884d656bd0765f23105471aeebe3cf"
+    },
+    {
+      "path": "OptiScaler/upscalers/IFeature_VkwDx12.cpp",
+      "sha256": "e072d064f252adc7c530f4336aaba5140238ee166ab861260ebeb5f545b85749"
+    },
+    {
+      "path": "OptiScaler/upscalers/IFeature_VkwDx12.h",
+      "sha256": "4fe92a7783aebcc7ca5668a1787b4571b6568591db93c4130ea9c752eb98de1b"
+    },
+    {
+      "path": "OptiScaler/upscalers/dlss/DLSSFeature.cpp",
+      "sha256": "53e310859160c9bdd25f1a011cffb898bbaf54576658fce3297bc9802e72aade"
+    },
+    {
+      "path": "OptiScaler/upscalers/dlss/DLSSFeature.h",
+      "sha256": "61f7593d6bf00cce76cfc4e59d7debe17235626deae7e26a67caab7fa9eeb3a5"
+    },
+    {
+      "path": "OptiScaler/upscalers/dlss/DLSSFeature_Dx11.cpp",
+      "sha256": "96cfb4b301f4026839005dac64bb50cef634c6b20483693c69c3390247cde108"
+    },
+    {
+      "path": "OptiScaler/upscalers/dlss/DLSSFeature_Dx11.h",
+      "sha256": "9b19748e28a0645d0037e8badb088ce7efa9f8dd61ebbb7f0f00dbdeb2aab917"
+    },
+    {
+      "path": "OptiScaler/upscalers/dlss/DLSSFeature_Dx12.cpp",
+      "sha256": "98db29ee2c79e3f44b4333623fcd5caea8e03900001f66a4c5c3cd0b290bc525"
+    },
+    {
+      "path": "OptiScaler/upscalers/dlss/DLSSFeature_Dx12.h",
+      "sha256": "675cd874f04b58c605dbd741badfdddc181923fd01ba4cc61b751230f943942d"
+    },
+    {
+      "path": "OptiScaler/upscalers/dlss/DLSSFeature_Vk.cpp",
+      "sha256": "d5b347f85ea93e92db23efd0d4a404add3078636b2527b8627d9f9282b3ed7dc"
+    },
+    {
+      "path": "OptiScaler/upscalers/dlss/DLSSFeature_Vk.h",
+      "sha256": "8a2cf60c0375ab159b792ea0d945bd8216600862e5a872ed1a0b9662b05003ac"
+    },
+    {
+      "path": "OptiScaler/upscalers/dlssd/DLSSDFeature.cpp",
+      "sha256": "646d91e87feb5a5afb850c9a13ec4c62a5e83927e11828018993f4c33f2157ea"
+    },
+    {
+      "path": "OptiScaler/upscalers/dlssd/DLSSDFeature.h",
+      "sha256": "7f898b274fbaccc4e245d225f1db317acf4b9982e4322c7689c09358e17a3090"
+    },
+    {
+      "path": "OptiScaler/upscalers/dlssd/DLSSDFeature_Dx11.cpp",
+      "sha256": "6fe8ef8318224a4e1ed17e2e21a8a02d84208d30852c2663df5d0f237888bda3"
+    },
+    {
+      "path": "OptiScaler/upscalers/dlssd/DLSSDFeature_Dx11.h",
+      "sha256": "8faf21ecdae16aca18ee74350753a02277979827d1c33b757ecc7c408888b1ed"
+    },
+    {
+      "path": "OptiScaler/upscalers/dlssd/DLSSDFeature_Dx12.cpp",
+      "sha256": "d90fa406e1057961d0f78d663b36ebfc6def3b2b7b700a98cf503432c70a036f"
+    },
+    {
+      "path": "OptiScaler/upscalers/dlssd/DLSSDFeature_Dx12.h",
+      "sha256": "9d78a9f95191b1a250d7d64786f877ea38a0782bdcce3351776868379573d253"
+    },
+    {
+      "path": "OptiScaler/upscalers/dlssd/DLSSDFeature_Vk.cpp",
+      "sha256": "8b100fa3ea74ea049c8506ef66a332dbcd5c6547e53c007bb762c29c1233110e"
+    },
+    {
+      "path": "OptiScaler/upscalers/dlssd/DLSSDFeature_Vk.h",
+      "sha256": "fe8ebcd5163c6b4a6a1079b648a9e3a0b3989bfa068359dfe5853d44d78e273b"
+    },
+    {
+      "path": "OptiScaler/upscalers/ffx/FFXFeature.cpp",
+      "sha256": "0118d4710a5b978118a9d4ffa03c243eb03628e642e47cf8cea20b37a9b7c5ce"
+    },
+    {
+      "path": "OptiScaler/upscalers/ffx/FFXFeature.h",
+      "sha256": "f211bb36b81da0c98c4af934705cce84e94a3c1933d5e05dc97fbbc61b07f962"
+    },
+    {
+      "path": "OptiScaler/upscalers/ffx/FFXFeature_Dx11On12.cpp",
+      "sha256": "29f5984283eab4aa7cc4ff8818e7fce2d86c2efbf3f981bd45f0092fcf23b179"
+    },
+    {
+      "path": "OptiScaler/upscalers/ffx/FFXFeature_Dx11On12.h",
+      "sha256": "2a785c66578468dbf66c7f44e37b1567df96c28e42fe816a41748d945a531d91"
+    },
+    {
+      "path": "OptiScaler/upscalers/ffx/FFXFeature_Dx12.cpp",
+      "sha256": "44861f8e08e1e40747c81f2fce814a4bd858ce031ffaee4adb9d6f927c09e5a9"
+    },
+    {
+      "path": "OptiScaler/upscalers/ffx/FFXFeature_Dx12.h",
+      "sha256": "e9c402e94dd6b83a4a3f6e8898d22968e13736ca36e89b6be55308c443b2b30f"
+    },
+    {
+      "path": "OptiScaler/upscalers/ffx/FFXFeature_Vk.cpp",
+      "sha256": "29198b3b498338d3c5a288c3e4a6a371813d0054941bff7d64a8f66226899af1"
+    },
+    {
+      "path": "OptiScaler/upscalers/ffx/FFXFeature_Vk.h",
+      "sha256": "934b98385f0ba822f1aa65ab3ff0bc051e7dda74ef3c90fd289c38c1decdd271"
+    },
+    {
+      "path": "OptiScaler/upscalers/ffx/FFXFeature_VkOn12.cpp",
+      "sha256": "d33ff2063d6031e9329a298730177b47794e1c436ea718b8c0e8e8aa447ddb6c"
+    },
+    {
+      "path": "OptiScaler/upscalers/ffx/FFXFeature_VkOn12.h",
+      "sha256": "4fec4f98b7ae48a8722fc899b68d3b3d43001eea3f6cac26445ca424fffb3c76"
+    },
+    {
+      "path": "OptiScaler/upscalers/fsr2/FSR2Feature.cpp",
+      "sha256": "c88ae2d32980d66eed1619107d8bd2b790dda680136ced420f7d699ed53d7833"
+    },
+    {
+      "path": "OptiScaler/upscalers/fsr2/FSR2Feature.h",
+      "sha256": "6a9ade9eab86ab46d9cf7fd33df59b904bacc6ab0be81370ca557bad060e6b5e"
+    },
+    {
+      "path": "OptiScaler/upscalers/fsr2/FSR2Feature_Dx11.cpp",
+      "sha256": "94981ca8e71195cf498ac67dadf7fe84ba61539ba4232715c0ae978316d2e45d"
+    },
+    {
+      "path": "OptiScaler/upscalers/fsr2/FSR2Feature_Dx11.h",
+      "sha256": "61676a26ee57fe7d9aff35dfec4677e0ae48d00a1f5b771d0b1d8694c3459139"
+    },
+    {
+      "path": "OptiScaler/upscalers/fsr2/FSR2Feature_Dx11On12.cpp",
+      "sha256": "b067b16198b7ffdae56b1c535d80bf468382696c0b4cd43c28ce7c3895567cd2"
+    },
+    {
+      "path": "OptiScaler/upscalers/fsr2/FSR2Feature_Dx11On12.h",
+      "sha256": "70e0d5e52712decc095e34bd494850f2b723ad20606e341cd64d053231250701"
+    },
+    {
+      "path": "OptiScaler/upscalers/fsr2/FSR2Feature_Dx12.cpp",
+      "sha256": "16da8cb3ca645ac5f398aa12a737b054a301538b969bc4b1109364e190b90236"
+    },
+    {
+      "path": "OptiScaler/upscalers/fsr2/FSR2Feature_Dx12.h",
+      "sha256": "f13a2e2d86f68d5bd9fbdb48decff0bf493185580545921c52885dab78920b88"
+    },
+    {
+      "path": "OptiScaler/upscalers/fsr2/FSR2Feature_Vk.cpp",
+      "sha256": "aaaab68fae7fe6e79a2c41e830ce25fbc4c7279f116bb6a761e43fb821edfc95"
+    },
+    {
+      "path": "OptiScaler/upscalers/fsr2/FSR2Feature_Vk.h",
+      "sha256": "8e58107f6cae23213d53ef1232f1e0d1560afadf1a053d414b52fad846b5e00f"
+    },
+    {
+      "path": "OptiScaler/upscalers/fsr2_212/FSR2Feature_212.cpp",
+      "sha256": "c0b06b41103985876f0146e2aba77361d518f6ce32f83f122d6511e6c6228eef"
+    },
+    {
+      "path": "OptiScaler/upscalers/fsr2_212/FSR2Feature_212.h",
+      "sha256": "98f8926e22728af35a5c6b20a40104917a0d552874a762b0ef791e74d87bf660"
+    },
+    {
+      "path": "OptiScaler/upscalers/fsr2_212/FSR2Feature_Dx11On12_212.cpp",
+      "sha256": "0b3d6cca56af658435d0eb951e47fae8b3a8d54725c5c82672361f4b14cebdb1"
+    },
+    {
+      "path": "OptiScaler/upscalers/fsr2_212/FSR2Feature_Dx11On12_212.h",
+      "sha256": "2b96deb44eb905092c0268d2e860ad4512ef45d0ebc569a1346c594dab73a7e5"
+    },
+    {
+      "path": "OptiScaler/upscalers/fsr2_212/FSR2Feature_Dx12_212.cpp",
+      "sha256": "5ee46adcf4414560f2c18df8c43f736192e272e3b7ea9bd06b6b11f36cd8b7ac"
+    },
+    {
+      "path": "OptiScaler/upscalers/fsr2_212/FSR2Feature_Dx12_212.h",
+      "sha256": "cc1f063962f8d994b82d3b0b1e61d56c000099aa212fdf923a1d7c03c0eb2dad"
+    },
+    {
+      "path": "OptiScaler/upscalers/fsr2_212/FSR2Feature_VkOnDx12_212.cpp",
+      "sha256": "ed5b09df35b5c41161d7b4ed440f0f0723b5e5aa77351eb50ce84a08df15a0ff"
+    },
+    {
+      "path": "OptiScaler/upscalers/fsr2_212/FSR2Feature_VkOnDx12_212.h",
+      "sha256": "e876b29a9607da9e9298000759d6badaa5a83966d154c564a64559039f0ee131"
+    },
+    {
+      "path": "OptiScaler/upscalers/fsr2_212/FSR2Feature_Vk_212.cpp",
+      "sha256": "420cfa387aff461f7bcc55968ce30cd3e766481b6b569839972eb2e105ee02c7"
+    },
+    {
+      "path": "OptiScaler/upscalers/fsr2_212/FSR2Feature_Vk_212.h",
+      "sha256": "9a7063ca5095e511493cd61316a90aa7f17dc89dfc687ac293f479d89f62cca3"
+    },
+    {
+      "path": "OptiScaler/upscalers/fsr31/FSR31Feature.cpp",
+      "sha256": "c02a210f486843ab8e3c1675ed7d5f7197557c44dc35ee8822e6198605f823ad"
+    },
+    {
+      "path": "OptiScaler/upscalers/fsr31/FSR31Feature.h",
+      "sha256": "16dc017b69b2e5137568a7bf86a9a0d3bdc27a93a8dca62f80dbfbdcf4e8c907"
+    },
+    {
+      "path": "OptiScaler/upscalers/fsr31/FSR31Feature_Dx11.cpp",
+      "sha256": "71551e0de83cb1a72c84f9bf6c9f867f6ff80b6d9914df7d91b356df6e5066a4"
+    },
+    {
+      "path": "OptiScaler/upscalers/fsr31/FSR31Feature_Dx11.h",
+      "sha256": "b3d201607ec7a1d0c20f43da1e0f25cb497998116014324e421979ff6120d527"
+    },
+    {
+      "path": "OptiScaler/upscalers/xess/XeSSFeature.cpp",
+      "sha256": "b9595aee70241df5a24fa174996f3a659814ac39a293d4692f1d2564d0058905"
+    },
+    {
+      "path": "OptiScaler/upscalers/xess/XeSSFeature.h",
+      "sha256": "2e1a9843e15843b83c7a077b1a632fa1c92afdc836862faf986d93bbb764e20c"
+    },
+    {
+      "path": "OptiScaler/upscalers/xess/XeSSFeature_Dx11.cpp",
+      "sha256": "abc495a60ee78b0767fc7b6b41868b94c3644fe66ca77bbd30085221ac8b123c"
+    },
+    {
+      "path": "OptiScaler/upscalers/xess/XeSSFeature_Dx11.h",
+      "sha256": "3601398e5ac96401151cb14ffbd570ee99870363f2ae4d125e5ac7da56e39c92"
+    },
+    {
+      "path": "OptiScaler/upscalers/xess/XeSSFeature_Dx11on12.cpp",
+      "sha256": "4fe5e6f1879d8c1d80545d240a278fc07a38c69c813a59d8cc4835dce6f178c3"
+    },
+    {
+      "path": "OptiScaler/upscalers/xess/XeSSFeature_Dx11on12.h",
+      "sha256": "997b544b38f7d08509940a5810b8eb75a4215a01b6dae9caf0a673a08e1219ea"
+    },
+    {
+      "path": "OptiScaler/upscalers/xess/XeSSFeature_Dx12.cpp",
+      "sha256": "6b5a28dcc8d36e0452d309a027e39647c66eebd748653afb704d1906d7f763e8"
+    },
+    {
+      "path": "OptiScaler/upscalers/xess/XeSSFeature_Dx12.h",
+      "sha256": "9e6371407be289789114c92d3a6c538bb7457bbabb769dafc0845ad920b246ea"
+    },
+    {
+      "path": "OptiScaler/upscalers/xess/XeSSFeature_Vk.cpp",
+      "sha256": "c6f69c1a54e64fad4ba6d42a356212db5854dd0764a632c14e9314040cc40967"
+    },
+    {
+      "path": "OptiScaler/upscalers/xess/XeSSFeature_Vk.h",
+      "sha256": "1ef5289a4036d4e6e3224dceaee9e150f0b33aded7065f29c0d0933626ad43d4"
     }
   ],
   "shaders": {
     "tracked_file_count": 241,
-    "all_bytes_match_r6": true,
-    "aggregate_paths_and_sha256": "3a1792c9f8eadb7ed3a181f7bb4cc379242c669c419c6ed0b9324f5e0621f5d5"
+    "all_bytes_match_r7": true
   },
+  "configuration": "All prior defaults/load/save preserved after removing only LowMemoryMode boolean addition and comments. SOURCE profile equal to R7. Package INI verified separately.",
   "reviewed_source_hashes": [
     {
-      "path": "OptiScaler/framegen/IFGFeature.cpp",
-      "identical_to_r6": true,
-      "sha256": "4931196c964e2061bb1e5295671b57f0ebd9f82d518012b1a539365d0782e5a5",
-      "baseline_sha256": "4931196c964e2061bb1e5295671b57f0ebd9f82d518012b1a539365d0782e5a5"
+      "path": "OptiScaler/Config.cpp",
+      "sha256": "75bc24de85e988fe467f74b1566d1fcbf9cbe2e514b01fe8a388a586a7942dab"
+    },
+    {
+      "path": "OptiScaler/Config.h",
+      "sha256": "f88f6d8b8a70c3422bd6a6eb2cb75fc1b851fd323d6da0c0d9aeec4174f4db01"
+    },
+    {
+      "path": "OptiScaler/OptiScaler.vcxproj",
+      "sha256": "2ed3df29af9a929ae15f04ace30a199cd3b2dee5c3b4db31c5d698964749c32b"
+    },
+    {
+      "path": "OptiScaler/OptiScaler.vcxproj.filters",
+      "sha256": "7274169d2d9193fbbb0374d86546eedc2d78beb81f838f2cbbcf99260980f34e"
     },
     {
       "path": "OptiScaler/framegen/IFGFeature.h",
-      "identical_to_r6": false,
-      "sha256": "4fe838c69822197ef26c09ee0e622b91a36068c5fe3b13ed4ec19a4ad4cc2e12",
-      "baseline_sha256": "9dd4d261f9fe493a61e3e6c07e438ca01b02b6a4024fa65f0230a6d0f154fff8"
+      "sha256": "625041affaa78116f9cae375ea4874f33b69ba9553b497845ab59e20b07a7723"
     },
     {
-      "path": "OptiScaler/framegen/IFGFeature_Dx12.h",
-      "identical_to_r6": false,
-      "sha256": "4d9c2aa40c684ff64c16019d37d630fba1fc3bf570f28fb91adda75265c01b14",
-      "baseline_sha256": "656a928f5efba99704a60481c756ba64c2876bd09861041313e235984970606e"
+      "path": "OptiScaler/framegen/xefg/XeFGCapacityPolicy.h",
+      "sha256": "f93f54b5009731854271f59e52ea8a3226f0a4796a33fb0f6d8d459826f27a23"
     },
     {
       "path": "OptiScaler/framegen/xefg/XeFG_Dx12.cpp",
-      "identical_to_r6": false,
-      "sha256": "9f0c730c22b409b658a78801ce2ccc4f88708da8df6147a6879a6130596640e8",
-      "baseline_sha256": "1797987cdaab5670faddfef2bcb12d09bba528382f5e4a11599c16b273d0bd49"
+      "sha256": "7d5906c0678e285743b5b0ce6ea0204d16c2267d9d6bbaf3df92bebdc00a9e23"
     },
     {
       "path": "OptiScaler/framegen/xefg/XeFG_Dx12.h",
-      "identical_to_r6": false,
-      "sha256": "20ad1be7b0d179594063b3c926a64e52bbf5b66c2a3f7798175bf0d5d38bc10a",
-      "baseline_sha256": "39067e947bbab467ea24201a7eca6b8f1077b25467473a8ea1da255ba44f64fe"
+      "sha256": "b840c6f6590f3419d7ee84fa1523c30743517ef850b06eb891812e7cf5243f16"
     },
     {
-      "path": "OptiScaler/framegen/xefg/XeFGRecovery.h",
-      "identical_to_r6": true,
-      "sha256": "3442606f886c2abe7cea8a34cf857798eca35786ba20c9cb5358736608e53235",
-      "baseline_sha256": "3442606f886c2abe7cea8a34cf857798eca35786ba20c9cb5358736608e53235"
+      "path": "OptiScaler/menu/menu_common.cpp",
+      "sha256": "6195b3f0b1f18cc53d91af06583f977e2b9bb8d318bfd706e9ec7febea269e89"
     },
     {
-      "path": "OptiScaler/proxies/FfxApi_Proxy.h",
-      "identical_to_r6": true,
-      "sha256": "b64be8a90eb79e0b91aa2c7f73392d661ac27ea25af147c7f1423ab669a5b25c",
-      "baseline_sha256": "b64be8a90eb79e0b91aa2c7f73392d661ac27ea25af147c7f1423ab669a5b25c"
+      "path": "OptiScaler/proxies/XeFGUnlock.h",
+      "sha256": "c27cf47103162d7f3a549b90229011198388339e0301c8a923dc176ce2af1058"
     },
     {
-      "path": "OptiScaler/proxies/FfxContextRegistry.h",
-      "identical_to_r6": true,
-      "sha256": "2406b2c8eeff65bf0cdec2f8a2277497169dd6e1fbf79f9a3ec10dc6f19271b6",
-      "baseline_sha256": "2406b2c8eeff65bf0cdec2f8a2277497169dd6e1fbf79f9a3ec10dc6f19271b6"
-    },
-    {
-      "path": "OptiScaler/resource_tracking/ResTrack_dx12.cpp",
-      "identical_to_r6": false,
-      "sha256": "988e5a86f35bede2f5ebebcd75a744b86d61415c68b19f77441eb68a4eb9b2b6",
-      "baseline_sha256": "5bff32a2bacda73f76696699464c85a72cc138c88750c9bf1e0206a0787fa5be"
-    },
-    {
-      "path": "OptiScaler/resource_tracking/ResTrack_dx12.h",
-      "identical_to_r6": true,
-      "sha256": "7c1a9a324097a259d5fddea5200b22c12bd3257f734c58f20f358fdeb02c8b25",
-      "baseline_sha256": "7c1a9a324097a259d5fddea5200b22c12bd3257f734c58f20f358fdeb02c8b25"
+      "path": "OptiScaler/proxies/XeFG_Proxy.h",
+      "sha256": "29895391df19fed7a40121c242f451a324b78751282126d25777551fd9ff752f"
     }
   ],
   "preserved_configuration_intent": [
-    "Intel XeFG only; no DLSS5/NR or additional FG stacking.",
-    "Upscale ratio 1.5, original HDR/exposure/sharpening/FSR profile and pacing source preserved.",
-    "Initial selected total 3x and maximum total 6x remain; no automatic multiplier or resolution reduction."
+    "Intel XeFG, default total 3x, max total 6x, ratio1.5, FSR4 preset1, HDR/color/exposure/sharpening preserved.",
+    "Existing R7 lifetime/progress/resource tracking and pacing implementations byte-identical.",
+    "DLSS5/NR and new FG/mod stacking excluded."
   ],
   "intentional_behavior_changes": [
-    "Generation-bounded retirement retains newly Reset/re-recorded command lists until their own submission/discard evidence; this changes tracking safety, not rendering formulas.",
-    "Progress fence markers and allocation/lifecycle/timing diagnostics add observation work and can have unmeasured real-device overhead.",
-    "Startup allocation-observation opt-out defaults enabled and does not alter Intel FG, output count, shaders or quality settings."
+    "Explicit 3x/4x selections use shared 4x startup capacity including existing U4 override; U3/U5 retain supported maximum.",
+    "Selections above initialized capacity remain pending without out-of-capacity SDK call; save/restart applies high settings.",
+    "Optional SDK capacity readback and startup heap-requirement diagnostics are new."
   ],
   "limits": [
-    "Final INI/payload bytes and runtime DLL hashes are verified separately by PACKAGE_AUDIT.json.",
-    "Source hashes identify the exact reviewed source contents; source changes after this report require a new audit.",
-    "No gameplay, image comparison, GPU overhead or complete Dogtown recovery is established by these checks."
+    "No actual GPU/gameplay, resident VRAM saving, image comparison, Psycho correction or complete Dogtown recovery established.",
+    "Code unchanged does not establish bit-identical rendering after altered SDK initialization.",
+    "Final package/runtime hashes and configuration audited separately."
   ]
 }

@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
-  "review_date": "2026-09-26T16:33:31.571152+00:00",
-  "scope": "R7 selective source review for persistent Night City to Dogtown degradation. Preserve Intel XeFG, ratio 1.5, color/HDR/upscaler profile and unlocked 6x. No proof of complete gameplay recovery.",
+  "review_date": "2026-09-26T18:53:55.924775+00:00",
+  "scope": "R8 selective startup-capacity reduction for explicit Intel XeFG 3x/4x use, retaining R7 safety and image profile. Repository-head findings below retain their original R7 review timestamps, not a new latest-head audit.",
   "repositories": [
     {
       "repository": "https://github.com/optiscaler/OptiScaler",
@@ -107,7 +107,7 @@
       "Header L300-308 and guide L1032-1053: last status has framesPresented, frameGenResult and isFrameGenEnabled. framesPresented includes rendered frames; every Present including DXGI_PRESENT_TEST updates status. API success alone is not generated-frame proof.",
       "Guide L860: Hudless texture format must match backbuffer. No process-global immutable format requirement was found; input transitions still need current-frame consistency.",
       "Guide L1058-1084: resize/destroy require tagging-work completion and no concurrent context use. Recovery must retain R5 lifetime protections.",
-      "Header L463-483: initial maxInterpolatedFrames bounds later selection; frequent SetNumInterpolatedFrames may compile/reallocate. Retain initialized 6x capability; required heap sizes are not measured resident allocation."
+      "Initial maxInterpolatedFrames bounds later SetNumInterpolatedFrames. R8 separates advertised maximum (package 6x) from initialized capacity (4x for explicit 2x-4x with LowMemoryMode). Higher requests are saved for restart, not sent beyond initialized capacity. Actual capacity is read back; heap requirements are not measured resident allocation."
     ]
   },
   "issue_evidence": [
@@ -211,5 +211,13 @@
     "Targeted official OptiScaler Dogtown search found no transferable code-backed patch. Older Nukem Dogtown reports use a different FSR provider and provide no Intel correction.",
     "No force Evict/MakeResident cycle, priority manipulation, synthetic byte purge, RAM offload or automatic quality/multiplier reduction was adopted.",
     "The official latest head changed after R6 review; donor, nightly artifact and Intel release remained as recorded. Existing prior-reviewed commit facts above are historical unless explicitly rechecked."
-  ]
+  ],
+  "r8_capacity_review": {
+    "sdk_pin": "de0fb9c1c510661c571164e1418ceca8101dab69",
+    "baseline": "R7",
+    "runtime_dll_changed": false,
+    "binary_finding": "Pinned XeFG 1.3.1.78 initialization reads U4 settings override ahead of passed maxInterpolatedFrames; R8 changes only existing verified U4 immediate to selected startup capacity. U3/U5 retain configured capability.",
+    "new_memory_policy": "Explicit selections up to 4x share initialized 4x capacity; 5x/6x, Auto and LowMemoryMode=false use full configured capacity on process startup.",
+    "validation_limit": "No Radeon residency, FPS, Psycho image quality, or actual Dogtown recovery measured in this environment."
+  }
 }

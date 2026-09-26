@@ -1,19 +1,27 @@
 {
   "repository": "https://github.com/Coldwood1026/OptiScalerDp4aUnlock",
   "commit": "9eea95bba9fda7121f214d2eba358423be598d7e",
-  "patch_sha256": "c8f1be6971d3a512af4667aa2a2771020ca6341c72b59d4523413db9d7ce0c38",
+  "patch_sha256": "2d138d65ef2155ac3cbbe0593516cf1758ae2e02277c92fdce57d7b3c03df6b1",
   "files": {
     "OptiScaler/Config.cpp": {
       "before_sha256": "abba9b5a3db81e9b2d38c92c23796e0365cdd62b11b8abed5cdb3b68080e2a1d",
-      "after_sha256": "dce598db7b8d16b294164b897d90e80c3ea5cc78b9db02495c19b005dc88c9f7"
+      "after_sha256": "75bc24de85e988fe467f74b1566d1fcbf9cbe2e514b01fe8a388a586a7942dab"
     },
     "OptiScaler/Config.h": {
       "before_sha256": "2b5a70c3c25fffe98886685ba38e29f1b76ca5c56c9786f245d7aae85c11fbae",
-      "after_sha256": "e5265d73980ef51db84dd7734be430ae7d08a1ead91e74aacc253d0488b8aa6c"
+      "after_sha256": "f88f6d8b8a70c3422bd6a6eb2cb75fc1b851fd323d6da0c0d9aeec4174f4db01"
     },
     "OptiScaler/NVNGX_Parameter.cpp": {
       "before_sha256": "854564ee8d3993aa981f9cb298a283af435ed990bd3bfd4d40ad4f97217ab26f",
       "after_sha256": "44ed999f681ed821c0019d6c69fcbb73e2d0790dd93565ba2924387274e29d20"
+    },
+    "OptiScaler/OptiScaler.vcxproj": {
+      "before_sha256": "f57a089db0ea5400d4d6348df6ffe236056fb4272b8b69aa07ce292c38889ccf",
+      "after_sha256": "2ed3df29af9a929ae15f04ace30a199cd3b2dee5c3b4db31c5d698964749c32b"
+    },
+    "OptiScaler/OptiScaler.vcxproj.filters": {
+      "before_sha256": "c0d0b1b070c73efa82dc8dec1cb332cd745ac631f7bd27157ea75d57a9e0dc37",
+      "after_sha256": "7274169d2d9193fbbb0374d86546eedc2d78beb81f838f2cbbcf99260980f34e"
     },
     "OptiScaler/Source.def": {
       "before_sha256": "e4f5f8afe9fef5d69a7f9acb72c166cb4392b0b83fea5e5ab395b73987ee3ecf",
@@ -37,7 +45,7 @@
     },
     "OptiScaler/framegen/IFGFeature.h": {
       "before_sha256": "771d61b12fb2050d7410321fa4593784ca7454f0b05160ddaab33e3cca93dd68",
-      "after_sha256": "4fe838c69822197ef26c09ee0e622b91a36068c5fe3b13ed4ec19a4ad4cc2e12"
+      "after_sha256": "625041affaa78116f9cae375ea4874f33b69ba9553b497845ab59e20b07a7723"
     },
     "OptiScaler/framegen/IFGFeature_Dx12.cpp": {
       "before_sha256": "947a9f55a0fedccc773598f295d1147d7f5c4e7dc96a23f8308fae6a22392752",
@@ -51,17 +59,21 @@
       "before_sha256": null,
       "after_sha256": "6aec637809e6f2a8c026fb50490d431c9d451e505cc6bedc73ff543c2cffa63c"
     },
+    "OptiScaler/framegen/xefg/XeFGCapacityPolicy.h": {
+      "before_sha256": null,
+      "after_sha256": "f93f54b5009731854271f59e52ea8a3226f0a4796a33fb0f6d8d459826f27a23"
+    },
     "OptiScaler/framegen/xefg/XeFGRecovery.h": {
       "before_sha256": null,
       "after_sha256": "3442606f886c2abe7cea8a34cf857798eca35786ba20c9cb5358736608e53235"
     },
     "OptiScaler/framegen/xefg/XeFG_Dx12.cpp": {
       "before_sha256": "9ea89da71cd336ff85b7b41a7b119cdf4a4c892b7478fb37d618bd5ef3f151e9",
-      "after_sha256": "9f0c730c22b409b658a78801ce2ccc4f88708da8df6147a6879a6130596640e8"
+      "after_sha256": "7d5906c0678e285743b5b0ce6ea0204d16c2267d9d6bbaf3df92bebdc00a9e23"
     },
     "OptiScaler/framegen/xefg/XeFG_Dx12.h": {
       "before_sha256": "be231c40c22d20e7f2d6597bca8bf8c64eaa88334874fe2808949ab5b3784748",
-      "after_sha256": "20ad1be7b0d179594063b3c926a64e52bbf5b66c2a3f7798175bf0d5d38bc10a"
+      "after_sha256": "b840c6f6590f3419d7ee84fa1523c30743517ef850b06eb891812e7cf5243f16"
     },
     "OptiScaler/hooks/D3D12_Hooks.cpp": {
       "before_sha256": "507b6f140323222c0c9685f155e9dde418082666bc454548ad0093b1fd5879ed",
@@ -131,6 +143,10 @@
       "before_sha256": "cf233db23c3860a182522d643ce71a378e0fdb0fe7266b5cb0541298d3f7a6df",
       "after_sha256": "e2e8f4fce286081bec3bda61c70823322307615bffe6b83c6782be2e8a4cf724"
     },
+    "OptiScaler/menu/menu_common.cpp": {
+      "before_sha256": "4914402ad52202b6d2bcabdd1463f2f1463a2da32a5d5e85daa4774fac1431d6",
+      "after_sha256": "6195b3f0b1f18cc53d91af06583f977e2b9bb8d318bfd706e9ec7febea269e89"
+    },
     "OptiScaler/misc/GpuAllocationDiagnostics.h": {
       "before_sha256": null,
       "after_sha256": "34e188d3ddced329d24f5280a2d2c2d1c049cb8b223c665f889c050155507a85"
@@ -185,7 +201,11 @@
     },
     "OptiScaler/proxies/XeFGUnlock.h": {
       "before_sha256": "b0ffad609f3a9c1ba85d8c60eba482eb34012ba96f8933dec2f5984f58d545b9",
-      "after_sha256": "96032aa374bc6800317d72cb44ac14b7b803b8ca2e00e800bb55b0d80e5cf762"
+      "after_sha256": "c27cf47103162d7f3a549b90229011198388339e0301c8a923dc176ce2af1058"
+    },
+    "OptiScaler/proxies/XeFG_Proxy.h": {
+      "before_sha256": "09702b1f1cffeece1219d53523743000aa468daa822c6b0168531cdaf226fa2f",
+      "after_sha256": "29895391df19fed7a40121c242f451a324b78751282126d25777551fd9ff752f"
     },
     "OptiScaler/proxies/XeLLUnLock.h": {
       "before_sha256": "88dcad868b53a69455d14f82ca3d0938632b34e9297a22973b851f036e25cafd",
@@ -279,7 +299,7 @@
     "intel_fg_sha256": "ec5e0c65e075570c6ede72618bb666d0be0c2e10b2ea9762c0fe8cb8e375ab27",
     "intel_xell_sha256": "d2030dcd694fda8f2ec7e044b13e6db8f0b56d4ba9113a5efad334e3f3ded8c7"
   },
-  "regression_baseline_builder": "d2ea5898907cb87fe5049c0447f335fd86d50f2d",
-  "revision": "r7",
+  "regression_baseline_builder": "50a26d527066850079d8cd832dbf37946264c9fe",
+  "revision": "r8",
   "previous_builder": "138c7f805e9c09528f2d95da9793d1404d828f52"
 }

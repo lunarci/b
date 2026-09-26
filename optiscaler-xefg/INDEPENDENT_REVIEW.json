@@ -1,175 +1,108 @@
 {
-  "schema_version": 2,
-  "revision": "R7",
-  "reviewer": "r5_independent_review",
-  "reviewed_at_utc": "2026-09-26T16:38:21.991700+00:00",
+  "schema_version": 3,
+  "revision": "R8",
+  "reviewer": "r8_independent_review",
+  "reviewed_at_utc": "2026-09-26T18:57:51.628715+00:00",
   "result": "PASS_SOURCE_AND_CPU_FAULT_TESTS",
-  "scope": "Independent adversarial review of all 14 R7 production changes against deployed R6. Production and tests were read only; this reviewer authored only this report.",
-  "baseline_source_commit": "5cd4f61dd44c03eb2bfa9c54eaad4dd22607b9fb",
-  "baseline_builder_commit": "138c7f8",
-  "reviewed_source_commit": "b7a125652f5983f13f69f1bf6b35eb9d73caca37",
+  "scope": "Independent adversarial review of the R8 production delta against deployed R7, followed by independent execution of the final production-extraction capacity tests and existing lifetime harness. Production source and tests were read only; this reviewer authored only this report.",
+  "baseline_source_commit": "b7a125652f5983f13f69f1bf6b35eb9d73caca37",
+  "baseline_builder_commit": "50a26d527066850079d8cd832dbf37946264c9fe",
+  "reviewed_source_commit": "2839b75aea9def64d0faea11d621dd23cda32db4",
+  "source_hash_normalization": "CRLF to LF",
   "blocking_findings_remaining": [],
+  "resolved_review_findings": [
+    {
+      "finding": "A new dynamic context with an unsupported preserved request could remain without a confirmed active interpolation count.",
+      "resolution": "Dispatch applies one legal fallback count when no active count exists, keeps the requested config unchanged, and subsequently retains the confirmed active count for requests above the initialized capacity. The extracted production guard tests this startup path."
+    },
+    {
+      "finding": "A failed GetProperties call could discard a successfully patched advertised capability and leave a stale one-frame ceiling.",
+      "resolution": "Both swapchain creation paths initialize the supported ceiling from the successfully applied unlock limit before querying properties. Query success may supplement that capability; query failure does not remove it."
+    },
+    {
+      "finding": "Legacy SDKs without SetNumInterpolatedFrames require restart for lower as well as higher multiplier changes.",
+      "resolution": "The menu distinguishes dynamic SDK support, displays restart information for changed legacy requests, preserves their requested counts, and avoids a redundant live FG toggle."
+    },
+    {
+      "finding": "A request outside provider capability cannot be repaired by a restart alone.",
+      "resolution": "Unsupported requests receive a separate choose-a-supported-multiplier message instead of an inaccurate restart-only instruction."
+    }
+  ],
   "verified_checks": [
-    "Concrete pending-list race repaired: Before captures a monotonic generation watermark under the pending lock; each native submission carries its own local ticket; After retires matching identities only through that generation. A later Reset/re-recorded generation cannot be mistaken for the older submitted recording.",
-    "Generation retirement remains conservative for late tags, empty tickets, multiple lists and overlapping calls. No lock spans native Execute, no per-call heap allocation or shared/TLS ticket was added, and later generations retain their own submission/discard requirement.",
-    "Progress callbacks follow actual native Execute and After while submission admission is alive. Polling also acquires submission admission. Fixed entries refer only to already-held queues, with at most eight separately owned diagnostic fences and one unresolved marker per queue.",
-    "Progress signals use fresh start timestamps, at least 1000 ms between successful signal starts per queue, and bounded creation attempts. Marker failure or UINT64_MAX stops that probe; neither event changes game/FG state or grants cleanup permission. Driver methods run outside the lifetime registry mutex.",
-    "Diagnostic fence release still requires the separate existing full-GPU-drain and closed-admission teardown proof. Soft resets retain probes. Marker completion is never substituted for lifetime/allocator fences or all-GPU-idle evidence.",
-    "Tracked Release keeps the existing temporary AddRef/probe/metadata-cleanup/final-Release order and mutex coverage. Added timing shares one 1/64 sampling choice across stages; no speculative lifetime rewrite was introduced.",
-    "Allocation descriptors and immediate caller module/RVA are copied from existing creation boundaries without additional GetDesc, QI or allocation-size queries. GPU objects are not retained by diagnostics; generation-checked notifier accounting and installer/uninstaller failure behavior are preserved.",
-    "The fixed 4096-slot detail workspace is sorted after the ledger copy lock is released. Bounded top8 live and positive-net-growth groups use matching metadata keys; only complete successful snapshots advance the growth baseline. Failed locks, disappearing/recreated groups and timestamp rewind are handled explicitly.",
-    "GpuAllocationTracking is a startup-only diagnostic opt-out, initialized before installation. Disabled observation skips new detours and observation-side driver/COM calls; existing destruction callbacks still retire safely.",
-    "Monitor output distinguishes observed LOCAL budget/usage, tracked live allocation estimates, creation age, net growth, cumulative releases, native Present CPU time and sampled queue progress. Every output line consumes the shared 1024-line cap; detail output shows at most two live and two growth groups.",
-    "No arbitrary game-resource Release, eviction, flushing, RAM-spill policy, forced resource destruction or new CPU fence wait was introduced.",
-    "All 241 tracked shader paths and all seven FG input files match R6 byte-for-byte. Config changes only add the diagnostic startup option; the 1.5 upscale ratio, color/HDR/exposure formulas, selected/maximum multiplier behavior and pacing algorithms are preserved. Exact body/file evidence is in QUALITY_REVIEW.json."
+    "The production pure policy selects capacity 3 interpolated frames (4X total) for explicit 2X/3X/4X requests with LowMemoryMode enabled, subject to actual support. Explicit 5X/6X, Auto and LowMemoryMode disabled reserve the full supported startup capacity. Legacy SDK startup behavior uses the selected count.",
+    "Both swapchain creation paths use the same policy. The process-fixed successful U4 allocation override is also used for C++ initialization parameters, preventing changes made after DLL loading from claiming a capacity the already patched SDK cannot honor.",
+    "The U4 patch immediate alone uses selected initialization capacity. U3/U5 preserve the configured advertised ceiling. Successful patch metadata distinguishes initial capacity from selectable support; failure does not publish applied metadata. Existing PE build and byte guards and transactional rollback remain.",
+    "Initialization readback records valid actual capacity within the supported ceiling, otherwise conservatively retains the requested capacity. Dynamic contexts reset the cached active count so a reused provider must apply its selected count again. Legacy contexts record their initialized active count directly.",
+    "Live 3X/4X changes call the existing SDK setter only within initialized and supported limits. Requests for 5X/6X in a 4X-capacity session remain saved selections and do not issue an unsupported setter call or replace the current active count. Warnings occur only when a rejected request changes.",
+    "The menu uses the selected config for its custom multiplier field and the confirmed active count for the current-state message. A pending 5X/6X choice is not overwritten by the lower active count. Save settings and restart are explicitly required for capacity growth.",
+    "Startup heap queries are labeled as SDK requirements rather than resident VRAM. They are not used as cleanup permission or a claim of measured allocation savings, and no query was added to the per-frame path.",
+    "No capacity change performs hot swapchain destruction/recreation, game-resource Release, eviction, forced cleanup, RAM spill, GPU flush or a new blocking fence wait. Existing R7 lifetime, submission admission, resource tracking, recovery and pacing paths remain structurally unchanged apart from initialization-capacity metadata resets.",
+    "Independent byte comparison to R7 found all 241 tracked shader paths, 12 FG input files and 11 selected lifetime/tracking/recovery/pacing files unchanged. This preserves their rendering code, not a measured guarantee of identical image quality on hardware.",
+    "The shipped Intel libxess_fg.dll SHA-256 and each of the five unlock patch RVAs independently matched the production expected bytes. The CPU patcher harness additionally checks low/full capacity, invalid override inputs, idempotence and rollback faults."
   ],
   "independently_executed_checks": [
     {
-      "command": "python3 tests/r7_progress/run.py /workspace/scratch/29657caf7bd8/r7-source",
+      "command": "python3 optiscaler-xefg/tests/r8_capacity/run.py ../r8-source",
       "result": "PASS",
-      "coverage": "Exact pinned deployed-R6 negative control requires the late-After/new-generation assertion failure; actual R7 methods test marker cadence, slow creation, pending coalescing, device-removed sentinel, Signal/create failures, held admission, separate teardown proof and context recreation."
+      "coverage": "Actual policy; extracted runtime guard, initialization readback and menu; complete production DLL patcher with Windows/PE mocks. Covers 3X/4X switching, pending 5X/6X, unsupported startup fallback, Auto, opt-out, unavailable APIs, legacy restart UI, invalid inputs, SDK failure, U4 write/readback failure, pacing failure and transaction rollback."
     },
     {
-      "command": "python3 tests/r7_tracking/run.py /workspace/scratch/29657caf7bd8/r7-source",
+      "command": "python3 ../r8-builder/optiscaler-xefg/tests/r4_resource_safety/lifecycle_test.py .",
       "result": "PASS",
-      "coverage": "Actual Execute hook in both branches forwards once outside registry lock, passes the local generation ticket, and holds admission through After and progress. Actual tracked Release preserves temporary pin, cleanup, final release and shared 1/64 sampling."
+      "coverage": "Existing production lifecycle gate, actual Execute/Reset/pending methods, native Present lifetime, provider-disable rollback and context resume."
     },
     {
-      "command": "python3 tests/r7_allocation/run.py /workspace/scratch/29657caf7bd8/r7-source",
+      "command": "git diff --check",
       "result": "PASS",
-      "coverage": "Nine subchecks cover actual COM observer/adapter and installer boundaries, balanced temporary references, notifier failure/ABA/pool limits, copied descriptors and unchanged query counts, startup-off, concurrent ledger snapshots, top8 live/growth, baseline intervals, module/RVA classification and transactional detach rollback."
+      "coverage": "Production source whitespace/error check at frozen commit."
     },
     {
-      "command": "python3 tests/long_session/run.py /workspace/scratch/29657caf7bd8/r7-source",
+      "command": "Independent Python PE section mapping and SHA-256 comparison of r7-package/OptiScaler/libxess_fg.dll",
       "result": "PASS",
-      "coverage": "Production state/timing and extracted actual log formatting; pressure hysteresis, observed memory windows, live2/growth2 groups, missing baseline, detail cadence and total 1024-line cap."
-    },
-    {
-      "command": "python3 tests/r4_resource_safety/lifecycle_test.py /workspace/scratch/29657caf7bd8/r7-source",
-      "result": "PASS",
-      "coverage": "Actual lifecycle/Execute/Reset/pending methods including empty ticket, Reset-retag-before-old-After and overlapping selective batches; complete Present/Present1 lifetime plus provider-disable rollback and context resume."
-    },
-    {
-      "command": "git -C /workspace/scratch/29657caf7bd8/r7-source diff 5cd4f61dd44c03eb2bfa9c54eaad4dd22607b9fb --check",
-      "result": "PASS",
-      "coverage": "Whitespace/error check of final production change."
+      "coverage": "SHA-256 ec5e0c65e075570c6ede72618bb666d0be0c2e10b2ea9762c0fe8cb8e375ab27; U1 0x20DA4F, U2 0x1A5DE4, U3 0x1A517D, U4 0x1A45C2, U5 0x20973B expected bytes."
     }
   ],
   "preservation_verification": {
-    "quality_report_sha256": "9376b2ded2a76c0c7ce38e6a29f60a8bc7d6a209cbd682651213b4a1de77b75a",
-    "all_quality_report_core_input_and_source_hashes_match": true,
-    "shader_paths_independently_compared_to_r6": 241,
-    "shader_bytes_unchanged": true,
-    "config_delta": "Diagnostics.GpuAllocationTracking startup option only; Config files are intentionally not byte-identical."
+    "shader_paths_compared_to_r7": 241,
+    "fg_input_files_compared_to_r7": 12,
+    "selected_lifetime_tracking_recovery_pacing_files_compared_to_r7": 11,
+    "all_compared_bytes_unchanged": true,
+    "config_delta": "LowMemoryMode option and capacity explanatory comments; package keeps R7 rendering profile separately verified by builder."
   },
   "runtime_limitations": [
-    "No Cyberpunk 2077, Night City-to-Dogtown transition, real Intel XeFG execution, displayed-FPS measurement, image comparison or long-session recovery was performed by this reviewer.",
-    "CPU harnesses execute production logic with explicit fake SDK/COM/driver boundaries. They do not establish Windows Detours ABI/runtime behavior, GPU scheduling, real memory pressure, driver latency or device-specific performance; separate Windows CI and game validation are required.",
-    "The R6 log shows memory-pressure/native-Present correlation and substantially different LOCAL-budget and tracked-live changes. It does not prove that the generation race caused the reported slowdown or that 2.5 GiB of cumulative releases is instantly reclaimable, unused or leaked VRAM.",
-    "Progress covers only the latest tracked XeFG queues. A completed marker proves progress through its position on that queue, not all-queue GPU idleness, all game submission coverage, global resource safety or FPS recovery. Signal-to-first-CPU-poll time is an observation upper bound, not GPU execution duration.",
-    "Allocation accounting remains partial: selected creation APIs, allocations at least 1 MiB, hooks installed after startup, notifier support, fixed 4096 capacity and immediate caller attribution. Live estimates and provisional peaks are not resident VRAM; object age does not show unused resources. Growth is net change between successful snapshots, not intervening churn.",
-    "Diagnostics have unmeasured real-device overhead. Eligible allocations take a timestamp; copying up to 4096 entries holds the existing ledger lock briefly and can delay Track/Retire. Sorting/logging and bounded driver CreateFence/Signal/GetCompletedValue calls cost CPU time and may themselves stall inside a driver. No lock-free or zero-overhead claim is made.",
-    "Fixed CPU workspaces and the notifier callback module deliberately remain alive until process exit, without retaining game GPU references. Startup allocation opt-out permits a controlled overhead comparison after restart.",
-    "Polling is rate-limited by cycle start, and snapshot/timing samples can be delayed, skipped or approximately split across counter windows. Existing inherited GPU/UI waits remain; this change does not eliminate every stall or repair arbitrary device removal.",
-    "The generation watermark can conservatively retain a recording created after the snapshot until its own later observed submission/reset; avoiding false retirement is intentional. No timeout frees such recordings.",
-    "Source checks preserve configured rendering algorithms but cannot establish identical visual output or full gameplay recovery on hardware. Final payload/INI/binary identity is audited separately by the builder."
+    "No Cyberpunk 2077, real Intel XeFG execution, RX 9070 XT measurement, Dogtown transition, long-session FPS recovery or visual comparison was performed by this reviewer.",
+    "Lower declared and patched maximum capacity is implemented and tested as a contract. Actual VRAM savings and performance improvement depend on the Intel runtime and driver and must be measured; SDK heap requirements are not physical residency or guaranteed savings.",
+    "R8 does not repair Cyberpunk RT Lighting Psycho engine allocations and does not establish a Psycho-preserving solution to the reported Dogtown slowdown. The user observed that Ultra restores performance, but this review does not reproduce or independently measure that observation.",
+    "A 4X-capacity session retains 5X/6X as selectable saved requests. Applying them requires Save settings and a game restart. Returning from a full-capacity session to 3X/4X does not free that capacity live; a subsequent restart selects the reduced capacity.",
+    "The binary unlock remains tied to the recognized pinned Intel runtime. Unknown builds or patch failures retain native capability rather than receiving unvalidated byte edits. This is not support for arbitrary future SDK versions.",
+    "CPU harnesses use explicit fake SDK, COM, driver and UI boundaries. They do not prove Windows ABI/hooking behavior, GPU scheduling, driver allocation behavior, steady-state overhead, device-loss recovery or memory-pressure recovery. Windows CI and final payload validation are separate build gates.",
+    "Pre-existing SetNumInterpolatedFrames failure retry behavior and inherited waits remain; this change does not eliminate every possible SDK/driver stall or retry. No arbitrary 2.5 GiB resource reclamation is attempted.",
+    "Source checks show unchanged algorithms in compared files. Real rendered output, FPS and latency are not guaranteed identical without an on-device A/B test."
   ],
   "reviewed_source_sha256": {
-    "OptiScaler/Config.cpp": "dce598db7b8d16b294164b897d90e80c3ea5cc78b9db02495c19b005dc88c9f7",
-    "OptiScaler/Config.h": "e5265d73980ef51db84dd7734be430ae7d08a1ead91e74aacc253d0488b8aa6c",
-    "OptiScaler/framegen/IFGFeature.h": "4fe838c69822197ef26c09ee0e622b91a36068c5fe3b13ed4ec19a4ad4cc2e12",
-    "OptiScaler/framegen/IFGFeature_Dx12.h": "4d9c2aa40c684ff64c16019d37d630fba1fc3bf570f28fb91adda75265c01b14",
-    "OptiScaler/framegen/xefg/XeFG_Dx12.cpp": "9f0c730c22b409b658a78801ce2ccc4f88708da8df6147a6879a6130596640e8",
-    "OptiScaler/framegen/xefg/XeFG_Dx12.h": "20ad1be7b0d179594063b3c926a64e52bbf5b66c2a3f7798175bf0d5d38bc10a",
-    "OptiScaler/hooks/D3D12_Hooks.cpp": "759b5d6b6a0654e2746c763cb01816eaa84417173a87363d2583640147a159db",
-    "OptiScaler/hooks/GpuAllocationHooks.h": "e829f4784a8c2a829e4966559fa053f231c4a91953d90945e0ecdebafaf694a7",
-    "OptiScaler/misc/GpuAllocationDiagnostics.h": "34e188d3ddced329d24f5280a2d2c2d1c049cb8b223c665f889c050155507a85",
-    "OptiScaler/misc/LongSessionMonitor.h": "9975168623cf40e2c8c6208769f57a1ab3b129bbae5c113664ddade8b810d6a9",
-    "OptiScaler/misc/LongSessionState.h": "3b960da0e593dcec815217185307ef407f684e623d10a4b7c84f5716e22fd421",
-    "OptiScaler/misc/LongSessionTiming.h": "15be9f1f2dca0d5b6d8cff4b25619f3497d051bcec0e9fb608696a6290b2f49c",
-    "OptiScaler/misc/XeFGProgressDiagnostics.h": "d9edc69d00f1622ed93af0912f63df4cc138f89e149255bec840bbbc10ac6075",
-    "OptiScaler/resource_tracking/ResTrack_dx12.cpp": "988e5a86f35bede2f5ebebcd75a744b86d61415c68b19f77441eb68a4eb9b2b6"
+    "OptiScaler.ini": "891d1e8d8d427d11e8f13d545abad6464551f1606a134360ed3e26865751a365",
+    "OptiScaler/Config.cpp": "75bc24de85e988fe467f74b1566d1fcbf9cbe2e514b01fe8a388a586a7942dab",
+    "OptiScaler/Config.h": "f88f6d8b8a70c3422bd6a6eb2cb75fc1b851fd323d6da0c0d9aeec4174f4db01",
+    "OptiScaler/OptiScaler.vcxproj": "2ed3df29af9a929ae15f04ace30a199cd3b2dee5c3b4db31c5d698964749c32b",
+    "OptiScaler/OptiScaler.vcxproj.filters": "7274169d2d9193fbbb0374d86546eedc2d78beb81f838f2cbbcf99260980f34e",
+    "OptiScaler/framegen/IFGFeature.h": "625041affaa78116f9cae375ea4874f33b69ba9553b497845ab59e20b07a7723",
+    "OptiScaler/framegen/xefg/XeFGCapacityPolicy.h": "f93f54b5009731854271f59e52ea8a3226f0a4796a33fb0f6d8d459826f27a23",
+    "OptiScaler/framegen/xefg/XeFG_Dx12.cpp": "7d5906c0678e285743b5b0ce6ea0204d16c2267d9d6bbaf3df92bebdc00a9e23",
+    "OptiScaler/framegen/xefg/XeFG_Dx12.h": "b840c6f6590f3419d7ee84fa1523c30743517ef850b06eb891812e7cf5243f16",
+    "OptiScaler/menu/menu_common.cpp": "6195b3f0b1f18cc53d91af06583f977e2b9bb8d318bfd706e9ec7febea269e89",
+    "OptiScaler/proxies/XeFGUnlock.h": "c27cf47103162d7f3a549b90229011198388339e0301c8a923dc176ce2af1058",
+    "OptiScaler/proxies/XeFG_Proxy.h": "29895391df19fed7a40121c242f451a324b78751282126d25777551fd9ff752f"
   },
   "reviewed_test_sha256": {
-    "tests/long_session/long_session_state_test.cpp": "6cd28c682dee64429e629fd7f53f6a5ba7528b783aa205f9f59e3ba9edeaa18a",
-    "tests/long_session/monitor_log_test.py": "e77e1917ef2a05e56b6760500bdccc476dffeba400d020df9312c7f8a02b1300",
-    "tests/long_session/run.py": "bffc796ca9648f717ac79ccb4ae4a945592cf5efe1d531f10d214adf106f9645",
+    "tests/r8_capacity/run.py": "032855a3ccbbc0aa84a25de3f48a4ace598f329b34de5b8d7ebc6a07d43769bf",
+    "tests/r6_recovery/run.py": "f5d41c4942a9713e65c2242167e5eba926e2ad3d04f7ebaa18898123e077c983",
     "tests/r4_resource_safety/lifecycle_test.py": "630bd26ddcfb48fef00a7ef4ebc27eef283da99e81a86193ae1a04a1d2f9bbdd",
     "tests/r4_resource_safety/lifecycle_tests.cpp": "83a1b396a984edd811e526830b28e75ba9e4adaed52e6e9ea6bde1b8d6dce006",
-    "tests/r4_resource_safety/native_present_test.py": "74568c978454bbba87b68ed2a791ca75da74a9d0403948c05ee2b7f0018b1b9d",
-    "tests/r5_lifetime_recovery/observer_harness.cpp": "6887b31ee588e9dc03287121f49456103dabcdbbcd377470e9eb964fec5d3b57",
-    "tests/r5_lifetime_recovery/run.py": "276b54e04152122654e9a703abac66478ecdac15f35e9c863539873fe5efd434",
-    "tests/r6_recovery/allocation_observer_test.py": "d811ed93c580fee51283d668083a33b428da74d215e6c22e02e493d17e1d8587",
-    "tests/r7_allocation/run.py": "f7c37c96d51ef077fa071f6e888f1769e989a6c4cfe01446a54c618be9c2d6a6",
-    "tests/r7_progress/README.md": "4c834d5bc5976c18ba6af8ede6e5b34654d3c472819d2f5d8d6411024597b787",
-    "tests/r7_progress/pending_baseline_harness.cpp": "0479970d459cd3129a2e08334e4ab8efeafe756466a0e29c21cc86275d2f0b0a",
-    "tests/r7_progress/progress_harness.cpp": "87ec0d0d431b993df21745f7601728286dff67c582d0a390194226c6afc1117f",
-    "tests/r7_progress/progress_tests.cpp": "bde89a8a3f8e5f565de2387c27887345fe7a1385f7663337ee96ede9704fbed0",
-    "tests/r7_progress/r6_pending_baseline.json": "349d2e6d9b7e74eb0a31bfbed9d92455144f633cffa677534ef403b1167a3ed3",
-    "tests/r7_progress/run.py": "f7bff8559e7a42f2355d29e1dca18550dcaa28ce5512c571293d01bb97de6cd5",
-    "tests/r7_tracking/run.py": "62d7774906770d17746d5f6d60bb29c967265c16a167dc81d247dcb935f3f467"
+    "tests/r4_resource_safety/native_present_test.py": "74568c978454bbba87b68ed2a791ca75da74a9d0403948c05ee2b7f0018b1b9d"
   },
-  "r6_provenance": {
-    "inherited_report_sha256": "fca2a7711678851a33d18bb4b77da5748649ef8bbf5b8f9f3a82cd86e65ce1f1",
-    "reviewed_at_utc": "2026-09-26T15:30:07.994099+00:00",
-    "result": "PASS_SOURCE_AND_CPU_FAULT_TESTS",
-    "baseline_commit": "94e66579b7b70eaa1a9e3a6274abc5efe41b2544",
-    "reviewed_source_sha256": {
-      "OptiScaler/framegen/IFGFeature.h": "9dd4d261f9fe493a61e3e6c07e438ca01b02b6a4024fa65f0230a6d0f154fff8",
-      "OptiScaler/framegen/xefg/XeFGRecovery.h": "3442606f886c2abe7cea8a34cf857798eca35786ba20c9cb5358736608e53235",
-      "OptiScaler/framegen/xefg/XeFG_Dx12.cpp": "1797987cdaab5670faddfef2bcb12d09bba528382f5e4a11599c16b273d0bd49",
-      "OptiScaler/framegen/xefg/XeFG_Dx12.h": "39067e947bbab467ea24201a7eca6b8f1077b25467473a8ea1da255ba44f64fe",
-      "OptiScaler/hooks/D3D12_Hooks.cpp": "8fa366637420a513fefc707fd620567e683ea07a9352003a2b29cdd848cf9576",
-      "OptiScaler/hooks/FG_Hooks.cpp": "6b9a06b7d22269c140d94741888475a428023cd37cae26c63646f811ecd11edf",
-      "OptiScaler/hooks/GpuAllocationHooks.h": "d3d9e6ccfd8ce0661312a543dea0f8cd7d1b16153d868ecbacbb00a262976026",
-      "OptiScaler/inputs/FG/FSR3_Dx12_FG.cpp": "41d9107a8de4ac4098fdc1bdfa713ee75db66844465c7998da2988a465ba422d",
-      "OptiScaler/inputs/FG/FfxApi_Dx12_FG.cpp": "4a418408cbd391f1e755fed6560e7e607b3a59f2491aecb4f21ee05305d3882a",
-      "OptiScaler/inputs/FG/Streamline_Inputs_Dx12.cpp": "026572b0c9203b00bd31626f9d76945b5a4b7527fd6635f0f645bcd401b1e0c9",
-      "OptiScaler/inputs/FG/Streamline_Inputs_Sl1_Dx12.cpp": "4f02a2d3d64cda49c41afa4894fbf0547a090f015a31f45d964dd93a97bdcb94",
-      "OptiScaler/inputs/FG/Streamline_Inputs_Sl1_Dx12.h": "8638e0676ec1c02b88ea844fe87f9c139b1c62bdb1e6ce6a632d1bdc15f5bb45",
-      "OptiScaler/inputs/FG/Upscaler_Inputs_Dx11wDx12.cpp": "7acc7b43757a8895c9ff59c91e07916d80e34d47b5e0783cee6cdbb1866bb2b4",
-      "OptiScaler/inputs/FG/Upscaler_Inputs_Dx12.cpp": "b9ea5d3946fda98a8d4a2a675afdd426fc0ab9e453023256ec1a826181c8ed29",
-      "OptiScaler/misc/GpuAllocationDiagnostics.h": "02a459f81365cddc72ac678a557b90b4aba3bd3c777d71c3f7a2b5e04de7b85b",
-      "OptiScaler/misc/LongSessionMonitor.h": "79d3752c1272b0d815f99860901ff9b3328c9757df877d8f8f64ad248063cda1",
-      "OptiScaler/misc/LongSessionTiming.h": "fd704e0e75e66b75bc23e12036414a2ed08784223a761381ec5d9c86b2921544",
-      "OptiScaler/misc/ResidencyDiagnostics.h": "9b32e66f9928c695d2cedfb278e2af247c527ffb2116d2617c7d6569832e7f40",
-      "OptiScaler/misc/XeFGPresentDiagnostics.h": "54709d1ad4941944e21efd318f9fc957546de0529ed6cfabc25d1ce27c861100",
-      "OptiScaler/proxies/FfxApi_Proxy.h": "b64be8a90eb79e0b91aa2c7f73392d661ac27ea25af147c7f1423ab669a5b25c",
-      "OptiScaler/proxies/FfxContextRegistry.h": "2406b2c8eeff65bf0cdec2f8a2277497169dd6e1fbf79f9a3ec10dc6f19271b6"
-    },
-    "independently_executed_checks": [
-      {
-        "command": "python3 tests/r6_recovery/run.py /workspace/scratch/29657caf7bd8/r6-source",
-        "result": "PASS",
-        "coverage": "Pinned R5 negative controls; production helper and extracted resource/dispatch/control functions; healthy and trial status; bounded retries; terminal outcomes; SL1 frame boundary; actual callback/COM adapter and hook transaction fault injection."
-      },
-      {
-        "command": "python3 tests/r6_ffx_registry/run.py /workspace/scratch/29657caf7bd8/r6-source",
-        "result": "PASS",
-        "coverage": "Production registry helper; 16000 concurrent context lifetimes; exactly one atomic Take winner; fallback routing."
-      },
-      {
-        "command": "git -C /workspace/scratch/29657caf7bd8/r6-source diff --check",
-        "result": "PASS"
-      }
-    ],
-    "portability_followups": [
-      {
-        "reviewed_at_utc": "2026-09-26T15:39:57.296648+00:00",
-        "issue": "Windows MSVC C2169 rejected defining a fake function named _ReturnAddress, which is a compiler intrinsic.",
-        "change": "Harness-only FakeReturnAddress function plus a preprocessor redirect for the extracted production call; assertions and production code unchanged.",
-        "fixture": "tests/r6_recovery/residency.cpp",
-        "previous_sha256": "7e33e74045f569d00d7fd0ca8ddb5019179d4417f2138b7e64516116c55f684e",
-        "reviewed_sha256": "c1de7e53844022180cb69b53866a8daf8c2a58d482b9da6819aaec1f059f9a3f",
-        "review_result": "PASS",
-        "production_hashes_unchanged": true,
-        "targeted_validation": {
-          "command": "python3 tests/r6_recovery/run.py /workspace/scratch/29657caf7bd8/r6-source",
-          "result": "PASS"
-        },
-        "windows_ci_status_at_review": "Rerun pending; no Windows success asserted by this review."
-      }
-    ],
-    "scope_note": "Historical R6 evidence retained for provenance; R7 claims and exact current hashes are above."
+  "r7_provenance": {
+    "inherited_report_sha256": "69b7c48d3066633a51628b80c86ea866e4936b89d2a09b906e6ecd7bef630b05",
+    "baseline_source_commit": "b7a125652f5983f13f69f1bf6b35eb9d73caca37",
+    "scope_note": "Historical R7 report belongs to the prior build; current R8 claims and exact source/test hashes are recorded above."
   }
 }
