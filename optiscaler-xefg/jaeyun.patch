@@ -462,6 +462,106 @@ index f02210c..b61659e 100644
 +
 +    return dxgi.UpdateHMDEmulationStatus(p1);
  }
+diff --git a/OptiScaler/framegen/FGWorkGate.h b/OptiScaler/framegen/FGWorkGate.h
+new file mode 100644
+index 0000000..37536af
+--- /dev/null
++++ b/OptiScaler/framegen/FGWorkGate.h
+@@ -0,0 +1,94 @@
++#pragma once
++
++#include <chrono>
++#include <condition_variable>
++#include <cstddef>
++#include <mutex>
++#include <utility>
++
++// Admission, not a lock around driver calls. Closing rejects new work immediately
++// and waits for existing callers to leave without holding the mutex they need.
++class FGWorkGate
++{
++    std::mutex _mutex;
++    std::condition_variable _idle;
++    size_t _active = 0;
++    bool _closed = false;
++
++    void Leave()
++    {
++        std::lock_guard lock(_mutex);
++        if (--_active == 0)
++            _idle.notify_all();
++    }
++
++  public:
++    class Scope
++    {
++        friend class FGWorkGate;
++        FGWorkGate* _gate = nullptr;
++        explicit Scope(FGWorkGate* gate) : _gate(gate) {}
++
++      public:
++        Scope() = default;
++        Scope(const Scope&) = delete;
++        Scope& operator=(const Scope&) = delete;
++        Scope(Scope&& other) noexcept : _gate(std::exchange(other._gate, nullptr)) {}
++        Scope& operator=(Scope&& other) noexcept
++        {
++            if (this != &other)
++            {
++                if (_gate != nullptr)
++                    _gate->Leave();
++                _gate = std::exchange(other._gate, nullptr);
++            }
++            return *this;
++        }
++        ~Scope()
++        {
++            if (_gate != nullptr)
++                _gate->Leave();
++        }
++        explicit operator bool() const { return _gate != nullptr; }
++    };
++
++    Scope TryEnter()
++    {
++        std::lock_guard lock(_mutex);
++        if (_closed)
++            return {};
++        ++_active;
++        return Scope(this);
++    }
++
++    bool CloseAndWait(std::chrono::milliseconds timeout)
++    {
++        std::unique_lock lock(_mutex);
++        _closed = true;
++        return _idle.wait_for(lock, timeout, [this] { return _active == 0; });
++    }
++
++    // For object destruction only: the owner must not destroy this gate while a
++    // CPU caller still holds a Scope. Never call while holding the loader lock.
++    void CloseAndWait()
++    {
++        std::unique_lock lock(_mutex);
++        _closed = true;
++        _idle.wait(lock, [this] { return _active == 0; });
++    }
++
++    bool Open()
++    {
++        std::lock_guard lock(_mutex);
++        if (_active != 0)
++            return false;
++        _closed = false;
++        return true;
++    }
++
++    bool IsClosed()
++    {
++        std::lock_guard lock(_mutex);
++        return _closed;
++    }
++};
 diff --git a/OptiScaler/framegen/IFGFeature.cpp b/OptiScaler/framegen/IFGFeature.cpp
 index 3cb12cf..0685c61 100644
 --- a/OptiScaler/framegen/IFGFeature.cpp
@@ -523,10 +623,10 @@ index 1a64bab..e74391f 100644
      void GetInterpolationRect(UINT64& width, UINT& height, int index = -1);
      void SetInterpolationPos(UINT left, UINT top, int index = -1);
 diff --git a/OptiScaler/framegen/IFGFeature_Dx12.cpp b/OptiScaler/framegen/IFGFeature_Dx12.cpp
-index 0eee70e..2def813 100644
+index 0eee70e..310176a 100644
 --- a/OptiScaler/framegen/IFGFeature_Dx12.cpp
 +++ b/OptiScaler/framegen/IFGFeature_Dx12.cpp
-@@ -2,6 +2,7 @@
+@@ -2,11 +2,16 @@
  #include "IFGFeature_Dx12.h"
  #include <State.h>
  #include <Config.h>
@@ -534,7 +634,32 @@ index 0eee70e..2def813 100644
  
  #include <magic_enum.hpp>
  
-@@ -59,6 +60,7 @@ bool IFGFeature_Dx12::WaitForUIAllocator(UINT index)
+ bool IFGFeature_Dx12::GetResourceCopy(FG_ResourceType type, D3D12_RESOURCE_STATES bufferState, ID3D12Resource* output)
+ {
++    auto work = AcquireWork();
++    if (!work)
++        return false;
++
+     if (!InitCopyCmdList())
+         return false;
+ 
+@@ -40,9 +45,15 @@ ID3D12CommandQueue* IFGFeature_Dx12::GetCommandQueue() { return _gameCommandQueu
+ 
+ bool IFGFeature_Dx12::HasResource(FG_ResourceType type, int index)
+ {
++    auto work = AcquireWork();
++    if (!work)
++        return false;
+     if (index < 0)
+         index = GetIndex();
+ 
++    if (index >= BUFFER_COUNT)
++        return false;
++    std::shared_lock lock(_resourceMutex[index]);
+     return _frameResources[index].contains(type);
+ }
+ 
+@@ -59,6 +70,7 @@ bool IFGFeature_Dx12::WaitForUIAllocator(UINT index)
      if (completedValue >= fenceValue)
          return true;
  
@@ -542,13 +667,63 @@ index 0eee70e..2def813 100644
      auto result = _uiFence->SetEventOnCompletion(fenceValue, _uiFenceEvent);
      if (FAILED(result))
      {
-@@ -277,11 +279,10 @@ void IFGFeature_Dx12::FlipResource(Dx12Resource* resource)
+@@ -116,6 +128,7 @@ bool IFGFeature_Dx12::SubmitUICommandList(UINT index)
+ 
+ ID3D12GraphicsCommandList* IFGFeature_Dx12::GetUICommandList(int index)
+ {
++    // The caller holds AcquireWork() across both this call and command recording.
+     if (index < 0 || index >= BUFFER_COUNT)
+         index = GetIndex();
+ 
+@@ -176,6 +189,7 @@ ID3D12GraphicsCommandList* IFGFeature_Dx12::GetUICommandList(int index)
+ 
+ ID3D12GraphicsCommandList* IFGFeature_Dx12::GetSCCommandList(int index)
+ {
++    // The caller holds AcquireWork() across both this call and command recording.
+     if (index < 0)
+         index = GetIndex();
+ 
+@@ -231,22 +245,30 @@ ID3D12GraphicsCommandList* IFGFeature_Dx12::GetSCCommandList(int index)
+ 
+ LockedDx12Resource IFGFeature_Dx12::GetResource(FG_ResourceType type, int index)
+ {
++    auto work = AcquireWork();
++    if (!work)
++        return {};
+     if (index < 0)
+         index = GetIndex();
+ 
++    if (index >= BUFFER_COUNT)
++        return {};
+     std::shared_lock lock(_resourceMutex[index]);
+ 
+     auto& resources = _frameResources[index];
+ 
+     auto it = resources.find(type);
+     if (it != resources.end())
+-        return { &it->second, std::move(lock) };
++        return { &it->second, std::move(work), std::move(lock) };
+ 
+-    return { nullptr, std::move(lock) };
++    return { nullptr, std::move(work), std::move(lock) };
+ }
+ 
+ void IFGFeature_Dx12::NewFrame()
+ {
++    auto work = AcquireWork();
++    if (!work)
++        return;
+     if (_waitingNewFrameData)
+     {
+         LOG_DEBUG("Re-activating FG");
+@@ -277,19 +299,19 @@ void IFGFeature_Dx12::FlipResource(Dx12Resource* resource)
          return;
  
      auto fIndex = GetIndex();
 -    ID3D12Resource* flipOutput = nullptr;
 +    // Update the owning slot directly, including the allocation-failure path.
 +    auto& flipOutput = _resourceCopy[fIndex][type];
++    auto previousCopy = flipOutput;
      std::unique_ptr<RF_Dx12>* flip = nullptr;
  
 -    flipOutput = _resourceCopy[fIndex][type];
@@ -556,16 +731,17 @@ index 0eee70e..2def813 100644
      if (!CreateBufferResource(_device, resource->resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, &flipOutput, true,
                                resource->type == FG_ResourceType::Depth))
      {
-@@ -289,8 +290,6 @@ void IFGFeature_Dx12::FlipResource(Dx12Resource* resource)
++        RecordCopyAllocationFailure();
+         LOG_ERROR("{}, CreateBufferResource for flip is failed!", magic_enum::enum_name(type));
          return;
      }
- 
--    _resourceCopy[fIndex][type] = flipOutput;
 -
+-    _resourceCopy[fIndex][type] = flipOutput;
++    RecordCopyAllocation(fIndex, type, previousCopy);
+ 
      if (type == FG_ResourceType::Depth)
      {
-         if (_depthFlip.get() == nullptr)
-@@ -338,7 +337,7 @@ bool IFGFeature_Dx12::CreateBufferResourceWithSize(ID3D12Device* device, ID3D12R
+@@ -338,7 +360,7 @@ bool IFGFeature_Dx12::CreateBufferResourceWithSize(ID3D12Device* device, ID3D12R
                                                     D3D12_RESOURCE_STATES state, ID3D12Resource** target, UINT width,
                                                     UINT height, bool UAV, bool depth)
  {
@@ -574,7 +750,7 @@ index 0eee70e..2def813 100644
          return false;
  
      auto inDesc = source->GetDesc();
-@@ -356,8 +355,8 @@ bool IFGFeature_Dx12::CreateBufferResourceWithSize(ID3D12Device* device, ID3D12R
+@@ -356,8 +378,8 @@ bool IFGFeature_Dx12::CreateBufferResourceWithSize(ID3D12Device* device, ID3D12R
          if (bufDesc.Width != width || bufDesc.Height != height || bufDesc.Format != inDesc.Format ||
              bufDesc.Flags != inDesc.Flags)
          {
@@ -585,7 +761,7 @@ index 0eee70e..2def813 100644
          }
          else
          {
-@@ -365,8 +364,8 @@ bool IFGFeature_Dx12::CreateBufferResourceWithSize(ID3D12Device* device, ID3D12R
+@@ -365,8 +387,8 @@ bool IFGFeature_Dx12::CreateBufferResourceWithSize(ID3D12Device* device, ID3D12R
          }
      }
  
@@ -596,7 +772,7 @@ index 0eee70e..2def813 100644
      HRESULT hr = source->GetHeapProperties(&heapProperties, &heapFlags);
  
      if (hr != S_OK)
-@@ -378,8 +377,9 @@ bool IFGFeature_Dx12::CreateBufferResourceWithSize(ID3D12Device* device, ID3D12R
+@@ -378,8 +400,9 @@ bool IFGFeature_Dx12::CreateBufferResourceWithSize(ID3D12Device* device, ID3D12R
      inDesc.Width = width;
      inDesc.Height = height;
  
@@ -607,7 +783,7 @@ index 0eee70e..2def813 100644
  
      if (hr != S_OK)
      {
-@@ -387,6 +387,10 @@ bool IFGFeature_Dx12::CreateBufferResourceWithSize(ID3D12Device* device, ID3D12R
+@@ -387,6 +410,10 @@ bool IFGFeature_Dx12::CreateBufferResourceWithSize(ID3D12Device* device, ID3D12R
          return false;
      }
  
@@ -618,7 +794,7 @@ index 0eee70e..2def813 100644
      LOG_DEBUG("Created new one: {}x{}", inDesc.Width, inDesc.Height);
  
      return true;
-@@ -455,7 +459,7 @@ bool IFGFeature_Dx12::CreateBufferResource(ID3D12Device* device, ID3D12Resource*
+@@ -455,7 +482,7 @@ bool IFGFeature_Dx12::CreateBufferResource(ID3D12Device* device, ID3D12Resource*
                                             D3D12_RESOURCE_STATES initialState, ID3D12Resource** target, bool UAV,
                                             bool depth)
  {
@@ -627,7 +803,7 @@ index 0eee70e..2def813 100644
          return false;
  
      auto inDesc = source->GetDesc();
-@@ -476,8 +480,8 @@ bool IFGFeature_Dx12::CreateBufferResource(ID3D12Device* device, ID3D12Resource*
+@@ -476,8 +503,8 @@ bool IFGFeature_Dx12::CreateBufferResource(ID3D12Device* device, ID3D12Resource*
          if (bufDesc.Width != inDesc.Width || bufDesc.Height != inDesc.Height || bufDesc.Format != inDesc.Format ||
              bufDesc.Flags != inDesc.Flags)
          {
@@ -638,7 +814,7 @@ index 0eee70e..2def813 100644
          }
          else
          {
-@@ -485,12 +489,18 @@ bool IFGFeature_Dx12::CreateBufferResource(ID3D12Device* device, ID3D12Resource*
+@@ -485,12 +512,18 @@ bool IFGFeature_Dx12::CreateBufferResource(ID3D12Device* device, ID3D12Resource*
          }
      }
  
@@ -660,7 +836,7 @@ index 0eee70e..2def813 100644
  
      if (hr != S_OK)
      {
-@@ -498,6 +508,10 @@ bool IFGFeature_Dx12::CreateBufferResource(ID3D12Device* device, ID3D12Resource*
+@@ -498,6 +531,10 @@ bool IFGFeature_Dx12::CreateBufferResource(ID3D12Device* device, ID3D12Resource*
          return false;
      }
  
@@ -672,20 +848,63 @@ index 0eee70e..2def813 100644
  
      return true;
 diff --git a/OptiScaler/framegen/IFGFeature_Dx12.h b/OptiScaler/framegen/IFGFeature_Dx12.h
-index aee92e2..820ab47 100644
+index aee92e2..b48e15b 100644
 --- a/OptiScaler/framegen/IFGFeature_Dx12.h
 +++ b/OptiScaler/framegen/IFGFeature_Dx12.h
-@@ -54,6 +54,9 @@ class IFGFeature_Dx12 : public virtual IFGFeature
+@@ -1,6 +1,7 @@
+ #pragma once
+ #include "SysUtils.h"
+ #include "IFGFeature.h"
++#include "FGWorkGate.h"
+ 
+ #include <upscalers/IFeature.h>
+ 
+@@ -34,6 +35,8 @@ struct Dx12Resource
+ struct LockedDx12Resource
+ {
+     Dx12Resource* resource = nullptr;
++    // Destroy the resource lock before releasing admission to lifecycle cleanup.
++    FGWorkGate::Scope work;
+     std::shared_lock<std::shared_mutex> lock;
+ 
+     Dx12Resource* operator->() { return resource; }
+@@ -54,6 +57,12 @@ class IFGFeature_Dx12 : public virtual IFGFeature
      bool SubmitUICommandList(UINT index);
  
    protected:
++    FGWorkGate _workGate;
++    FGWorkGate _submissionGate;
++
 +    // A failed final drain must not free objects that may still be used by the GPU.
 +    bool _preserveObjectsOnFailedShutdown = false;
 +
      ID3D12Device* _device = nullptr;
      IDXGISwapChain* _swapChain = nullptr;
      ID3D12CommandQueue* _gameCommandQueue = nullptr;
-@@ -130,5 +133,9 @@ class IFGFeature_Dx12 : public virtual IFGFeature
+@@ -98,6 +107,8 @@ class IFGFeature_Dx12 : public virtual IFGFeature
+ 
+     void NewFrame() override final;
+     void FlipResource(Dx12Resource* resource);
++    virtual void RecordCopyAllocation(int, FG_ResourceType, ID3D12Resource*) {}
++    virtual void RecordCopyAllocationFailure() {}
+ 
+   protected:
+     virtual void ReleaseObjects() = 0;
+@@ -120,6 +131,13 @@ class IFGFeature_Dx12 : public virtual IFGFeature
+     virtual bool SetResource(Dx12Resource* inputResource) = 0;
+     virtual void SetCommandQueue(FG_ResourceType type, ID3D12CommandQueue* queue) = 0;
+ 
++    FGWorkGate::Scope AcquireWork() { return _workGate.TryEnter(); }
++    FGWorkGate::Scope AcquireSubmissionWork() { return _submissionGate.TryEnter(); }
++    // Called with an admission token spanning the actual ExecuteCommandLists.
++    virtual void BeforeCommandSubmission(ID3D12CommandQueue*, UINT, ID3D12CommandList* const*) {}
++    virtual void AfterCommandSubmission(UINT, ID3D12CommandList* const*) {}
++    virtual void DiscardPendingCommandList(ID3D12GraphicsCommandList*) {}
++
+     ID3D12GraphicsCommandList* GetUICommandList(int index = -1);
+     ID3D12GraphicsCommandList* GetSCCommandList(int index = -1);
+ 
+@@ -130,5 +148,9 @@ class IFGFeature_Dx12 : public virtual IFGFeature
      bool HasResource(FG_ResourceType type, int index = -1) override final;
  
      IFGFeature_Dx12() = default;
@@ -764,7 +983,7 @@ index 0000000..8bee2d9
 +    }
 +};
 diff --git a/OptiScaler/framegen/xefg/XeFG_Dx12.cpp b/OptiScaler/framegen/xefg/XeFG_Dx12.cpp
-index 1dbb383..4de38e1 100644
+index 1dbb383..4b7fcd4 100644
 --- a/OptiScaler/framegen/xefg/XeFG_Dx12.cpp
 +++ b/OptiScaler/framegen/xefg/XeFG_Dx12.cpp
 @@ -1,5 +1,6 @@
@@ -774,16 +993,17 @@ index 1dbb383..4de38e1 100644
  #include <hudfix/Hudfix_Dx12.h>
  #include <menu/menu_overlay_dx.h>
  #include <resource_tracking/ResTrack_dx12.h>
-@@ -73,6 +74,8 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
+@@ -73,6 +74,9 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
          }
  
          LOG_INFO("XeFG context created");
++        _resourceDiagnostics.BeginContext();
 +        XeFGPacing::RequestReset();
 +        RequestHistoryReset();
          result = XeFGProxy::SetLoggingCallback()(_swapChainContext, XEFG_SWAPCHAIN_LOGGING_LEVEL_DEBUG, xefgLogCallback,
                                                   nullptr);
  
-@@ -180,8 +183,13 @@ bool XeFG_Dx12::DestroySwapchainContext()
+@@ -180,8 +184,13 @@ bool XeFG_Dx12::DestroySwapchainContext()
  {
      LOG_DEBUG("");
  
@@ -798,7 +1018,7 @@ index 1dbb383..4de38e1 100644
          auto context = _swapChainContext;
          _swapChainContext = nullptr;
  
-@@ -193,6 +201,7 @@ bool XeFG_Dx12::DestroySwapchainContext()
+@@ -193,6 +202,7 @@ bool XeFG_Dx12::DestroySwapchainContext()
          if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
          {
              _swapChainContext = context;
@@ -806,7 +1026,7 @@ index 1dbb383..4de38e1 100644
          }
          else
          {
-@@ -275,7 +284,8 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
+@@ -275,7 +285,8 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
          else if (readyToRelease)
          {
              LOG_INFO("Releasing old swapchain");
@@ -816,7 +1036,16 @@ index 1dbb383..4de38e1 100644
  
              // Not sure why but XeFG sometimes doesn't release the swapchain properly
              // so we force release it here to be able to recreate swapchain for same hwnd
-@@ -429,6 +439,8 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
+@@ -296,6 +307,8 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
+         }
+     }
+ 
++    std::lock_guard lifecycle(_lifecycleMutex);
++
+     if (_swapChainContext == nullptr)
+     {
+         LOG_DEBUG("Creating swapchain context for the first time");
+@@ -429,6 +442,8 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
      ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
  #endif // !DONT_USE_XMX
  
@@ -825,7 +1054,20 @@ index 1dbb383..4de38e1 100644
      xefg_swapchain_result_t result;
      result = XeFGProxy::D3D12InitFromSwapChainDesc()(_swapChainContext, hwnd, &scDesc, &fsDesc, realQueue, factory12,
                                                       &params);
-@@ -480,7 +492,8 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
+@@ -457,6 +472,12 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
+     _swapChain = *swapChain;
+     _hwnd = hwnd;
+ 
++    if (_submissionGate.IsClosed() && !_submissionGate.Open())
++    {
++        _lifecycleFailed = true;
++        LOG_ERROR("XeFG swapchain submission admission could not reopen after initialization");
++        return false;
++    }
+     return true;
+ }
+ 
+@@ -480,7 +501,8 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
          else if (readyToRelease)
          {
              LOG_INFO("Releasing old swapchain");
@@ -835,7 +1077,16 @@ index 1dbb383..4de38e1 100644
  
              // Not sure why but XeFG sometimes doesn't release the swapchain properly
              // so we force release it here to be able to recreate swapchain for same hwnd
-@@ -592,6 +605,8 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
+@@ -501,6 +523,8 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
+         }
+     }
+ 
++    std::lock_guard lifecycle(_lifecycleMutex);
++
+     if (_swapChainContext == nullptr)
+     {
+         if (State::Instance().currentD3D12Device == nullptr)
+@@ -592,6 +616,8 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
      if (Config::Instance()->FGXeFGHighResMV.value_or_default())
          _constants.flags |= FG_Flags::DisplayResolutionMVs;
  
@@ -844,18 +1095,56 @@ index 1dbb383..4de38e1 100644
      xefg_swapchain_result_t result;
  
      {
-@@ -633,6 +648,9 @@ void XeFG_Dx12::CreateContext(ID3D12Device* device, FG_Constants& fgConstants)
+@@ -626,13 +652,28 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
+     _swapChain = *swapChain;
+     _hwnd = hwnd;
+ 
++    if (_submissionGate.IsClosed() && !_submissionGate.Open())
++    {
++        _lifecycleFailed = true;
++        LOG_ERROR("XeFG swapchain submission admission could not reopen after initialization");
++        return false;
++    }
+     return true;
+ }
+ 
+ void XeFG_Dx12::CreateContext(ID3D12Device* device, FG_Constants& fgConstants)
  {
++    std::lock_guard lifecycle(_lifecycleMutex);
      LOG_DEBUG("");
  
 +    if (_lifecycleFailed)
 +        return;
 +
++    if (!QuiesceWork())
++    {
++        _lifecycleFailed = true;
++        return;
++    }
      _device = device;
      CreateObjects(device);
  
-@@ -655,6 +673,9 @@ void XeFG_Dx12::Activate()
+@@ -642,6 +683,13 @@ void XeFG_Dx12::CreateContext(ID3D12Device* device, FG_Constants& fgConstants)
+         _lastDispatchedFrame = 0;
+     }
+ 
++    if (!_submissionGate.Open() || !_workGate.Open())
++    {
++        _lifecycleFailed = true;
++        LOG_ERROR("XeFG context admission could not reopen after initialization");
++        return;
++    }
++
+     if (_isActive)
+     {
+         LOG_INFO("FG context recreated while active, pausing");
+@@ -653,8 +701,14 @@ void XeFG_Dx12::CreateContext(ID3D12Device* device, FG_Constants& fgConstants)
+ 
+ void XeFG_Dx12::Activate()
  {
++    auto work = AcquireWork();
++    if (!work)
++        return;
      LOG_DEBUG("");
  
 +    if (_lifecycleFailed)
@@ -864,7 +1153,7 @@ index 1dbb383..4de38e1 100644
      auto currentFeature = State::Instance().currentFeature;
      bool nativeAA = false;
      if (State::Instance().activeFgInput == FGInput::Upscaler && currentFeature != nullptr)
-@@ -664,6 +685,8 @@ void XeFG_Dx12::Activate()
+@@ -664,6 +718,8 @@ void XeFG_Dx12::Activate()
          (IsLowResMV() || nativeAA || (State::Instance().gameQuirks & GameQuirk::ForceFGRenderSizeMVs) ||
           Config::Instance()->FGXeFGIgnoreInitChecks.value_or_default()))
      {
@@ -873,7 +1162,19 @@ index 1dbb383..4de38e1 100644
          auto result = XeFGProxy::SetEnabled()(_swapChainContext, true);
  
          if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
-@@ -682,6 +705,8 @@ void XeFG_Dx12::Deactivate()
+@@ -677,11 +733,20 @@ void XeFG_Dx12::Activate()
+ }
+ 
+ void XeFG_Dx12::Deactivate()
++{
++    auto work = AcquireWork();
++    if (work)
++        DeactivateImpl();
++}
++
++void XeFG_Dx12::DeactivateImpl()
+ {
+     LOG_DEBUG("");
  
      if (_isActive)
      {
@@ -882,13 +1183,22 @@ index 1dbb383..4de38e1 100644
          auto fIndex = GetIndex();
          if (_uiCommandListResetted[fIndex])
          {
-@@ -722,29 +747,54 @@ void XeFG_Dx12::DestroyFGContext()
- {
-     Deactivate();
+@@ -720,31 +785,75 @@ void XeFG_Dx12::Deactivate()
  
+ void XeFG_Dx12::DestroyFGContext()
+ {
+-    Deactivate();
+-
 -    if (_fgContext != nullptr)
 -        _fgContext = nullptr;
--
++    std::lock_guard lifecycle(_lifecycleMutex);
++    if (!QuiesceWork())
++    {
++        _lifecycleFailed = true;
++        return;
++    }
++    DeactivateImpl();
+ 
 -    ReleaseObjects();
 +    // The alias is not the provider context. Preserve its tagged textures and
 +    // shaders, but discard old command recordings only after submitted work ends.
@@ -900,6 +1210,13 @@ index 1dbb383..4de38e1 100644
 +    }
 +    _fgContext = nullptr;
 +    ReleaseCommandObjects();
++    // Keep ordinary provider Presents working while the FG alias is disabled.
++    // Full Shutdown deliberately leaves this gate closed until a new swapchain.
++    if (!_submissionGate.Open())
++    {
++        _lifecycleFailed = true;
++        LOG_ERROR("XeFG submission admission could not reopen after FG command cleanup");
++    }
  }
  
  bool XeFG_Dx12::Shutdown()
@@ -913,7 +1230,13 @@ index 1dbb383..4de38e1 100644
 +        return false;
  
 -    ReleaseObjects();
-+    Deactivate();
++    std::lock_guard lifecycle(_lifecycleMutex);
++    if (!QuiesceWork())
++    {
++        _lifecycleFailed = true;
++        return false;
++    }
++    DeactivateImpl();
 +    if (!DrainLifetimeQueues())
 +    {
 +        _lifecycleFailed = true;
@@ -948,7 +1271,31 @@ index 1dbb383..4de38e1 100644
      LOG_FUNC();
  
      UINT64 willDispatchFrame = 0;
-@@ -819,21 +869,24 @@ bool XeFG_Dx12::Dispatch()
+@@ -757,14 +866,18 @@ bool XeFG_Dx12::Dispatch()
+ 
+     LOG_DEBUG("_frameCount: {}, willDispatchFrame: {}, fIndex: {}", _frameCount, willDispatchFrame, fIndex);
+ 
+-    if (!_resourceReady[fIndex].contains(FG_ResourceType::Depth) ||
+-        !_resourceReady[fIndex].at(FG_ResourceType::Depth) ||
+-        !_resourceReady[fIndex].contains(FG_ResourceType::Velocity) ||
+-        !_resourceReady[fIndex].at(FG_ResourceType::Velocity))
++    const bool depthMissing = !_resourceReady[fIndex].contains(FG_ResourceType::Depth) ||
++                              !_resourceReady[fIndex].at(FG_ResourceType::Depth);
++    const bool velocityMissing = !_resourceReady[fIndex].contains(FG_ResourceType::Velocity) ||
++                                 !_resourceReady[fIndex].at(FG_ResourceType::Velocity);
++    if (depthMissing || velocityMissing)
+     {
+-        LOG_WARN("Depth or Velocity is not ready, skipping");
++        _resourceDiagnostics.OnMissingInputs(depthMissing, velocityMissing);
++        ReportResourceDiagnostics();
+         return false;
+     }
++    _resourceDiagnostics.OnInputsReady();
++    ReportResourceDiagnostics();
+ 
+     auto& state = State::Instance();
+ 
+@@ -819,21 +932,24 @@ bool XeFG_Dx12::Dispatch()
          {
              LOG_INFO("Interpolation count changed {} -> {}", _framesToInterpolate, targetCount);
  
@@ -977,7 +1324,7 @@ index 1dbb383..4de38e1 100644
          }
      }
  
-@@ -956,37 +1009,19 @@ bool XeFG_Dx12::Dispatch()
+@@ -956,37 +1072,19 @@ bool XeFG_Dx12::Dispatch()
      constData.motionVectorScaleX = _mvScaleX[fIndex];
      constData.motionVectorScaleY = _mvScaleY[fIndex];
  
@@ -1022,7 +1369,7 @@ index 1dbb383..4de38e1 100644
  
      if (!(frameRenderTime > 0.0))
          frameRenderTime = state.lastFGFrameTime;
-@@ -1087,9 +1122,13 @@ bool XeFG_Dx12::Dispatch()
+@@ -1087,9 +1185,13 @@ bool XeFG_Dx12::Dispatch()
              state.fgChanged = true;
              UpdateTarget();
              Deactivate();
@@ -1036,20 +1383,27 @@ index 1dbb383..4de38e1 100644
      LOG_DEBUG("Result: Ok");
  
      return true;
-@@ -1099,7 +1138,11 @@ void* XeFG_Dx12::FrameGenerationContext() { return _fgContext; }
+@@ -1099,7 +1201,18 @@ void* XeFG_Dx12::FrameGenerationContext() { return _fgContext; }
  
  void* XeFG_Dx12::SwapchainContext() { return _swapChainContext; }
  
 -XeFG_Dx12::~XeFG_Dx12() { Shutdown(); }
 +XeFG_Dx12::~XeFG_Dx12()
 +{
++    // The owner must stop publishing this raw object before deleting it. No
++    // runtime delete path is used today. Process detach must never block here.
++    if (!State::Instance().isShuttingDown)
++    {
++        _workGate.CloseAndWait();
++        _submissionGate.CloseAndWait();
++    }
 +    if (!Shutdown())
 +        PreserveObjectsAfterFailedShutdown();
 +}
  
  bool XeFG_Dx12::SetInterpolatedFrameCount(UINT interpolatedFrameCount) { return true; }
  
-@@ -1180,7 +1223,7 @@ void XeFG_Dx12::EvaluateState(ID3D12Device* device, FG_Constants& fgConstants)
+@@ -1180,7 +1293,7 @@ void XeFG_Dx12::EvaluateState(ID3D12Device* device, FG_Constants& fgConstants)
      state.scChanged = false;
  }
  
@@ -1058,7 +1412,7 @@ index 1dbb383..4de38e1 100644
  {
      for (size_t i = 0; i < BUFFER_COUNT; i++)
      {
-@@ -1197,6 +1240,56 @@ void XeFG_Dx12::ReleaseObjects()
+@@ -1197,6 +1310,65 @@ void XeFG_Dx12::ReleaseObjects()
          _uiAllocatorFenceValues[i] = 0;
      }
  
@@ -1075,11 +1429,20 @@ index 1dbb383..4de38e1 100644
 +        return;
 +
 +    ReleaseCommandObjects();
-+    for (auto& resources : _resourceCopy)
++    for (size_t i = 0; i < BUFFER_COUNT; ++i)
 +    {
-+        for (auto& [type, resource] : resources)
++        std::unique_lock lock(_resourceMutex[i]);
++        for (auto& [type, resource] : _resourceCopy[i])
++        {
++            if (resource != nullptr)
++            {
++                const auto info = _copyAllocationInfo[i][type];
++                _resourceDiagnostics.OnRelease(info.bytes, info.known);
++            }
 +            SAFE_RELEASE(resource); // Only copies allocated by OptiScaler.
-+        resources.clear();
++        }
++        _resourceCopy[i].clear();
++        _copyAllocationInfo[i].clear();
 +    }
 +
 +    SAFE_RELEASE(_uiFence);
@@ -1115,25 +1478,74 @@ index 1dbb383..4de38e1 100644
      _renderUI.reset();
      _hudlessCompare.reset();
      _mvFlip.reset();
-@@ -1453,6 +1546,9 @@ bool XeFG_Dx12::Present()
+@@ -1336,6 +1508,9 @@ void XeFG_Dx12::CreateObjects(ID3D12Device* InDevice)
+ 
+ bool XeFG_Dx12::Present()
+ {
++    auto work = AcquireWork();
++    if (!work || _lifecycleFailed || _swapChainContext == nullptr)
++        return false;
+     auto fIndex = GetIndexWillBeDispatched();
+     LOG_DEBUG("fIndex: {}", fIndex);
+ 
+@@ -1453,6 +1628,12 @@ bool XeFG_Dx12::Present()
  
  bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
  {
++    auto work = AcquireWork();
++    if (!work || _swapChainContext == nullptr)
++        return false;
 +    if (_lifecycleFailed)
 +        return false;
 +
      if (inputResource == nullptr || inputResource->resource == nullptr ||
          (inputResource->type != FG_ResourceType::UIColor && (!IsActive() || IsPaused())))
      {
-@@ -1542,6 +1638,7 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1465,6 +1646,8 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+     if (fIndex < 0)
+         fIndex = GetIndex();
+ 
++    if (fIndex >= BUFFER_COUNT)
++        return false;
+     auto& type = inputResource->type;
+ 
+     std::unique_lock<std::shared_mutex> lock(_resourceMutex[fIndex]);
+@@ -1542,6 +1725,13 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
      }
  
      auto fResource = &_frameResources[fIndex][type];
-+    fResource->copy = nullptr;
++    // Dispatch passes this very map entry back for UNTIL_NEXT_PRESENT tagging.
++    // Its copy and state describe the owned texture; fresh input must not inherit
++    // a previous entry's copy (including after a failed replacement allocation).
++    if (inputResource != fResource)
++        fResource->copy = nullptr;
++    else if (fResource->copy != nullptr)
++        _resourceDiagnostics.OnAliasPreserved();
      fResource->type = type;
      fResource->state = inputResource->state;
      fResource->validity = inputResource->validity;
-@@ -1597,18 +1694,15 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1556,6 +1746,11 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+                     Config::Instance()->FGResourceFlip.value_or_default() &&
+                     (type == FG_ResourceType::Velocity || type == FG_ResourceType::Depth);
+ 
++    if (inputResource->cmdList != nullptr &&
++        (fResource->validity == FG_ResourceValidity::ValidNow ||
++         fResource->validity == FG_ResourceValidity::ValidButMakeCopy || willFlip))
++        TrackPendingCommandList(inputResource->cmdList);
++
+     // Resource flipping
+     if (willFlip && _device != nullptr)
+         FlipResource(fResource);
+@@ -1574,6 +1769,8 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+         }
+         else if (_depthInvert->IsInit())
+         {
++            if (fResource->cmdList != nullptr)
++                TrackPendingCommandList(fResource->cmdList);
+             if (_depthInvert->CreateBufferResource(_device, fResource->GetResource(), fResource->width,
+                                                    fResource->height, fResource->state) &&
+                 _depthInvert->Buffer() != nullptr)
+@@ -1597,18 +1794,24 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
      {
          LOG_DEBUG("Making a resource copy of: {}", magic_enum::enum_name(type));
  
@@ -1142,19 +1554,28 @@ index 1dbb383..4de38e1 100644
 -        if (_resourceCopy[fIndex].contains(type))
 -            copyOutput = _resourceCopy[fIndex][type];
 +        auto& copyOutput = _resourceCopy[fIndex][type];
++        auto previousCopy = copyOutput;
  
          if (!CopyResource(inputResource->cmdList, inputResource->resource, &copyOutput, inputResource->state))
          {
++            _resourceDiagnostics.OnAllocationFailure();
              LOG_ERROR("{}, CopyResource error!", magic_enum::enum_name(type));
 +            _frameResources[fIndex].erase(type);
++            if (type == FG_ResourceType::UIColor)
++                _noUi[fIndex] = true;
++            else if (type == FG_ResourceType::HudlessColor)
++                _noHudless[fIndex] = true;
++            _resourceReady[fIndex].erase(type);
              return false;
          }
  
 -        _resourceCopy[fIndex][type] = copyOutput;
++        RecordCopyAllocation(fIndex, type, previousCopy);
++
          _resourceCopy[fIndex][type]->SetName(std::format(L"_resourceCopy[{}][{}]", fIndex, (UINT) type).c_str());
          fResource->copy = copyOutput;
          fResource->state = D3D12_RESOURCE_STATE_COPY_DEST;
-@@ -1646,6 +1740,7 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1646,6 +1849,7 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
          }
  
          xefg_swapchain_d3d12_resource_data_t resourceParam = GetResourceData(type, fIndex);
@@ -1162,7 +1583,7 @@ index 1dbb383..4de38e1 100644
  
          // SDK version 2.1.1 fixes those issues
          if (version < feature_version { 1, 2, 2 })
-@@ -1661,8 +1756,15 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1661,8 +1865,15 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
              // https://github.com/intel/xess/issues/47
              if (inputResource->state == D3D12_RESOURCE_STATE_COPY_SOURCE)
              {
@@ -1178,7 +1599,7 @@ index 1dbb383..4de38e1 100644
  
                  resourceParam.incomingState = D3D12_RESOURCE_STATE_COPY_DEST;
              }
-@@ -1672,33 +1774,35 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1672,33 +1883,35 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
          if (indexDiff < 0)
              indexDiff += BUFFER_COUNT;
  
@@ -1227,29 +1648,187 @@ index 1dbb383..4de38e1 100644
          SetResourceReady(type, fIndex);
      }
  
-@@ -1707,7 +1811,11 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1707,7 +1920,169 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
      return true;
  }
  
 -void XeFG_Dx12::SetCommandQueue(FG_ResourceType type, ID3D12CommandQueue* queue) { _gameCommandQueue = queue; }
 +void XeFG_Dx12::SetCommandQueue(FG_ResourceType type, ID3D12CommandQueue* queue)
 +{
++    auto work = AcquireWork();
++    if (!work)
++        return;
 +    TrackLifetimeQueue(queue);
 +    _gameCommandQueue = queue;
++}
++
++void XeFG_Dx12::TrackPendingCommandList(ID3D12GraphicsCommandList* cmdList)
++{
++    ID3D12GraphicsCommandList* realList = nullptr;
++    if (!CheckForRealObject(__FUNCTION__, cmdList, (IUnknown**) &realList))
++        realList = cmdList;
++
++    std::lock_guard lock(_pendingCommandMutex);
++    for (size_t i = 0; i < _pendingCommandListCount; ++i)
++        if (_pendingCommandLists[i] == realList)
++            return;
++    if (_pendingCommandListCount == MaxPendingCommandLists)
++    {
++        if (_pendingTrackingComplete)
++            LOG_ERROR("XeFG pending command tracking capacity exceeded; resource cleanup will preserve objects");
++        _pendingTrackingComplete = false;
++        return;
++    }
++    // Borrowed identity only. Never dereference or Release a game command list.
++    _pendingCommandLists[_pendingCommandListCount++] = realList;
++}
++
++void XeFG_Dx12::BeforeCommandSubmission(ID3D12CommandQueue* queue, UINT count,
++                                       ID3D12CommandList* const* lists)
++{
++    bool found = false;
++    {
++        std::lock_guard lock(_pendingCommandMutex);
++        if (_pendingCommandListCount == 0)
++            return;
++    }
++    for (UINT i = 0; i < count && !found; ++i)
++    {
++        ID3D12CommandList* realList = nullptr;
++        if (!CheckForRealObject(__FUNCTION__, lists[i], (IUnknown**) &realList))
++            realList = lists[i];
++        std::lock_guard lock(_pendingCommandMutex);
++        for (size_t j = 0; j < _pendingCommandListCount; ++j)
++            if (realList == _pendingCommandLists[j])
++            {
++                found = true;
++                break;
++            }
++    }
++    // Registration precedes the real ExecuteCommandLists and is covered by its
++    // submission token. A teardown snapshot cannot miss this queue.
++    if (found)
++        TrackLifetimeQueue(queue);
++}
++
++void XeFG_Dx12::AfterCommandSubmission(UINT count, ID3D12CommandList* const* lists)
++{
++    {
++        std::lock_guard lock(_pendingCommandMutex);
++        if (_pendingCommandListCount == 0)
++            return;
++    }
++    for (UINT i = 0; i < count; ++i)
++    {
++        ID3D12CommandList* realList = nullptr;
++        if (!CheckForRealObject(__FUNCTION__, lists[i], (IUnknown**) &realList))
++            realList = lists[i];
++        std::lock_guard lock(_pendingCommandMutex);
++        for (size_t j = 0; j < _pendingCommandListCount;)
++            if (realList == _pendingCommandLists[j])
++                _pendingCommandLists[j] = _pendingCommandLists[--_pendingCommandListCount];
++            else
++                ++j;
++        if (_pendingCommandListCount == 0)
++            _pendingCommandsSubmitted.notify_all();
++    }
++}
++
++void XeFG_Dx12::DiscardPendingCommandList(ID3D12GraphicsCommandList* cmdList)
++{
++    ID3D12CommandList* realList = nullptr;
++    if (!CheckForRealObject(__FUNCTION__, cmdList, (IUnknown**) &realList))
++        realList = cmdList;
++    // A successful Reset discards a recording that was never submitted. Already
++    // submitted work still requires the queue fences, irrespective of Reset.
++    AfterCommandSubmission(1, &realList);
++}
++
++void XeFG_Dx12::RecordCopyAllocation(int index, FG_ResourceType type, ID3D12Resource* previous)
++{
++    auto resource = _resourceCopy[index][type];
++    if (resource == previous || resource == nullptr)
++        return;
++    CopyAllocationInfo allocation;
++    const auto desc = resource->GetDesc();
++    if (_device != nullptr)
++    {
++        const auto info = _device->GetResourceAllocationInfo(0, 1, &desc);
++        allocation.known = info.SizeInBytes != UINT64_MAX;
++        allocation.bytes = allocation.known ? info.SizeInBytes : 0;
++    }
++    // Include the replacement overlap. These are allocation estimates and owned
++    // references, not current residency or proof of an immediate driver free.
++    _resourceDiagnostics.OnAllocate(allocation.bytes, allocation.known);
++    if (previous != nullptr)
++    {
++        const auto old = _copyAllocationInfo[index][type];
++        _resourceDiagnostics.OnRelease(old.bytes, old.known);
++    }
++    _copyAllocationInfo[index][type] = allocation;
++}
++
++void XeFG_Dx12::ReportResourceDiagnostics()
++{
++    XeFGDiagnostics::Report report;
++    if (!_resourceDiagnostics.TryReport(GetTickCount64(), report))
++        return;
++    const auto& s = report.counters;
++    LOG_WARN("[XeFGResources] scope=owned_resourceCopy_only context={} start_live={}/{}B live_peak={}/{} "
++             "allocation_est_live_peak={}/{}B unknown={} alloc_release={}/{} allocation_fail={} alias_preserved={} "
++             "missing_depth_velocity_both={}/{}/{} bursts_recovered_current_peak={}/{}/{}/{} accounting_errors={}",
++             report.contextId, report.startLiveCopies, report.startLiveBytes, s.liveCopies, s.peakCopies,
++             s.liveBytes, s.peakBytes, s.unknownSizeCopies, s.allocations, s.releases, s.allocationFailures,
++             s.aliasPreserved, s.missingDepthOnly, s.missingVelocityOnly, s.missingBoth, s.missingBursts,
++             s.recoveredBursts, s.currentMissingBurst, s.peakMissingBurst, s.accountingErrors);
++}
++
++bool XeFG_Dx12::QuiesceWork()
++{
++    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
++    if (!_workGate.CloseAndWait(std::chrono::milliseconds(5000)))
++    {
++        LOG_ERROR("XeFG cleanup timed out waiting for CPU resource users; preserving owned objects");
++        return false;
++    }
++
++    // A finished tag call may have recorded copies into a GAME-owned command
++    // list that has not executed yet. Keep observing submissions while rejecting
++    // new tags, then stop submission callbacks before taking the queue snapshot.
++    {
++        std::unique_lock lock(_pendingCommandMutex);
++        if (!_pendingTrackingComplete ||
++            !_pendingCommandsSubmitted.wait_until(lock, deadline, [this] { return _pendingCommandListCount == 0; }))
++        {
++            LOG_ERROR("XeFG cleanup has {} unsubmitted command lists, tracking complete {}; preserving owned objects",
++                      _pendingCommandListCount, _pendingTrackingComplete);
++            return false;
++        }
++    }
++
++    const auto now = std::chrono::steady_clock::now();
++    const auto remaining = now < deadline ? std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now)
++                                         : std::chrono::milliseconds(0);
++    if (!_submissionGate.CloseAndWait(remaining))
++    {
++        LOG_ERROR("XeFG cleanup timed out waiting for command submissions; preserving owned objects");
++        return false;
++    }
++    return true;
 +}
  
  bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
  {
-@@ -1729,27 +1837,126 @@ bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
+@@ -1729,27 +2104,127 @@ bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
          LOG_TRACE("Accuired Mutex: {}", Mutex.getOwner());
      }
  
 -    MenuOverlayDx::CleanupRenderTarget(true, NULL);
-+    const bool released = Shutdown();
- 
+-
 -    if (_fgContext != nullptr)
 -        DestroyFGContext();
--
++    const bool released = Shutdown();
+ 
 -    if (!State::Instance().isShuttingDown)
 +    if (Config::Instance()->FGUseMutexForSwapchain.value_or_default())
      {
@@ -1301,7 +1880,8 @@ index 1dbb383..4de38e1 100644
  
 -    if (Config::Instance()->FGUseMutexForSwapchain.value_or_default())
 +    // Called only at context lifecycle boundaries, never in the frame loop.
-+    // The context owner must already have stopped concurrent tagging/presents.
++    // QuiesceWork has stopped tags/recording, observed their pending submissions,
++    // and closed submission admission before this stable queue snapshot.
 +    // One deadline covers all queues rather than allowing 5 seconds per queue.
 +    const auto deadline = GetTickCount64() + 5000;
 +    for (size_t i = 0; i < count; ++i)
@@ -1381,13 +1961,33 @@ index 1dbb383..4de38e1 100644
 +    _depthInvert.release();
 +}
 diff --git a/OptiScaler/framegen/xefg/XeFG_Dx12.h b/OptiScaler/framegen/xefg/XeFG_Dx12.h
-index f54de2b..b145fef 100644
+index f54de2b..25bcae1 100644
 --- a/OptiScaler/framegen/xefg/XeFG_Dx12.h
 +++ b/OptiScaler/framegen/xefg/XeFG_Dx12.h
-@@ -27,6 +27,28 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
+@@ -12,6 +12,8 @@
+ #include <xefg_swapchain.h>
+ #include <xefg_swapchain_d3d12.h>
+ #include <xefg_swapchain_debug.h>
++#include <atomic>
++#include <misc/XeFGResourceDiagnostics.h>
+ 
+ class XeFG_Dx12 : public virtual IFGFeature_Dx12
+ {
+@@ -26,6 +28,53 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
+     bool _uiComposition = false;
  
      std::unique_ptr<DI_Dx12> _depthInvert;
- 
++    XeFGDiagnostics::Context _resourceDiagnostics;
++    struct CopyAllocationInfo
++    {
++        uint64_t bytes = 0;
++        bool known = false;
++    };
++    std::unordered_map<FG_ResourceType, CopyAllocationInfo> _copyAllocationInfo[BUFFER_COUNT];
++    void ReportResourceDiagnostics();
++    void RecordCopyAllocation(int index, FG_ResourceType type, ID3D12Resource* previous) override final;
++    void RecordCopyAllocationFailure() override final { _resourceDiagnostics.OnAllocationFailure(); }
++
 +    // Keep every queue used by this context alive until its work is drained.
 +    // A finite set avoids an unbounded registry if a game continually creates queues.
 +    static constexpr size_t MaxLifetimeQueues = 8;
@@ -1402,17 +2002,133 @@ index f54de2b..b145fef 100644
 +    size_t _lifetimeQueueCount = 0;
 +    std::mutex _lifetimeQueueMutex;
 +    bool _queueTrackingComplete = true;
-+    bool _lifecycleFailed = false;
++    std::atomic<bool> _lifecycleFailed { false };
 +    bool _objectsDrained = false;
++
++    // Serialize lifecycle owners, never normal driver callback submissions.
++    // Lock order: lifecycle -> close admission/wait -> per-slot resource locks.
++    // Normal work takes admission before resource/queue bookkeeping locks.
++    std::recursive_mutex _lifecycleMutex;
++    std::mutex _pendingCommandMutex;
++    std::condition_variable _pendingCommandsSubmitted;
++    static constexpr size_t MaxPendingCommandLists = 256;
++    ID3D12CommandList* _pendingCommandLists[MaxPendingCommandLists] {};
++    size_t _pendingCommandListCount = 0;
++    bool _pendingTrackingComplete = true;
++
++    bool QuiesceWork();
++    void TrackPendingCommandList(ID3D12GraphicsCommandList* cmdList);
++    void DeactivateImpl();
 +
 +    void TrackLifetimeQueue(ID3D12CommandQueue* queue);
 +    bool DrainLifetimeQueues();
 +    void ReleaseCommandObjects();
 +    void PreserveObjectsAfterFailedShutdown();
-+
+ 
      static void xefgLogCallback(const char* message, xefg_swapchain_logging_level_t level, void* userData);
  
-     bool CreateSwapchainContext(ID3D12Device* device);
+@@ -66,12 +115,19 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
+ 
+     bool SetResource(Dx12Resource* inputResource) override final;
+     void SetCommandQueue(FG_ResourceType type, ID3D12CommandQueue* queue) override final;
++    void BeforeCommandSubmission(ID3D12CommandQueue* queue, UINT count,
++                                 ID3D12CommandList* const* lists) override final;
++    void AfterCommandSubmission(UINT count, ID3D12CommandList* const* lists) override final;
++    void DiscardPendingCommandList(ID3D12GraphicsCommandList* cmdList) override final;
+ 
+     void* FrameGenerationContext() override final;
+     void* SwapchainContext() override final;
+ 
+     XeFG_Dx12() : IFGFeature_Dx12(), IFGFeature()
+     {
++        // Resource work opens only after helper initialization. Submission/
++        // provider Present admission stays open for startup pass-through.
++        _workGate.CloseAndWait(std::chrono::milliseconds(0));
+         if (XeFGProxy::Module() == nullptr)
+             XeFGProxy::InitXeFG();
+     }
+diff --git a/OptiScaler/hooks/FG_Hooks.cpp b/OptiScaler/hooks/FG_Hooks.cpp
+index d410412..7ed3172 100644
+--- a/OptiScaler/hooks/FG_Hooks.cpp
++++ b/OptiScaler/hooks/FG_Hooks.cpp
+@@ -666,7 +666,10 @@ HRESULT FGHooks::hkResizeBuffers(IDXGISwapChain* This, UINT BufferCount, UINT Wi
+                     {
+                         LOG_INFO("Trying to change backbuffer state to COMMON");
+ 
+-                        auto cmdList = fgDx12->GetUICommandList();
++                        // Keep helper command recording inside the context work lifetime.
++                        // A teardown that has closed admission must not hand out a raw command list.
++                        auto work = fgDx12->AcquireWork();
++                        auto cmdList = work ? fgDx12->GetUICommandList() : nullptr;
+ 
+                         if (cmdList != nullptr)
+                         {
+@@ -903,7 +906,10 @@ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT
+                     {
+                         LOG_INFO("Trying to change backbuffer state to COMMON");
+ 
+-                        auto cmdList = fgDx12->GetUICommandList();
++                        // Keep helper command recording inside the context work lifetime.
++                        // A teardown that has closed admission must not hand out a raw command list.
++                        auto work = fgDx12->AcquireWork();
++                        auto cmdList = work ? fgDx12->GetUICommandList() : nullptr;
+                         if (cmdList != nullptr)
+                         {
+                             for (size_t i = 0; i < desc.BufferCount; i++)
+@@ -1137,7 +1143,8 @@ HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
+ #endif
+     }
+ 
+-    IFGFeature* fg = state.currentFG;
++    auto fgDx12 = state.currentFG;
++    IFGFeature* fg = fgDx12;
+ 
+     if (fg != nullptr && willPresent && fg->IsActive() && !fg->IsPaused())
+     {
+@@ -1189,7 +1196,12 @@ HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
+         LOG_TRACE("Accuired FG->Mutex: {}", fg->Mutex.getOwner());
+     }
+ 
+-    const bool fgFeatureActive = fg != nullptr && fg->IsActive() && !fg->IsPaused();
++    // Acquire after the existing FG mutex: cleanup may own that mutex while
++    // waiting for admitted calls. Keep this token through the original provider
++    // Present/Present1, including inactive and DXGI_PRESENT_TEST pass-through.
++    auto presentWork = fgDx12 != nullptr ? fgDx12->AcquireSubmissionWork() : FGWorkGate::Scope {};
++    const bool canCallProvider = fgDx12 == nullptr || static_cast<bool>(presentWork);
++    const bool fgFeatureActive = canCallProvider && fg != nullptr && fg->IsActive() && !fg->IsPaused();
+ 
+     sl::FrameToken* localToken = nullptr;
+     sl::Result tokenResult = sl::Result::eErrorReflexAPI;
+@@ -1262,15 +1274,20 @@ HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
+         LOG_DEBUG("Final SyncInterval: {}", SyncInterval);
+     }
+ 
+-    // Used at wrapped_swapchain LocalPresent to determine is frame is interpolated or not
+-    if (willPresent)
+-        state.fgPresentIsCalled = true;
+-
+-    HRESULT result;
+-    if (pPresentParameters == nullptr)
+-        result = o_FGSCPresent(This, SyncInterval, Flags);
+-    else
+-        result = o_FGSCPresent1((IDXGISwapChain1*) This, SyncInterval, Flags, pPresentParameters);
++    // A context being destroyed cannot accept a new provider present. Drop only
++    // this transition frame and still execute the normal marker/mutex/semaphore
++    // cleanup below. A successful new context reopens admission.
++    HRESULT result = S_OK;
++    if (canCallProvider)
++    {
++        // Used at wrapped_swapchain LocalPresent to identify interpolated frames.
++        if (willPresent)
++            state.fgPresentIsCalled = true;
++        if (pPresentParameters == nullptr)
++            result = o_FGSCPresent(This, SyncInterval, Flags);
++        else
++            result = o_FGSCPresent1((IDXGISwapChain1*) This, SyncInterval, Flags, pPresentParameters);
++    }
+ 
+     if (result == S_OK)
+     {
 diff --git a/OptiScaler/hooks/Streamline_Hooks.cpp b/OptiScaler/hooks/Streamline_Hooks.cpp
 index 52b9868..a35c15f 100644
 --- a/OptiScaler/hooks/Streamline_Hooks.cpp
@@ -2176,14 +2892,15 @@ index 44369f1..2b9778c 100644
      {
 diff --git a/OptiScaler/misc/LongSessionMonitor.h b/OptiScaler/misc/LongSessionMonitor.h
 new file mode 100644
-index 0000000..e1497ed
+index 0000000..63ee3c8
 --- /dev/null
 +++ b/OptiScaler/misc/LongSessionMonitor.h
-@@ -0,0 +1,312 @@
+@@ -0,0 +1,327 @@
 +#pragma once
 +
 +#include "LongSessionState.h"
 +#include "LongSessionTiming.h"
++#include "XeFGResourceDiagnostics.h"
 +#include "Logger.h"
 +
 +#include <array>
@@ -2412,6 +3129,7 @@ index 0000000..e1497ed
 +            return;
 +        }
 +        constexpr double mib = 1024.0 * 1024.0;
++        const auto ownedCopies = XeFGDiagnostics::GlobalSnapshot();
 +        const char* pressure = sample.pressure == Pressure::Critical ? "critical" :
 +                               sample.pressure == Pressure::Elevated ? "elevated" : "normal";
 +        // Memory fields are the latest reading. Time maxima cover ALL one-second
@@ -2424,14 +3142,27 @@ index 0000000..e1497ed
 +                 "local_valid={} local_MiB={:.1f}/{:.1f} nonlocal_valid={} nonlocal_MiB={:.1f}/{:.1f} "
 +                 "private_valid={} private_MiB={:.1f} ram_valid={} available_ram_MiB={:.1f} "
 +                 "present_max_ms={:.2f} gap_max_ms={:.2f} "
-+                 "pacing_max_ms={:.2f} fence_max_ms={:.2f} tracking_max_ms={:.2f} fg_call_max_ms={:.2f}",
++                 "pacing_max_ms={:.2f} fence_max_ms={:.2f} tracking_max_ms={:.2f} fg_call_max_ms={:.2f} "
++                 "xefg_scope=owned_resourceCopy_global xefg_live_peak_copies={}/{} "
++                 "xefg_live_peak_alloc_est_MiB={:.2f}/{:.2f} xefg_unknown_size_copies={} "
++                 "xefg_alloc_release={}/{} xefg_cum_alloc_release_est_MiB={:.2f}/{:.2f} "
++                 "xefg_alloc_fail={} xefg_alias_preserved={} xefg_missing_depth_velocity_both={}/{}/{} "
++                 "xefg_missing_bursts_recovered_peak={}/{}/{} xefg_accounting_errors={}",
 +                 sample.elapsedMs / 1000, changed, pressure, sample.hitch,
 +                 sample.localValid, sample.localUsage / mib, sample.localBudget / mib,
 +                 sample.nonlocalValid, sample.nonlocalUsage / mib, sample.nonlocalBudget / mib,
 +                 sample.processValid, sample.processPrivateBytes / mib,
 +                 sample.physicalValid, sample.availablePhysicalBytes / mib,
 +                 sample.presentMaxMs, sample.gapMaxMs,
-+                 sample.waitMaxMs[0], sample.waitMaxMs[1], sample.waitMaxMs[2], sample.waitMaxMs[3]);
++                 sample.waitMaxMs[0], sample.waitMaxMs[1], sample.waitMaxMs[2], sample.waitMaxMs[3],
++                 ownedCopies.liveCopies, ownedCopies.peakCopies,
++                 ownedCopies.liveBytes / mib, ownedCopies.peakBytes / mib, ownedCopies.unknownSizeCopies,
++                 ownedCopies.allocations, ownedCopies.releases,
++                 ownedCopies.allocatedBytes / mib, ownedCopies.releasedBytes / mib,
++                 ownedCopies.allocationFailures, ownedCopies.aliasPreserved,
++                 ownedCopies.missingDepthOnly, ownedCopies.missingVelocityOnly, ownedCopies.missingBoth,
++                 ownedCopies.missingBursts, ownedCopies.recoveredBursts, ownedCopies.peakMissingBurst,
++                 ownedCopies.accountingErrors);
 +    }
 +
 +    SRWLOCK _lock = SRWLOCK_INIT;
@@ -2676,6 +3407,359 @@ index 0000000..77b68de
 +};
 +
 +} // namespace LongSession
+diff --git a/OptiScaler/misc/XeFGResourceDiagnostics.h b/OptiScaler/misc/XeFGResourceDiagnostics.h
+new file mode 100644
+index 0000000..db2479a
+--- /dev/null
++++ b/OptiScaler/misc/XeFGResourceDiagnostics.h
+@@ -0,0 +1,347 @@
++#pragma once
++
++#include <atomic>
++#include <cstdint>
++#include <limits>
++
++// Observational accounting for XeFG_Dx12::_resourceCopy only. These are owned
++// references and D3D12 allocation-size estimates, NOT resident VRAM readings.
++// Game resources, shader-helper buffers and Intel's internal allocations are excluded.
++// No Windows, logger, graphics API, dynamic allocation, or synchronization waits.
++namespace XeFGDiagnostics
++{
++struct Snapshot
++{
++    std::uint64_t liveCopies = 0;
++    std::uint64_t peakCopies = 0;
++    std::uint64_t liveBytes = 0;
++    std::uint64_t peakBytes = 0;
++    std::uint64_t unknownSizeCopies = 0;
++    std::uint64_t allocations = 0;
++    std::uint64_t releases = 0;
++    std::uint64_t allocatedBytes = 0;
++    std::uint64_t releasedBytes = 0;
++    std::uint64_t allocationFailures = 0;
++    std::uint64_t aliasPreserved = 0;
++    std::uint64_t missingDepthOnly = 0;
++    std::uint64_t missingVelocityOnly = 0;
++    std::uint64_t missingBoth = 0;
++    std::uint64_t missingFrames = 0;
++    std::uint64_t missingBursts = 0;
++    std::uint64_t recoveredBursts = 0;
++    std::uint64_t currentMissingBurst = 0;
++    std::uint64_t peakMissingBurst = 0;
++    std::uint64_t accountingErrors = 0;
++};
++
++namespace Detail
++{
++inline void RaisePeak(std::atomic<std::uint64_t>& peak, std::uint64_t value)
++{
++    auto previous = peak.load(std::memory_order_relaxed);
++    while (previous < value &&
++           !peak.compare_exchange_weak(previous, value, std::memory_order_relaxed))
++    {
++    }
++}
++
++class Counters
++{
++  public:
++    void Allocate(std::uint64_t bytes, bool known)
++    {
++        const auto copies = _liveCopies.fetch_add(1, std::memory_order_relaxed) + 1;
++        RaisePeak(_peakCopies, copies);
++        _allocations.fetch_add(1, std::memory_order_relaxed);
++        if (known)
++        {
++            const auto total = _liveBytes.fetch_add(bytes, std::memory_order_relaxed) + bytes;
++            RaisePeak(_peakBytes, total);
++            _allocatedBytes.fetch_add(bytes, std::memory_order_relaxed);
++        }
++        else
++            _unknownSizeCopies.fetch_add(1, std::memory_order_relaxed);
++    }
++
++    bool Release(std::uint64_t bytes, bool known)
++    {
++        // Defensive accounting guard only; it never changes a resource lifetime.
++        if (!Subtract(_liveCopies, 1))
++        {
++            _accountingErrors.fetch_add(1, std::memory_order_relaxed);
++            return false;
++        }
++        _releases.fetch_add(1, std::memory_order_relaxed);
++        if (known)
++        {
++            if (Subtract(_liveBytes, bytes))
++                _releasedBytes.fetch_add(bytes, std::memory_order_relaxed);
++            else
++                _accountingErrors.fetch_add(1, std::memory_order_relaxed);
++        }
++        else if (!Subtract(_unknownSizeCopies, 1))
++            _accountingErrors.fetch_add(1, std::memory_order_relaxed);
++        return true;
++    }
++
++    void AllocationFailure() { _allocationFailures.fetch_add(1, std::memory_order_relaxed); }
++    void AliasPreserved() { _aliasPreserved.fetch_add(1, std::memory_order_relaxed); }
++    void AccountingError() { _accountingErrors.fetch_add(1, std::memory_order_relaxed); }
++
++    void Missing(bool depth, bool velocity)
++    {
++        _missingFrames.fetch_add(1, std::memory_order_relaxed);
++        if (depth && velocity)
++            _missingBoth.fetch_add(1, std::memory_order_relaxed);
++        else if (depth)
++            _missingDepthOnly.fetch_add(1, std::memory_order_relaxed);
++        else if (velocity)
++            _missingVelocityOnly.fetch_add(1, std::memory_order_relaxed);
++    }
++
++    std::uint64_t ExtendBurst()
++    {
++        const auto count = _currentMissingBurst.fetch_add(1, std::memory_order_relaxed) + 1;
++        RaisePeak(_peakMissingBurst, count);
++        if (count == 1)
++            _missingBursts.fetch_add(1, std::memory_order_relaxed);
++        return count;
++    }
++
++    void RecordContextBurst(std::uint64_t count)
++    {
++        // Global longest burst is the longest single-context burst, not a mixture
++        // of unrelated contexts. The global currentMissingBurst stays zero.
++        RaisePeak(_peakMissingBurst, count);
++        if (count == 1)
++            _missingBursts.fetch_add(1, std::memory_order_relaxed);
++    }
++
++    bool EndBurst()
++    {
++        if (_currentMissingBurst.exchange(0, std::memory_order_relaxed) == 0)
++            return false;
++        _recoveredBursts.fetch_add(1, std::memory_order_relaxed);
++        return true;
++    }
++
++    void RecordContextRecovery() { _recoveredBursts.fetch_add(1, std::memory_order_relaxed); }
++
++    Snapshot Read() const
++    {
++        // Individual atomic readings can straddle a concurrent allocation/release.
++        // No lock is held and no transactionally consistent snapshot is claimed.
++        Snapshot result;
++        result.liveCopies = _liveCopies.load(std::memory_order_relaxed);
++        result.peakCopies = _peakCopies.load(std::memory_order_relaxed);
++        result.liveBytes = _liveBytes.load(std::memory_order_relaxed);
++        result.peakBytes = _peakBytes.load(std::memory_order_relaxed);
++        result.unknownSizeCopies = _unknownSizeCopies.load(std::memory_order_relaxed);
++        result.allocations = _allocations.load(std::memory_order_relaxed);
++        result.releases = _releases.load(std::memory_order_relaxed);
++        result.allocatedBytes = _allocatedBytes.load(std::memory_order_relaxed);
++        result.releasedBytes = _releasedBytes.load(std::memory_order_relaxed);
++        result.allocationFailures = _allocationFailures.load(std::memory_order_relaxed);
++        result.aliasPreserved = _aliasPreserved.load(std::memory_order_relaxed);
++        result.missingDepthOnly = _missingDepthOnly.load(std::memory_order_relaxed);
++        result.missingVelocityOnly = _missingVelocityOnly.load(std::memory_order_relaxed);
++        result.missingBoth = _missingBoth.load(std::memory_order_relaxed);
++        result.missingFrames = _missingFrames.load(std::memory_order_relaxed);
++        result.missingBursts = _missingBursts.load(std::memory_order_relaxed);
++        result.recoveredBursts = _recoveredBursts.load(std::memory_order_relaxed);
++        result.currentMissingBurst = _currentMissingBurst.load(std::memory_order_relaxed);
++        result.peakMissingBurst = _peakMissingBurst.load(std::memory_order_relaxed);
++        result.accountingErrors = _accountingErrors.load(std::memory_order_relaxed);
++        return result;
++    }
++
++    // BeginContext is called only at a serialized provider-context lifecycle
++    // boundary. Retain live owned copies, which are not freed by a counter reset.
++    Snapshot ResetContext()
++    {
++        const auto start = Read();
++        _peakCopies.store(start.liveCopies, std::memory_order_relaxed);
++        _peakBytes.store(start.liveBytes, std::memory_order_relaxed);
++        _allocations.store(0, std::memory_order_relaxed);
++        _releases.store(0, std::memory_order_relaxed);
++        _allocatedBytes.store(0, std::memory_order_relaxed);
++        _releasedBytes.store(0, std::memory_order_relaxed);
++        _allocationFailures.store(0, std::memory_order_relaxed);
++        _aliasPreserved.store(0, std::memory_order_relaxed);
++        _missingDepthOnly.store(0, std::memory_order_relaxed);
++        _missingVelocityOnly.store(0, std::memory_order_relaxed);
++        _missingBoth.store(0, std::memory_order_relaxed);
++        _missingFrames.store(0, std::memory_order_relaxed);
++        _missingBursts.store(0, std::memory_order_relaxed);
++        _recoveredBursts.store(0, std::memory_order_relaxed);
++        _currentMissingBurst.store(0, std::memory_order_relaxed);
++        _peakMissingBurst.store(0, std::memory_order_relaxed);
++        _accountingErrors.store(0, std::memory_order_relaxed);
++        return start;
++    }
++
++  private:
++    static bool Subtract(std::atomic<std::uint64_t>& counter, std::uint64_t amount)
++    {
++        auto previous = counter.load(std::memory_order_relaxed);
++        while (previous >= amount)
++            if (counter.compare_exchange_weak(previous, previous - amount, std::memory_order_relaxed))
++                return true;
++        return false;
++    }
++
++    std::atomic<std::uint64_t> _liveCopies { 0 }, _peakCopies { 0 }, _liveBytes { 0 }, _peakBytes { 0 };
++    std::atomic<std::uint64_t> _unknownSizeCopies { 0 }, _allocations { 0 }, _releases { 0 };
++    std::atomic<std::uint64_t> _allocatedBytes { 0 }, _releasedBytes { 0 }, _allocationFailures { 0 };
++    std::atomic<std::uint64_t> _aliasPreserved { 0 }, _missingDepthOnly { 0 }, _missingVelocityOnly { 0 };
++    std::atomic<std::uint64_t> _missingBoth { 0 }, _missingFrames { 0 }, _missingBursts { 0 };
++    std::atomic<std::uint64_t> _recoveredBursts { 0 }, _currentMissingBurst { 0 }, _peakMissingBurst { 0 };
++    std::atomic<std::uint64_t> _accountingErrors { 0 };
++};
++
++inline Counters& GlobalCounters()
++{
++    static Counters counters;
++    return counters;
++}
++
++inline std::uint64_t NextContextId()
++{
++    static std::atomic<std::uint64_t> generation { 0 };
++    return generation.fetch_add(1, std::memory_order_relaxed) + 1;
++}
++
++inline bool TakeGlobalLogEntry()
++{
++    static std::atomic<unsigned> entries { 0 };
++    auto previous = entries.load(std::memory_order_relaxed);
++    while (previous < 1024)
++        if (entries.compare_exchange_weak(previous, previous + 1, std::memory_order_relaxed))
++            return true;
++    return false;
++}
++} // namespace Detail
++
++inline Snapshot GlobalSnapshot() { return Detail::GlobalCounters().Read(); }
++
++// Pure clock-driven gate: first report, then at most once per five seconds for
++// a new burst/recovery/failure, otherwise once per 30 seconds. No per-frame log.
++class ReportGate
++{
++  public:
++    bool Take(std::uint64_t nowMs, bool changed)
++    {
++        constexpr auto unset = (std::numeric_limits<std::uint64_t>::max)();
++        auto previous = _lastMs.load(std::memory_order_relaxed);
++        if (previous != unset &&
++            (nowMs < previous || nowMs - previous < (changed ? 5000ULL : 30000ULL)))
++            return false;
++        return _lastMs.compare_exchange_strong(previous, nowMs, std::memory_order_relaxed);
++    }
++
++  private:
++    std::atomic<std::uint64_t> _lastMs { (std::numeric_limits<std::uint64_t>::max)() };
++};
++
++struct Report
++{
++    std::uint64_t contextId = 0;
++    std::uint64_t startLiveCopies = 0;
++    std::uint64_t startLiveBytes = 0;
++    std::uint64_t startUnknownSizeCopies = 0;
++    Snapshot counters;
++};
++
++class Context
++{
++  public:
++    void BeginContext()
++    {
++        const auto start = _counters.ResetContext();
++        _startLiveCopies.store(start.liveCopies, std::memory_order_relaxed);
++        _startLiveBytes.store(start.liveBytes, std::memory_order_relaxed);
++        _startUnknownSizeCopies.store(start.unknownSizeCopies, std::memory_order_relaxed);
++        _contextId.store(Detail::NextContextId(), std::memory_order_relaxed);
++        _revision.fetch_add(1, std::memory_order_relaxed);
++    }
++
++    void OnAllocate(std::uint64_t allocationEstimateBytes, bool sizeKnown = true)
++    {
++        _counters.Allocate(allocationEstimateBytes, sizeKnown);
++        Detail::GlobalCounters().Allocate(allocationEstimateBytes, sizeKnown);
++    }
++
++    void OnRelease(std::uint64_t allocationEstimateBytes, bool sizeKnown = true)
++    {
++        if (_counters.Release(allocationEstimateBytes, sizeKnown))
++            Detail::GlobalCounters().Release(allocationEstimateBytes, sizeKnown);
++        else
++            Detail::GlobalCounters().AccountingError();
++    }
++
++    void OnAllocationFailure()
++    {
++        _counters.AllocationFailure();
++        Detail::GlobalCounters().AllocationFailure();
++        _revision.fetch_add(1, std::memory_order_relaxed);
++    }
++
++    void OnAliasPreserved()
++    {
++        _counters.AliasPreserved();
++        Detail::GlobalCounters().AliasPreserved();
++    }
++
++    void OnMissingInputs(bool depthMissing, bool velocityMissing)
++    {
++        if (!depthMissing && !velocityMissing)
++            return;
++        _counters.Missing(depthMissing, velocityMissing);
++        Detail::GlobalCounters().Missing(depthMissing, velocityMissing);
++        const auto count = _counters.ExtendBurst();
++        Detail::GlobalCounters().RecordContextBurst(count);
++        if (count == 1)
++            _revision.fetch_add(1, std::memory_order_relaxed);
++    }
++
++    void OnInputsReady()
++    {
++        if (_counters.EndBurst())
++        {
++            Detail::GlobalCounters().RecordContextRecovery();
++            _revision.fetch_add(1, std::memory_order_relaxed);
++        }
++    }
++
++    Report Read() const
++    {
++        Report report;
++        report.contextId = _contextId.load(std::memory_order_relaxed);
++        report.startLiveCopies = _startLiveCopies.load(std::memory_order_relaxed);
++        report.startLiveBytes = _startLiveBytes.load(std::memory_order_relaxed);
++        report.startUnknownSizeCopies = _startUnknownSizeCopies.load(std::memory_order_relaxed);
++        report.counters = _counters.Read();
++        return report;
++    }
++
++    bool TryReport(std::uint64_t nowMs, Report& report)
++    {
++        const auto revision = _revision.load(std::memory_order_relaxed);
++        const bool changed = revision != _reportedRevision.load(std::memory_order_relaxed);
++        if (!_gate.Take(nowMs, changed) || !Detail::TakeGlobalLogEntry())
++            return false;
++        _reportedRevision.store(revision, std::memory_order_relaxed);
++        report = Read();
++        return true;
++    }
++
++    // Deliberately no destructor decrement: destroying an owner is not evidence
++    // that an undrained or deliberately retained GPU allocation was released.
++
++  private:
++    Detail::Counters _counters;
++    ReportGate _gate;
++    std::atomic<std::uint64_t> _contextId { 0 }, _startLiveCopies { 0 }, _startLiveBytes { 0 };
++    std::atomic<std::uint64_t> _startUnknownSizeCopies { 0 }, _revision { 0 }, _reportedRevision { 0 };
++};
++} // namespace XeFGDiagnostics
 diff --git a/OptiScaler/proxies/XeFGPacing.h b/OptiScaler/proxies/XeFGPacing.h
 index 1a2761e..35899f1 100644
 --- a/OptiScaler/proxies/XeFGPacing.h
@@ -3493,7 +4577,7 @@ index 18b9aba..ef7f01d 100644
  
      static std::string ToHex(const uint8_t* bytes, uint32_t size)
 diff --git a/OptiScaler/resource_tracking/ResTrack_dx12.cpp b/OptiScaler/resource_tracking/ResTrack_dx12.cpp
-index c96a666..52cab5e 100644
+index c96a666..5054ba8 100644
 --- a/OptiScaler/resource_tracking/ResTrack_dx12.cpp
 +++ b/OptiScaler/resource_tracking/ResTrack_dx12.cpp
 @@ -4,6 +4,7 @@
@@ -3504,7 +4588,81 @@ index c96a666..52cab5e 100644
  
  #include <menu/menu_overlay_dx.h>
  
-@@ -710,6 +711,8 @@ static ULONG STDMETHODCALLTYPE hkHeapRelease(ID3D12DescriptorHeap* This)
+@@ -83,6 +84,9 @@ typedef void(STDMETHODCALLTYPE* PFN_Dispatch)(ID3D12GraphicsCommandList* This, U
+ typedef void(STDMETHODCALLTYPE* PFN_ExecuteBundle)(ID3D12GraphicsCommandList* This,
+                                                    ID3D12GraphicsCommandList* pCommandList);
+ typedef HRESULT(STDMETHODCALLTYPE* PFN_Close)(ID3D12GraphicsCommandList* This);
++typedef HRESULT(STDMETHODCALLTYPE* PFN_ResetCommandList)(ID3D12GraphicsCommandList* This,
++                                                          ID3D12CommandAllocator* allocator,
++                                                          ID3D12PipelineState* initialState);
+ 
+ typedef void(STDMETHODCALLTYPE* PFN_ExecuteCommandLists)(ID3D12CommandQueue* This, UINT NumCommandLists,
+                                                          ID3D12CommandList* const* ppCommandLists);
+@@ -108,6 +112,7 @@ static PFN_DrawInstanced o_DrawInstanced = nullptr;
+ static PFN_DrawIndexedInstanced o_DrawIndexedInstanced = nullptr;
+ static PFN_ExecuteBundle o_ExecuteBundle = nullptr;
+ static PFN_Close o_Close = nullptr;
++static PFN_ResetCommandList o_ResetCommandList = nullptr;
+ 
+ static PFN_ExecuteCommandLists o_ExecuteCommandLists = nullptr;
+ static PFN_Release o_Release = nullptr;
+@@ -628,12 +633,28 @@ void ResTrack_Dx12::hkCreateUnorderedAccessView(ID3D12Device* This, ID3D12Resour
+ 
+ #pragma endregion
+ 
++// Successful Reset cancels an unsubmitted recording; it does not prove GPU idle.
++static HRESULT STDMETHODCALLTYPE hkResetCommandList(ID3D12GraphicsCommandList* This,
++                                                     ID3D12CommandAllocator* allocator,
++                                                     ID3D12PipelineState* initialState)
++{
++    auto fg = State::Instance().currentFG;
++    auto submission = fg != nullptr ? fg->AcquireSubmissionWork() : FGWorkGate::Scope {};
++    const auto result = o_ResetCommandList(This, allocator, initialState);
++    if (SUCCEEDED(result) && submission)
++        fg->DiscardPendingCommandList(This);
++    return result;
++}
++
+ void ResTrack_Dx12::hkExecuteCommandLists(ID3D12CommandQueue* This, UINT NumCommandLists,
+                                           ID3D12CommandList* const* ppCommandLists)
+ {
+     auto fg = State::Instance().currentFG;
++    auto submission = fg != nullptr ? fg->AcquireSubmissionWork() : FGWorkGate::Scope {};
++    if (submission)
++        fg->BeforeCommandSubmission(This, NumCommandLists, ppCommandLists);
+ 
+-    if (fg != nullptr && fg->IsActive() && !fg->IsPaused())
++    if (submission && fg->IsActive() && !fg->IsPaused())
+     {
+         LOG_TRACK("NumCommandLists: {}", NumCommandLists);
+ 
+@@ -687,13 +708,14 @@ void ResTrack_Dx12::hkExecuteCommandLists(ID3D12CommandQueue* This, UINT NumComm
+ 
+         if (!found.empty())
+         {
+-            o_ExecuteCommandLists(This, NumCommandLists, ppCommandLists);
+-
+             for (size_t i = 0; i < found.size(); i++)
+             {
+                 fg->SetCommandQueue(found[i], This);
+             }
+ 
++            o_ExecuteCommandLists(This, NumCommandLists, ppCommandLists);
++            fg->AfterCommandSubmission(NumCommandLists, ppCommandLists);
++
+             return;
+         }
+     }
+@@ -701,6 +723,8 @@ void ResTrack_Dx12::hkExecuteCommandLists(ID3D12CommandQueue* This, UINT NumComm
+     LOG_TRACK("Done NumCommandLists: {}", NumCommandLists);
+ 
+     o_ExecuteCommandLists(This, NumCommandLists, ppCommandLists);
++    if (submission)
++        fg->AfterCommandSubmission(NumCommandLists, ppCommandLists);
+ }
+ 
+ #pragma region Heap hooks
+@@ -710,6 +734,8 @@ static ULONG STDMETHODCALLTYPE hkHeapRelease(ID3D12DescriptorHeap* This)
      if (State::Instance().isShuttingDown)
          return o_HeapRelease(This);
  
@@ -3513,7 +4671,7 @@ index c96a666..52cab5e 100644
      std::shared_ptr<HeapInfo> heapInfo;
      {
          std::shared_lock lock(_heapRegistryMutex);
-@@ -748,6 +751,7 @@ static ULONG STDMETHODCALLTYPE hkHeapRelease(ID3D12DescriptorHeap* This)
+@@ -748,6 +774,7 @@ static ULONG STDMETHODCALLTYPE hkHeapRelease(ID3D12DescriptorHeap* This)
  HRESULT ResTrack_Dx12::hkCreateDescriptorHeap(ID3D12Device* This, D3D12_DESCRIPTOR_HEAP_DESC* pDescriptorHeapDesc,
                                                REFIID riid, void** ppvHeap)
  {
@@ -3521,7 +4679,7 @@ index c96a666..52cab5e 100644
      auto result = o_CreateDescriptorHeap(This, pDescriptorHeapDesc, riid, ppvHeap);
  
      if (State::Instance().skipHeapCapture)
-@@ -784,6 +788,11 @@ HRESULT ResTrack_Dx12::hkCreateDescriptorHeap(ID3D12Device* This, D3D12_DESCRIPT
+@@ -784,6 +811,11 @@ HRESULT ResTrack_Dx12::hkCreateDescriptorHeap(ID3D12Device* This, D3D12_DESCRIPT
  
          LOG_TRACE("Heap: {:X}, Heap type: {}, Cpu: {}-{}, Gpu: {}-{}, Desc count: {}", (size_t) *ppvHeap, type,
                    cpuStart, cpuEnd, gpuStart, gpuEnd, numDescriptors);
@@ -3533,7 +4691,7 @@ index c96a666..52cab5e 100644
          {
              std::unique_lock lock(_heapRegistryMutex);
              size_t count = fgHeaps.size();
-@@ -793,8 +802,7 @@ HRESULT ResTrack_Dx12::hkCreateDescriptorHeap(ID3D12Device* This, D3D12_DESCRIPT
+@@ -793,8 +825,7 @@ HRESULT ResTrack_Dx12::hkCreateDescriptorHeap(ID3D12Device* This, D3D12_DESCRIPT
                  if (fgHeaps[i] != nullptr && !fgHeaps[i]->active.load(std::memory_order_acquire))
                  {
  
@@ -3543,7 +4701,7 @@ index c96a666..52cab5e 100644
  
                      gHeapGeneration.fetch_add(1, std::memory_order_release);
                      foundEmpty = true;
-@@ -809,8 +817,7 @@ HRESULT ResTrack_Dx12::hkCreateDescriptorHeap(ID3D12Device* This, D3D12_DESCRIPT
+@@ -809,8 +840,7 @@ HRESULT ResTrack_Dx12::hkCreateDescriptorHeap(ID3D12Device* This, D3D12_DESCRIPT
                  if (fgHeaps.capacity() == fgHeaps.size())
                      fgHeaps.reserve(fgHeaps.size() + 65536);
  
@@ -3553,6 +4711,61 @@ index c96a666..52cab5e 100644
  
                  gHeapGeneration.fetch_add(1, std::memory_order_release);
                  LOG_DEBUG("Adding new heap slot: {}", fgHeaps.size() - 1);
+@@ -1779,6 +1809,10 @@ void ResTrack_Dx12::HookCommandList(ID3D12Device* InDevice)
+     if (o_OMSetRenderTargets != nullptr)
+         return;
+ 
++    // ReleaseHooks keeps the lifetime observer, like the queue hook. Do not
++    // overwrite its existing trampoline or attach it twice when HUD hooks return.
++    const bool resetHookInstalled = o_ResetCommandList != nullptr;
++
+     ID3D12GraphicsCommandList* commandList = nullptr;
+     ID3D12CommandAllocator* commandAllocator = nullptr;
+ 
+@@ -1802,6 +1836,8 @@ void ResTrack_Dx12::HookCommandList(ID3D12Device* InDevice)
+             o_DrawIndexedInstanced = (PFN_DrawIndexedInstanced) pVTable[13];
+             o_Dispatch = (PFN_Dispatch) pVTable[14];
+             o_Close = (PFN_Close) pVTable[9];
++            if (!resetHookInstalled)
++                o_ResetCommandList = (PFN_ResetCommandList) pVTable[10];
+ 
+             // hudless compute
+             o_SetComputeRootDescriptorTable = (PFN_SetComputeRootDescriptorTable) pVTable[31];
+@@ -1837,6 +1873,8 @@ void ResTrack_Dx12::HookCommandList(ID3D12Device* InDevice)
+ 
+                 if (o_Close != nullptr)
+                     DetourAttach(&(PVOID&) o_Close, hkClose);
++                if (!resetHookInstalled && o_ResetCommandList != nullptr)
++                    DetourAttach(&(PVOID&) o_ResetCommandList, hkResetCommandList);
+ 
+                 if (o_ExecuteBundle != nullptr)
+                     DetourAttach(&(PVOID&) o_ExecuteBundle, hkExecuteBundle);
+@@ -1851,6 +1889,8 @@ void ResTrack_Dx12::HookCommandList(ID3D12Device* InDevice)
+                     o_DrawIndexedInstanced = nullptr;
+                     o_Dispatch = nullptr;
+                     o_Close = nullptr;
++                    if (!resetHookInstalled)
++                        o_ResetCommandList = nullptr;
+                     o_SetComputeRootDescriptorTable = nullptr;
+                     o_ExecuteBundle = nullptr;
+                 }
+@@ -2046,6 +2086,8 @@ void ResTrack_Dx12::ReleaseDeviceHooks()
+ 
+     if (o_Close != nullptr)
+         DetourDetach(&(PVOID&) o_Close, hkClose);
++    if (o_ResetCommandList != nullptr)
++        DetourDetach(&(PVOID&) o_ResetCommandList, hkResetCommandList);
+ 
+     if (o_ExecuteBundle != nullptr)
+         DetourDetach(&(PVOID&) o_ExecuteBundle, hkExecuteBundle);
+@@ -2080,6 +2122,7 @@ void ResTrack_Dx12::ReleaseDeviceHooks()
+         o_DrawInstanced = nullptr;
+         o_Dispatch = nullptr;
+         o_Close = nullptr;
++        o_ResetCommandList = nullptr;
+         o_ExecuteBundle = nullptr;
+ 
+         // Resource
 diff --git a/OptiScaler/upscalers/IFeature.cpp b/OptiScaler/upscalers/IFeature.cpp
 index 8164ca1..890b1ff 100644
 --- a/OptiScaler/upscalers/IFeature.cpp

@@ -45,6 +45,7 @@ def main():
         ("Long-stall pacing recovery and native-forward guards", here / "pacing_guard/run.py"),
         ("Descriptor metadata publication without registry-lock allocation", here / "tracking/run.py"),
         ("Owned-copy allocation failures and safe GPU/provider teardown", here / "memory_lifetime/run.py"),
+        ("R4 copied-resource retagging and concurrent lifecycle admission", here / "r4_resource_safety/run.py"),
     ]
     report = {"passed": False, "gpu_game_tested": False, "tests": []}
     try:

@@ -1,7 +1,7 @@
 {
   "repository": "https://github.com/Coldwood1026/OptiScalerDp4aUnlock",
   "commit": "9eea95bba9fda7121f214d2eba358423be598d7e",
-  "patch_sha256": "3edc3f15e3e2cd83eb55635f48fa728b3319a0acce872eb203c2cf40779bb7e9",
+  "patch_sha256": "2e3b6ca49980d4b8df39facbb86e996d012764dab92df0f1e4a54f56ea0948d7",
   "files": {
     "OptiScaler/Config.cpp": {
       "before_sha256": "abba9b5a3db81e9b2d38c92c23796e0365cdd62b11b8abed5cdb3b68080e2a1d",
@@ -27,6 +27,10 @@
       "before_sha256": "b3a214063eefe998e4d642c89c60a9776e3999574d1f079671c4515d91e79bfb",
       "after_sha256": "9c681bf085d6ca0517d40a7850406f4b87dc7f8a5852d9bfcd5361202986a1d6"
     },
+    "OptiScaler/framegen/FGWorkGate.h": {
+      "before_sha256": null,
+      "after_sha256": "315a4173f465bcea12f44d59abba10466e0070437c0000d1f882cbb31c005c5e"
+    },
     "OptiScaler/framegen/IFGFeature.cpp": {
       "before_sha256": "5cfbbcf8bc768c88b57d9b718f3c531c76a85660c28ebc7c17a0054169d08da7",
       "after_sha256": "4931196c964e2061bb1e5295671b57f0ebd9f82d518012b1a539365d0782e5a5"
@@ -37,11 +41,11 @@
     },
     "OptiScaler/framegen/IFGFeature_Dx12.cpp": {
       "before_sha256": "947a9f55a0fedccc773598f295d1147d7f5c4e7dc96a23f8308fae6a22392752",
-      "after_sha256": "76b1fa99025db4c458cf9b22280fc2e995d181bd7889dba19cf5212397c1a57c"
+      "after_sha256": "88d30b5ba1fc5c357a75c802b29fce57e37b8a539136d5f0434c90c834812aed"
     },
     "OptiScaler/framegen/IFGFeature_Dx12.h": {
       "before_sha256": "35c93ee09e132ea9bb26dd5894be9570bfe88ad3dc3201c3a6dfdb9d22c3587e",
-      "after_sha256": "aee3a9dc412ccef888f54bfb765d11a5ae2fe675f8bf3222873df41b67c5cf9d"
+      "after_sha256": "f03d1316c01d672dc12a8e3a35833e71c69d1f6419ac7595953806752cb59a30"
     },
     "OptiScaler/framegen/IFGFeature_Reset.h": {
       "before_sha256": null,
@@ -49,11 +53,15 @@
     },
     "OptiScaler/framegen/xefg/XeFG_Dx12.cpp": {
       "before_sha256": "9ea89da71cd336ff85b7b41a7b119cdf4a4c892b7478fb37d618bd5ef3f151e9",
-      "after_sha256": "20345a3665075af3bb6129dd1c3afdb83fb62bf8cf86dabc8c921d9ec6ff12c5"
+      "after_sha256": "ea85268390dbd9f70ccccad57a5b7f61e3dc13bb38e735d5e33f57335d9f54b9"
     },
     "OptiScaler/framegen/xefg/XeFG_Dx12.h": {
       "before_sha256": "be231c40c22d20e7f2d6597bca8bf8c64eaa88334874fe2808949ab5b3784748",
-      "after_sha256": "f457df4b40c5535bb843539e280ec704db07ca00b73bfe2daada8854b6ecc825"
+      "after_sha256": "acd2844a5dc8440a5586e86df905076b1719b183d8bf0962540623a69bdb8a2d"
+    },
+    "OptiScaler/hooks/FG_Hooks.cpp": {
+      "before_sha256": "0295a530cbcac7226c2e4de38f97040f5b3262798a9b602ef2b93f9e9b1cd754",
+      "after_sha256": "feb9530241f8d2ce4af4dbdb1dd17a0c81c9c37faccda0d0884c8e7495978081"
     },
     "OptiScaler/hooks/Streamline_Hooks.cpp": {
       "before_sha256": "41abeebeb6c6b761c5a389fd32f19e8cc40fcb96349a8ef77e92fa21675b929c",
@@ -89,7 +97,7 @@
     },
     "OptiScaler/misc/LongSessionMonitor.h": {
       "before_sha256": null,
-      "after_sha256": "843f851065bd0519f98dabf882d0377f74fc0801691c4b37478db1be87c72f82"
+      "after_sha256": "debc1c7addb78f4e47804515d75695169146cd09ce24afe09a33a6fc29ad7948"
     },
     "OptiScaler/misc/LongSessionState.h": {
       "before_sha256": null,
@@ -98,6 +106,10 @@
     "OptiScaler/misc/LongSessionTiming.h": {
       "before_sha256": null,
       "after_sha256": "8cfa93e6edcf3c7c7e4cc2886085840e6c4921662323787a9a84aad45acccec2"
+    },
+    "OptiScaler/misc/XeFGResourceDiagnostics.h": {
+      "before_sha256": null,
+      "after_sha256": "eb1aaee362b46bb41d1fead52228545d67d9fc0f2319deee49f92b73647ccad0"
     },
     "OptiScaler/proxies/XeFGPacing.h": {
       "before_sha256": "453270a4cd3f7944b4f1259f54727f76d5d256c81675b92d1059ab14cc92a507",
@@ -117,7 +129,7 @@
     },
     "OptiScaler/resource_tracking/ResTrack_dx12.cpp": {
       "before_sha256": "00f896845dd0db46118c068e71ded4266598f823958261a619a61ac250516a9c",
-      "after_sha256": "0cc0440e99993526a4a61bf5075656e13ae4885d7d44bfd2746f27eb00ca9535"
+      "after_sha256": "6f39619d223c3e6e4d2daab69940e9d78d216fec6addf0012500c1051073f3ff"
     },
     "OptiScaler/upscalers/IFeature.cpp": {
       "before_sha256": "2a81595bdbe92f77985ce7a274c454d69a2ec6e9e1dd15508b2c7454c9544255",
@@ -166,7 +178,11 @@
     "R3: drain tracked submission queues and destroy Intel context before releasing owned copies, fences and helpers; retain resources safely on exceptional failed teardown",
     "R3: reset pacing on large timing discontinuities and bound only extra CPU pacing waits with checked deadlines; preserve native synchronization and input-time priority",
     "R3: initialize descriptor heap metadata outside registry publication lock",
-    "R3: bounded observational process DXGI memory budgets and CPU timing diagnostics without residency changes or automatic RAM spill"
+    "R3: bounded observational process DXGI memory budgets and CPU timing diagnostics without residency changes or automatic RAM spill",
+    "R4: preserve owned copy and matching resource state when internally re-tagging the same frame entry; clear stale bindings only for fresh input",
+    "R4: close work admission and quiesce CPU resource users, pending recordings, actual command submissions and provider Present/Present1 before GPU drain and context teardown",
+    "R4: protect command submissions and external helper recording within the context work lifetime; guard copy-map cleanup against concurrent resource registration",
+    "R4: bounded owned-copy allocation and release accounting, input-missing reason and recovery summaries; preserve quality, 6x maximum and existing R3 pacing behavior"
   ],
   "profile": {
     "fg_output": "XeFG",
@@ -178,6 +194,6 @@
     "intel_fg_sha256": "ec5e0c65e075570c6ede72618bb666d0be0c2e10b2ea9762c0fe8cb8e375ab27",
     "intel_xell_sha256": "d2030dcd694fda8f2ec7e044b13e6db8f0b56d4ba9113a5efad334e3f3ded8c7"
   },
-  "regression_baseline_builder": "e8e7abe91dd602603308ad3e41a139cd59909cb9",
-  "revision": "r3"
+  "regression_baseline_builder": "3d22ae0e05cb85f9f0e33c5371d9bf5f7350bc32",
+  "revision": "r4"
 }
