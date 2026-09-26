@@ -1,0 +1,115 @@
+{
+  "scope": "Independent static review of R5 lifecycle and ownership changes; not a GPU/game execution result",
+  "source_patch_sha256": "dcb831d11fd9ee1bb4d2e9d05efd9ed45af422aaeeb4ec180d741de189aed80d",
+  "independent_reviewer": "r5_independent_review",
+  "result": "PASS",
+  "checks": [
+    "Soft transition leaves lifetime observation open while closing provider writes and native Present admission",
+    "Full teardown closes work, proves pending zero, closes idle observers, rechecks pending, then proves GPU completion",
+    "Failure before destruction restores prior admission and retains provider/owned objects",
+    "Release callers preserve references and pointers on failed cleanup",
+    "Discard only unsubmitted owned recordings; retain submitted allocator completion evidence",
+    "Validate every command object slot and retry missing objects after partial creation failure",
+    "New deferred alias-reset flag uses atomic storage across input and external cleanup entry points"
+  ],
+  "limits": [
+    "Existing UI fence wait and full actual GPU drain may still wait up to five seconds",
+    "After provider destruction, an unprovable final GPU completion remains terminal retention",
+    "Actual Cyberpunk 2077 and AMD GPU long-session execution not available"
+  ],
+  "reviewed_sha256": {
+    "OptiScaler/framegen/xefg/XeFG_Dx12.cpp": "d127a1bad99ef2db41032350b8a4de48f045906d8936a5215fb821d8c102cd1c",
+    "OptiScaler/framegen/IFGFeature_Dx12.cpp": "bd7cdab53743236fb932cd2be6afdb201f3250aba26ad47928276bd1b4e6a876",
+    "OptiScaler/hooks/FG_Hooks.cpp": "bb45c0afc68feff6a52af6516cf98374092ec47552030d5170ed5b139847648d",
+    "OptiScaler/resource_tracking/ResTrack_dx12.cpp": "5bff32a2bacda73f76696699464c85a72cc138c88750c9bf1e0206a0787fa5be",
+    "OptiScaler/wrapped/wrapped_swapchain.cpp": "3fe6e706afe232db57fb9ebdb48cc88a5040ded35b6d50fec91545997bc1e8e5",
+    "OptiScaler/framegen/xefg/XeFG_Dx12.h": "40ca0f734f3595832cd76f24fd36157ed371b4144ed377121a7de03b840d1f5e"
+  },
+  "quality_review": {
+    "baseline": "7fdfa2eea6f98810014e5a3ca7e193534c206796",
+    "reviewed_at_utc": "2026-09-26T12:04:56.879425+00:00",
+    "scope": "Independent final R5 working-source quality-preservation check against deployed R4 baseline.",
+    "preserved_sources": [
+      {
+        "path": "OptiScaler/Config.cpp",
+        "identical": true,
+        "sha256": "95132e6d1508a5c95abda3767bf093398e65daa6df561970801844b3afbd2ed3"
+      },
+      {
+        "path": "OptiScaler/Config.h",
+        "identical": true,
+        "sha256": "2dc26c030e50da25a2f702ec6b3a06004c5f1d306030272d7bd4b6a54597cc75"
+      },
+      {
+        "path": "OptiScaler/NVNGX_Parameter.cpp",
+        "identical": true,
+        "sha256": "44ed999f681ed821c0019d6c69fcbb73e2d0790dd93565ba2924387274e29d20"
+      },
+      {
+        "path": "OptiScaler/proxies/XeFGUnlock.h",
+        "identical": true,
+        "sha256": "96032aa374bc6800317d72cb44ac14b7b803b8ca2e00e800bb55b0d80e5cf762"
+      },
+      {
+        "path": "OptiScaler/proxies/XeLLUnLock.h",
+        "identical": true,
+        "sha256": "fab080cf89e34472dbc2e50f6afdd3918717b8b6231bf62b29658e69300480bf"
+      },
+      {
+        "path": "OptiScaler/proxies/XeFGPacing.h",
+        "identical": true,
+        "sha256": "58ce5f43bd1409086db18ef9906ac1a5b42ead502e8b8b6f3e20b9dbd4980b06"
+      },
+      {
+        "path": "OptiScaler/proxies/XeFGPacingGuard.h",
+        "identical": true,
+        "sha256": "03bdc66d40c7d27d2860892f7d4df1da753fe933c15294b47a49380b67920758"
+      },
+      {
+        "path": "OptiScaler/hooks/Streamline_Hooks.cpp",
+        "identical": true,
+        "sha256": "cfab569047bdb05832e0dd48b04d91fdc8a04eef86c01fc1f271a6af16a7f521"
+      },
+      {
+        "path": "OptiScaler/inputs/FG/Streamline_Inputs_Dx12.cpp",
+        "identical": true,
+        "sha256": "6405fdc0d74766cf3b50d3308ee55446e3bfe08a8e20cee31732afdb81892b48"
+      },
+      {
+        "path": "OptiScaler/upscalers/ffx/FFXFeature_Dx12.cpp",
+        "identical": true,
+        "sha256": "44861f8e08e1e40747c81f2fce814a4bd858ce031ffaee4adb9d6f927c09e5a9"
+      },
+      {
+        "path": "OptiScaler/upscalers/ffx/FFXFeature_Dx12.h",
+        "identical": true,
+        "sha256": "e9c402e94dd6b83a4a3f6e8898d22968e13736ca36e89b6be55308c443b2b30f"
+      },
+      {
+        "path": "OptiScaler/upscalers/ffx/FFXFeature.cpp",
+        "identical": true,
+        "sha256": "0118d4710a5b978118a9d4ffa03c243eb03628e642e47cf8cea20b37a9b7c5ce"
+      },
+      {
+        "path": "OptiScaler/upscalers/IFeature_Dx12.cpp",
+        "identical": true,
+        "sha256": "76bdf475b972a9443cb5cca5be6c3315444db8b5c58f8be947fbcb76e2e1e1c9"
+      }
+    ],
+    "all_identical": true,
+    "ifgfeature_cpp_whole_file_identical": true,
+    "frame_lifecycle_base_bodies": [
+      {
+        "signature": "IFGFeature::StartNewFrame(",
+        "identical": true,
+        "sha256": "6477aadab7fdcafddebe2bf6f4fa8ab1c27d44470b91575c59e0fa996cda0cba"
+      },
+      {
+        "signature": "IFGFeature::SetFrameCount(",
+        "identical": true,
+        "sha256": "1fc2057e1442127cacaea6edf2311e6f628ec28d8015ef18adc6467ba7e1c14a"
+      }
+    ],
+    "note": "XeFG lifecycle file intentionally changes admission/submission/recovery; no interpolation-limit, provider-unlock, color, exposure, sharpness, or upscale-ratio change in reviewed current diff."
+  }
+}

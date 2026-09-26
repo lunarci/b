@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "review_date": "2026-09-26",
+  "scope": "Selective upstream changes for Intel XeFG R5; preserve R4 quality profile and maximum 6x. This review records source decisions, not gameplay validation.",
+  "donor": {
+    "repo": "Coldwood1026/OptiScalerDp4aUnlock",
+    "sha": "9eea95bba9fda7121f214d2eba358423be598d7e",
+    "date": "2026-09-19T11:12:38Z",
+    "status": "Still newest donor head at review time"
+  },
+  "official_latest": {
+    "head": "44cfee4d436857742a9bf71bbe81396ec9989715",
+    "date": "2026-09-25T19:27:13Z",
+    "nightly": "nightly-20260926",
+    "published": "2026-09-26T09:12:34Z",
+    "asset": "OptiScaler_v10.0.0-pre1_20260926.7z",
+    "sha256": "464e2ecc5dab477e940186959a7fdee64880f61c63f52ff0f516e5502bc74e94",
+    "repository": "https://github.com/optiscaler/OptiScaler",
+    "nightly_repository": "https://github.com/optiscaler/OptiScaler-nightly",
+    "nightly_url": "https://github.com/optiscaler/OptiScaler-nightly/releases/tag/nightly-20260926",
+    "decision": "Keep pinned donor plus reviewed patches; do not replace the complete runtime with latest nightly."
+  },
+  "intel_runtime": {
+    "repository": "https://github.com/intel/xess",
+    "latest_tag": "v3.0.2",
+    "published_at": "2026-07-24T18:24:17Z",
+    "decision": "Retain R4 Intel runtime files; current release improvements are already in the existing versions.",
+    "release_facts": [
+      {
+        "tag": "v3.0.2",
+        "url": "https://github.com/intel/xess/releases/tag/v3.0.2",
+        "changes": "Updates XeLL to 1.3.2.10: non-Intel leak when Present stops while markers continue; Streamline proxy handling; sleep-mode interval units."
+      },
+      {
+        "tag": "v3.0.1",
+        "url": "https://github.com/intel/xess/releases/tag/v3.0.1",
+        "changes": "FG fixes tight-alignment crashes and FPS-limit lowering after ResizeBuffers or interpolation-count changes."
+      }
+    ],
+    "r4_runtime_files": [
+      {
+        "path": "OptiScaler/libxess_fg.dll",
+        "file_version": "1.3.1.78",
+        "sha256": "ec5e0c65e075570c6ede72618bb666d0be0c2e10b2ea9762c0fe8cb8e375ab27"
+      },
+      {
+        "path": "OptiScaler/libxell.dll",
+        "file_version": "1.3.2.10",
+        "sha256": "d2030dcd694fda8f2ec7e044b13e6db8f0b56d4ba9113a5efad334e3f3ded8c7"
+      }
+    ],
+    "verification": "R4 package SHA256 and PE version metadata checked locally. Release status checked through GitHub API; no fresh SDK archive byte comparison was performed in this review."
+  },
+  "decisions": [
+    {
+      "repository": "https://github.com/optiscaler/OptiScaler",
+      "commit": "349176128f5ce87fb81a4c636569c60c44557fec",
+      "date": "2026-09-18T12:04:54Z",
+      "title": "Disable XeFG backbuffer release hack",
+      "decision": "adopt_narrow",
+      "reason": "R4 still contains both repeated backbuffer Release loops in FG_Hooks ResizeBuffers/1. Official commit disables these ownership-violating forced decrements. No new shader, quality profile or FG implementation.",
+      "url": "https://github.com/optiscaler/OptiScaler/commit/349176128f5ce87fb81a4c636569c60c44557fec"
+    },
+    {
+      "repository": "https://github.com/optiscaler/OptiScaler",
+      "commit": "9df3ed0c14ab353f4476cef4498c1362c27a5cd2",
+      "date": "2026-09-18T12:45:43Z",
+      "title": "Applied Dx11 like lock for XeFG on Dx12",
+      "decision": "do_not_cherry_pick",
+      "reason": "Shared resizeLock scopes do not span actual native Present/Resize calls; helper retains5000ms waits and callers continue on failure. Review concept under R5 redesign only; do not reintroduce repeated stalls.",
+      "url": "https://github.com/optiscaler/OptiScaler/commit/9df3ed0c14ab353f4476cef4498c1362c27a5cd2"
+    },
+    {
+      "repository": "https://github.com/optiscaler/OptiScaler",
+      "commit": "6ded74bfa4fbb932fda7184c1263fc45380d5b1d",
+      "date": "2026-09-23T18:49:11Z",
+      "title": "Factor out FGPreserveSwapChain handling into common code",
+      "decision": "defer",
+      "reason": "Commonizes duplicate FGPreserveSwapChain logic without solving pending-command observer/recovery; broad backend interface changes. It also keeps forced real swapchain Release until0. R4 added ReleaseSwapchain failure check would need preservation.",
+      "url": "https://github.com/optiscaler/OptiScaler/commit/6ded74bfa4fbb932fda7184c1263fc45380d5b1d"
+    },
+    {
+      "repository": "https://github.com/optiscaler/OptiScaler",
+      "commit": "22e6ea28e999ca83c6d17b074bd8a51089b7d320",
+      "date": "2026-09-16T21:59:56Z",
+      "title": "Fix active Streamline binding and resource view cleanup [#1157]",
+      "decision": "defer",
+      "reason": "Active Opti Streamline proxy binding pertains to own DLSSG output, not user game Streamline input feeding XeFG. Graphics view changes are separate depth-plane helper fix not established cause of current stalls.",
+      "url": "https://github.com/optiscaler/OptiScaler/commit/22e6ea28e999ca83c6d17b074bd8a51089b7d320"
+    },
+    {
+      "repository": "https://github.com/optiscaler/OptiScaler",
+      "commit": "e8c9834db76df81c2bfe2abc1c4d8df3de0a6dfd",
+      "date": "2026-09-18T18:31:55Z",
+      "title": "Removed JustTrackCmdList and hooks needed for it",
+      "decision": "defer",
+      "reason": "Removes old HUDfix JustTrackCmdList feature through broad resource tracker refactor. Not R4 pending submission state tracking. Avoid enabling broad HUDfix tracking just to observe queue/reset.",
+      "url": "https://github.com/optiscaler/OptiScaler/commit/e8c9834db76df81c2bfe2abc1c4d8df3de0a6dfd"
+    },
+    {
+      "repository": "https://github.com/optiscaler/OptiScaler",
+      "commit": "44cfee4d436857742a9bf71bbe81396ec9989715",
+      "date": "2026-09-25T19:27:13Z",
+      "title": "Latest official head / reprojection merge series",
+      "decision": "do_not_replace_baseline_with_latest",
+      "reason": "Sep25/26 merge series adds reprojection/shaders/input camera pipeline and known AL2-disabled/multiple inflight camera artifacts; extra feature outside Intel-only stability task.",
+      "url": "https://github.com/optiscaler/OptiScaler/commit/44cfee4d436857742a9bf71bbe81396ec9989715"
+    }
+  ],
+  "integration_notes": [
+    "Apply the behavior of 349176128f5ce87fb81a4c636569c60c44557fec to both ResizeBuffers variants: remove forced borrowed-backbuffer Release loops. Do not claim the entire commit series was cherry-picked.",
+    "Queue Execute and command-list Reset observers must work for Streamline DLSSG input without enabling unrelated HUDfix capture or broad resource tracking.",
+    "Do not alter upscale ratio, AMD upscaler binary, HDR/color/exposure defaults, MFG unlock signature checks, or the maximum 6x setting as part of upstream adoption.",
+    "The latest reprojection series documents AL2-disabled and multiple-inflight camera artifacts. Its shaders and input pipeline are outside this stability task."
+  ]
+}

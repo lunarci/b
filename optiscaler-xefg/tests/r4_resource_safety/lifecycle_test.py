@@ -38,10 +38,10 @@ def compile_and_run(source, name):
         cpp.write_text(source, encoding="utf-8")
         compiler = os.environ.get("CXX") or ("cl" if os.name == "nt" and shutil.which("cl") else "g++")
         if Path(compiler).name.lower() in ("cl", "cl.exe"):
-            command = [compiler, "/nologo", "/std:c++20", "/EHsc", "/Od", "/W4",
+            command = [compiler, "/nologo", "/std:c++20", "/EHsc", "/Od", "/UNDEBUG", "/W4",
                        "/I" + str(ROOT / "OptiScaler"), str(cpp), "/Fe:" + str(exe)]
         else:
-            command = [compiler, "-std=c++20", "-O0", "-Wall", "-Wextra", "-pthread",
+            command = [compiler, "-std=c++20", "-O0", "-UNDEBUG", "-Wall", "-Wextra", "-pthread",
                        "-I", str(ROOT / "OptiScaler"), str(cpp), "-o", str(exe)]
         subprocess.run(command, check=True, cwd=temp, timeout=90)
         subprocess.run([str(exe)], check=True, cwd=temp, timeout=30)
@@ -55,6 +55,7 @@ hook = body("OptiScaler/resource_tracking/ResTrack_dx12.cpp",
             "void ResTrack_Dx12::hkExecuteCommandLists(")
 hook_harness = r'''
 #include <framegen/FGWorkGate.h>
+#include <misc/XeFGWorkDiagnostics.h>
 #include <atomic>
 #include <cassert>
 #include <chrono>
@@ -78,8 +79,10 @@ struct ID3D12CommandAllocator {};
 struct ID3D12PipelineState {};
 struct ID3D12CommandQueue {};
 static std::vector<char> events;
+bool IsHudFixActive() { return true; }
 struct FakeFG {
-    FGWorkGate gate;
+    FGWorkGate gate,resourceGate;
+    auto AcquireWork() { return resourceGate.TryEnter(); }
     bool active = true, paused = false;
     std::atomic<bool> tracked{false}, after{false};
     unsigned beforeCalls = 0, afterCalls = 0, readyCalls = 0;
@@ -255,7 +258,12 @@ compile_and_run(hook_harness + "\n" + reset_boundary + "\n" + reset_hook + "\n" 
 pending_bodies = "\n\n".join(body("OptiScaler/framegen/xefg/XeFG_Dx12.cpp", signature)
                             for signature in (
     "bool XeFG_Dx12::QuiesceWork()",
-    "void XeFG_Dx12::TrackPendingCommandList(",
+    "bool XeFG_Dx12::TryCloseCpuAdmission()",
+    "void XeFG_Dx12::RestoreCpuAdmission()",
+    "uint64_t XeFG_Dx12::CapturePendingCommandListGeneration(",
+    "void XeFG_Dx12::RetirePendingCommandList(",
+    "void XeFG_Dx12::PublishPendingLocked()",
+    "bool XeFG_Dx12::TrackPendingCommandList(",
     "void XeFG_Dx12::DiscardPendingCommandList(",
     "void XeFG_Dx12::BeforeCommandSubmission(",
     "void XeFG_Dx12::AfterCommandSubmission(",
@@ -263,6 +271,7 @@ pending_bodies = "\n\n".join(body("OptiScaler/framegen/xefg/XeFG_Dx12.cpp", sign
 ))
 pending_harness = r'''
 #include <framegen/FGWorkGate.h>
+#include <misc/XeFGWorkDiagnostics.h>
 #include <algorithm>
 #include <atomic>
 #include <cassert>
@@ -297,14 +306,25 @@ struct ID3D12CommandQueue {
     unsigned refs = 0;
     void AddRef() { ++refs; }
 };
+namespace ResTrack_Dx12 { static bool observersReady=true;
+    bool LifetimeObserversReady(ID3D12GraphicsCommandList*,ID3D12CommandQueue*) { return observersReady; } }
 struct XeFG_Dx12 {
-    FGWorkGate _workGate, _submissionGate;
+    FGWorkGate _workGate, _providerPresentGate, _submissionGate;
+    bool _workWasClosed=false,_presentWasClosed=false,_submissionWasClosed=false,_submissionClosedByLifecycle=false;
+    XeFGDiagnostics::WorkDiagnostics _workDiagnostics;
+    XeFGDiagnostics::PendingSnapshot _pendingStats;
+    uint64_t _pendingGeneration=0;
+    ID3D12CommandQueue* _gameCommandQueue=nullptr;
+    bool TryCloseCpuAdmission(); void RestoreCpuAdmission(); void PublishPendingLocked();
+    uint64_t CapturePendingCommandListGeneration(const void*);
+    void RetirePendingCommandList(const void*,uint64_t);
     std::recursive_mutex _lifecycleMutex;
     std::mutex _pendingCommandMutex, _lifetimeQueueMutex;
     std::condition_variable _pendingCommandsSubmitted;
     static constexpr size_t MaxPendingCommandLists = 256;
     static constexpr size_t MaxLifetimeQueues = 8;
-    ID3D12CommandList* _pendingCommandLists[MaxPendingCommandLists]{};
+    struct PendingCommandList { ID3D12CommandList* identity=nullptr; uint64_t generation=0,firstSeenTickMs=0; };
+    PendingCommandList _pendingCommandLists[MaxPendingCommandLists]{};
     size_t _pendingCommandListCount = 0;
     bool _pendingTrackingComplete = true, _queueTrackingComplete = true;
     std::atomic<bool> _lifecycleFailed{false};
@@ -321,7 +341,7 @@ struct XeFG_Dx12 {
         std::lock_guard lock(_pendingCommandMutex);
         return _pendingCommandListCount != 0 || !_pendingTrackingComplete;
     }
-    void TrackPendingCommandList(ID3D12GraphicsCommandList*);
+    bool TrackPendingCommandList(ID3D12GraphicsCommandList*);
     void DiscardPendingCommandList(ID3D12GraphicsCommandList*);
     void BeforeCommandSubmission(ID3D12CommandQueue*, UINT, ID3D12CommandList* const*);
     void AfterCommandSubmission(UINT, ID3D12CommandList* const*);
@@ -338,39 +358,28 @@ template<class Predicate> void await(Predicate predicate) {
 pending_tests = r'''
 int main() {
     {
-        // Shutdown starts with a live tag operation. Its game-owned list must
-        // still be allowed to submit after NEW tagging admission is closed.
-        XeFG_Dx12 fg;
-        ID3D12GraphicsCommandList list;
-        ID3D12CommandList* lists[]{&list};
-        ID3D12CommandQueue queue;
-        std::latch taggingEntered{1}, finishTagging{1};
-        std::thread tag([&] {
-            auto work = fg.AcquireWork(); assert(work);
-            fg.TrackPendingCommandList(&list);
-            taggingEntered.count_down(); finishTagging.wait();
-        });
-        taggingEntered.wait();
-        auto cleanup = std::async(std::launch::async, [&] { return fg.QuiesceWork(); });
-        await([&] { return fg._workGate.IsClosed(); });
-        assert(!fg.AcquireWork());
-        assert(cleanup.wait_for(0ms) == std::future_status::timeout);
-        finishTagging.count_down(); tag.join();
+        // R5 defers immediately when CPU tagging is in flight. Both admission
+        // gates roll back, while the independent game observer remains live.
+        XeFG_Dx12 fg; ID3D12GraphicsCommandList list;
+        ID3D12CommandList* lists[]{&list}; ID3D12CommandQueue queue;
+        { auto work=fg.AcquireWork(); assert(work && fg.TrackPendingCommandList(&list));
+          auto begin=std::chrono::steady_clock::now(); assert(!fg.QuiesceWork());
+          assert(std::chrono::steady_clock::now()-begin<250ms);
+          assert(!fg._workGate.IsClosed() && !fg._providerPresentGate.IsClosed() && !fg._submissionGate.IsClosed()); }
         assert(fg.PendingForTest());
-        {
-            auto work = fg.AcquireSubmissionWork(); assert(work);
-            fg.BeforeCommandSubmission(&queue, 1, lists);
-            // The actual before callback must retain the queue before Execute.
-            assert(queue.refs == 1 && fg._lifetimeQueueCount == 1);
-            assert(fg.PendingForTest());
-            fg.AfterCommandSubmission(1, lists);
-            assert(!fg.PendingForTest());
-            await([&] { return fg._submissionGate.IsClosed(); });
-            assert(cleanup.wait_for(0ms) == std::future_status::timeout);
-        }
-        assert(cleanup.wait_for(1s) == std::future_status::ready && cleanup.get());
-        assert(fg._workGate.IsClosed() && fg._submissionGate.IsClosed());
-        assert(!fg.AcquireSubmissionWork());
+        auto begin=std::chrono::steady_clock::now(); assert(!fg.QuiesceWork());
+        assert(std::chrono::steady_clock::now()-begin<250ms);
+        assert(!fg._workGate.IsClosed() && !fg._submissionGate.IsClosed());
+        { auto work=fg.AcquireSubmissionWork(); assert(work);
+          fg.BeforeCommandSubmission(&queue,1,lists);
+          assert(queue.refs==1 && fg._lifetimeQueueCount==1 && fg.PendingForTest());
+          fg.AfterCommandSubmission(1,lists); assert(!fg.PendingForTest());
+          // Observer bookkeeping in flight must also defer without closing it.
+          assert(!fg.QuiesceWork());
+          assert(!fg._workGate.IsClosed() && !fg._providerPresentGate.IsClosed() && !fg._submissionGate.IsClosed()); }
+        assert(fg.QuiesceWork());
+        assert(fg._workGate.IsClosed() && fg._providerPresentGate.IsClosed() && fg._submissionGate.IsClosed());
+        assert(!fg.AcquireWork() && !fg.AcquireSubmissionWork());
     }
     {
         // Duplicate tags of one command list require one submission, whereas
@@ -438,268 +447,53 @@ int main() {
     }
     {
         // A recorded game list can be discarded/reset without Execute. Until
-        // that lifecycle is observed, production must time out and KEEP its
+        // that lifecycle is observed, production must defer and KEEP its
         // pending identity instead of treating the resources as safe to free.
         XeFG_Dx12 fg;
         ID3D12GraphicsCommandList discarded;
         fg.TrackPendingCommandList(&discarded);
         assert(!fg.QuiesceWork());
-        assert(fg._workGate.IsClosed() && fg.PendingForTest());
+        assert(!fg._workGate.IsClosed() && !fg._providerPresentGate.IsClosed() && !fg._submissionGate.IsClosed() && fg.PendingForTest());
         assert(fg._pendingCommandListCount == 1);
     }
     {
-        // A full registry cannot silently claim that all injected GPU uses
-        // were tracked. Failure must preserve resources, not permit cleanup.
-        XeFG_Dx12 fg;
-        ID3D12GraphicsCommandList lists[XeFG_Dx12::MaxPendingCommandLists + 1];
-        for (auto& list : lists) fg.TrackPendingCommandList(&list);
-        assert(!fg._pendingTrackingComplete && fg.PendingForTest());
-        assert(!fg.QuiesceWork());
-        assert(fg._workGate.IsClosed());
+        // Capacity failure rejects the new recording BEFORE any GPU injection;
+        // existing tracked recordings stay complete and can finish/recover.
+        XeFG_Dx12 fg; ID3D12GraphicsCommandList lists[XeFG_Dx12::MaxPendingCommandLists+1];
+        for(size_t i=0;i<XeFG_Dx12::MaxPendingCommandLists;++i) assert(fg.TrackPendingCommandList(&lists[i]));
+        assert(!fg.TrackPendingCommandList(&lists[XeFG_Dx12::MaxPendingCommandLists]));
+        assert(fg._pendingTrackingComplete && fg._pendingCommandListCount==XeFG_Dx12::MaxPendingCommandLists);
+        assert(!fg.QuiesceWork() && !fg._workGate.IsClosed());
+        for(size_t i=0;i<XeFG_Dx12::MaxPendingCommandLists;++i) fg.DiscardPendingCommandList(&lists[i]);
+        assert(!fg.PendingForTest() && fg.QuiesceWork());
+    }
+    {
+        // Missing observers reject tagging without poisoning or adding pending.
+        XeFG_Dx12 fg; ID3D12GraphicsCommandList list;
+        ResTrack_Dx12::observersReady=false;
+        assert(!fg.TrackPendingCommandList(&list) && !fg.PendingForTest());
+        ResTrack_Dx12::observersReady=true;
+        assert(fg.TrackPendingCommandList(&list));
+        auto oldGeneration=fg.CapturePendingCommandListGeneration(&list); assert(oldGeneration!=0);
+        fg.DiscardPendingCommandList(&list); assert(fg.TrackPendingCommandList(&list));
+        auto newGeneration=fg.CapturePendingCommandListGeneration(&list); assert(newGeneration>oldGeneration);
+        fg.RetirePendingCommandList(&list,oldGeneration); assert(fg.PendingForTest());
+        fg.RetirePendingCommandList(&list,0); assert(fg.PendingForTest());
+        fg.RetirePendingCommandList(&list,newGeneration); assert(!fg.PendingForTest());
+        assert(fg._pendingStats.registered==2 && fg._pendingStats.resetDiscarded==1 && fg._pendingStats.destroyed==1);
+    }
+    {
+        // Observation age is diagnostic only, never evidence for freeing work.
+        XeFG_Dx12 fg; ID3D12GraphicsCommandList list; assert(fg.TrackPendingCommandList(&list));
+        fg._pendingCommandLists[0].firstSeenTickMs=1; fg.PublishPendingLocked();
+        assert(!fg.QuiesceWork() && fg._pendingCommandListCount==1 && fg.PendingForTest());
+        assert(!fg._workGate.IsClosed() && !fg._providerPresentGate.IsClosed() && !fg._submissionGate.IsClosed());
     }
     std::cout << "PASS: actual pending-list quiescence, late submission, queue ownership and overflow tests\n";
 }
 '''
 compile_and_run(pending_harness + "\n" + pending_bodies + "\n" + pending_tests, "pending_work")
 
-# Compile the complete production FGPresent function, retaining its mutex,
-# provider selection, early exits and marker/semaphore cleanup control flow.
-present_body = body("OptiScaler/hooks/FG_Hooks.cpp", "HRESULT FGHooks::FGPresent(")
-present_harness = r'''
-#include <framegen/FGWorkGate.h>
-#include <atomic>
-#include <cassert>
-#include <chrono>
-#include <cstdint>
-#include <deque>
-#include <future>
-#include <iostream>
-#include <latch>
-#include <mutex>
-#include <optional>
-#include <thread>
-using namespace std::chrono_literals;
-using HRESULT = int; using UINT = unsigned; using IUnknown = void;
-constexpr HRESULT S_OK = 0, DXGI_ERROR_DEVICE_REMOVED = -5;
-constexpr UINT DXGI_PRESENT_TEST = 1, DXGI_PRESENT_ALLOW_TEARING = 2;
-#define LOG_DEBUG(...) ((void)0)
-#define LOG_TRACE(...) ((void)0)
-struct DXGI_PRESENT_PARAMETERS {};
-struct IDXGISwapChain { UINT GetCurrentBackBufferIndex() { return 0; } };
-using IDXGISwapChain1 = IDXGISwapChain;
-using IDXGISwapChain4 = IDXGISwapChain;
-struct ID3D11DeviceContext { void Release() {} };
-struct ID3D11Device {
-    ID3D11DeviceContext context;
-    void GetImmediateContext(ID3D11DeviceContext** output) { *output = &context; }
-};
-template<class T> struct Setting {
-    T value{};
-    T value_or_default() const { return value; }
-};
-struct Config {
-    static inline Config* current = nullptr;
-    static Config* Instance() { return current; }
-    Setting<bool> FGUseMutexForSwapchain{true};
-    Setting<bool> FGDLSSGUseGamesReflexMarkers{true};
-    std::optional<bool> ForceVsync{};
-    Setting<UINT> VsyncInterval{1};
-    Setting<bool> SimulateWaitableObject{true};
-};
-struct OwnedMutex {
-    std::mutex mutex;
-    std::atomic<int> owner{0};
-    unsigned locks = 0, unlocks = 0;
-    int getOwner() { return owner.load(); }
-    void lock(int id) { mutex.lock(); owner = id; ++locks; }
-    void unlockThis(int id) { assert(owner == id); owner = 0; ++unlocks; mutex.unlock(); }
-};
-struct FakeFG {
-    FGWorkGate submissionGate;
-    OwnedMutex Mutex;
-    bool active = true, paused = false;
-    bool requireMutexBeforeAdmission = false;
-    unsigned fgPresents = 0;
-    bool IsActive() const { return active; }
-    bool IsPaused() const { return paused; }
-    unsigned FrameCount() const { return 1; }
-    void Present() { ++fgPresents; }
-    auto AcquireSubmissionWork() {
-        if (requireMutexBeforeAdmission) assert(Mutex.getOwner() == 2);
-        return submissionGate.TryEnter();
-    }
-};
-using IFGFeature = FakeFG;
-struct Feature {
-    std::optional<double> ReadUpscalerTime(void*) { return {}; }
-    void ReadDetailedGpuTimes(void*, int&) {}
-};
-enum class SwapchainInteropApi { None, Dx11wDx12 };
-enum class FGOutput { NoFG, XeFG, DLSSG };
-enum class FGInput { Other, FSRFG, FSRFG30 };
-enum class GameEngineType { Other, Unity };
-struct State {
-    static inline State* current = nullptr;
-    static State& Instance() { return *current; }
-    bool isShuttingDown = false;
-    unsigned fgLastFrame = 0;
-    double lastFGFrameTime = 0;
-    FakeFG* currentFG = nullptr;
-    Feature* currentFeature = nullptr;
-    SwapchainInteropApi swapchainInteropApi = SwapchainInteropApi::None;
-    ID3D11Device* currentD3D11Device = nullptr;
-    void* currentD3D12Device = nullptr;
-    void* currentCommandQueue = nullptr;
-    int detailedGpuTimes = 0;
-    std::mutex frameTimeMutex;
-    std::deque<double> upscaleTimes{0.0};
-    unsigned dlssgDetectedInterpolationCount = 5;
-    FGOutput activeFgOutput = FGOutput::XeFG;
-    FGInput activeFgInput = FGInput::Other;
-    bool SCAllowTearing = false, realExclusiveFullscreen = false, fgPresentIsCalled = false;
-    bool reflexLimitsFps = true;
-    GameEngineType gameEngine = GameEngineType::Other;
-};
-namespace Util {
-    double MillisecondsNow() { return 50.0; }
-    void GetDeviceRemovedReason(void*) {}
-}
-namespace sl {
-    struct FrameToken {};
-    enum class Result { eErrorReflexAPI, eOk };
-    enum class PCLMarker { ePresentStart, ePresentEnd };
-}
-namespace ReflexHooks { bool gameIsSendingMarkers() { return true; } }
-namespace StreamlineProxy {
-    void marker(sl::PCLMarker, sl::FrameToken&) {}
-    auto PCLSetMarker() { return &marker; }
-    sl::Result token(sl::FrameToken*&, const uint32_t*) { return sl::Result::eErrorReflexAPI; }
-    auto GetNewFrameToken() { return &token; }
-    void sleep(sl::FrameToken&) {}
-    auto ReflexSleep() { return &sleep; }
-}
-void ffxPresentCallback() {}
-namespace FSR3FG { void ffxPresentCallback() {} }
-namespace ResTrack_Dx12 { void ClearPossibleHudless() {} }
-namespace Hudfix_Dx12 {
-    static unsigned starts = 0, ends = 0;
-    void PresentStart() { ++starts; }
-    void PresentEnd() { ++ends; }
-}
-namespace IdentifyGpu {
-    struct Gpu { bool usesDxvk = false; };
-    Gpu getPrimaryGpu() { return {}; }
-}
-namespace XellHooks { bool canLimit() { return true; } }
-namespace FrameLimit { void sleep(bool) {} }
-static unsigned semaphoreReleases = 0;
-void ReleaseSemaphore(void*, int count, void*) { assert(count == 1); ++semaphoreReleases; }
-struct FGHooks {
-    static inline UINT _lastPresentFlags = 0;
-    static inline double _lastFGFrameTime = 0.0;
-    static inline void* _semaphore = reinterpret_cast<void*>(1);
-    static HRESULT FGPresent(IDXGISwapChain*, UINT, UINT, const DXGI_PRESENT_PARAMETERS*);
-};
-static unsigned nativePresentCalls = 0, nativePresent1Calls = 0;
-static std::latch* nativeEntered = nullptr;
-static std::latch* nativeRelease = nullptr;
-static HRESULT nativeResult = 7;
-HRESULT nativeWait() {
-    if (nativeEntered) nativeEntered->count_down();
-    if (nativeRelease) nativeRelease->wait();
-    return nativeResult;
-}
-HRESULT o_FGSCPresent(IDXGISwapChain*, UINT, UINT) {
-    ++nativePresentCalls; return nativeWait();
-}
-HRESULT o_FGSCPresent1(IDXGISwapChain1*, UINT, UINT, const DXGI_PRESENT_PARAMETERS*) {
-    ++nativePresent1Calls; return nativeWait();
-}
-struct Fixture {
-    Config config;
-    State state;
-    IDXGISwapChain swapchain;
-    DXGI_PRESENT_PARAMETERS parameters;
-    Fixture() {
-        Config::current = &config; State::current = &state;
-        nativePresentCalls = nativePresent1Calls = semaphoreReleases = 0;
-        Hudfix_Dx12::starts = Hudfix_Dx12::ends = 0;
-        nativeEntered = nativeRelease = nullptr; nativeResult = 7;
-        FGHooks::_lastFGFrameTime = 0.0;
-    }
-    HRESULT call(bool present1, UINT flags = 0) {
-        return FGHooks::FGPresent(&swapchain, 1, flags, present1 ? &parameters : nullptr);
-    }
-    unsigned nativeCount() const { return nativePresentCalls + nativePresent1Calls; }
-};
-'''
-present_tests = r'''
-int main() {
-    for (bool present1 : {false, true}) {
-      for (bool active : {false, true}) {
-       for (UINT flags : {0u, DXGI_PRESENT_TEST}) {
-        // The actual native provider call is held open while shutdown attempts
-        // to drain. A token scoped only to fg->Present() would fail this case.
-        Fixture fixture; FakeFG fg; fixture.state.currentFG = &fg;
-        fg.active = active;
-        const unsigned expectedActiveCalls = active && flags == 0 ? 1u : 0u;
-        fg.requireMutexBeforeAdmission = expectedActiveCalls != 0;
-        std::latch entered{1}, release{1}; nativeEntered = &entered; nativeRelease = &release;
-        std::thread presenting([&] { assert(fixture.call(present1, flags) == nativeResult); });
-        entered.wait();
-        auto cleanup = std::async(std::launch::async, [&] {
-            return fg.submissionGate.CloseAndWait(3s);
-        });
-        const auto deadline = std::chrono::steady_clock::now() + 2s;
-        while (!fg.submissionGate.IsClosed()) {
-            assert(std::chrono::steady_clock::now() < deadline);
-            std::this_thread::yield();
-        }
-        assert(cleanup.wait_for(0ms) == std::future_status::timeout);
-        release.count_down(); presenting.join();
-        assert(cleanup.wait_for(1s) == std::future_status::ready && cleanup.get());
-        assert(fixture.nativeCount() == 1 && fg.fgPresents == expectedActiveCalls);
-        assert((present1 ? nativePresent1Calls : nativePresentCalls) == 1);
-        assert(fg.Mutex.locks == expectedActiveCalls && fg.Mutex.unlocks == expectedActiveCalls && fg.Mutex.getOwner() == 0);
-        assert(semaphoreReleases == 1 && Hudfix_Dx12::ends == 1);
-       }
-      }
-    }
-    for (bool present1 : {false, true}) {
-        Fixture fixture; FakeFG fg; fixture.state.currentFG = &fg;
-        fg.requireMutexBeforeAdmission = true;
-        assert(fg.submissionGate.CloseAndWait(1s));
-        assert(fixture.call(present1) == S_OK);
-        assert(fixture.nativeCount() == 0 && fg.fgPresents == 0);
-        assert(!fixture.state.fgPresentIsCalled);
-        assert(fg.Mutex.locks == 1 && fg.Mutex.unlocks == 1 && fg.Mutex.getOwner() == 0);
-        assert(semaphoreReleases == 1 && Hudfix_Dx12::ends == 1);
-    }
-    for (bool present1 : {false, true}) {
-        for (bool inactive : {false, true}) {
-            Fixture fixture; FakeFG fg; fixture.state.currentFG = &fg;
-            fg.active = !inactive; fg.paused = !inactive;
-            assert(fixture.call(present1) == nativeResult);
-            assert(fixture.nativeCount() == 1 && fg.fgPresents == 0);
-            assert(fg.Mutex.locks == 0 && fg.Mutex.unlocks == 0);
-        }
-        {
-            Fixture fixture; FakeFG fg; fixture.state.currentFG = &fg;
-            assert(fixture.call(present1, DXGI_PRESENT_TEST) == nativeResult);
-            assert(fixture.nativeCount() == 1 && fg.fgPresents == 0);
-            assert(fg.Mutex.locks == 0 && fg.Mutex.unlocks == 0);
-            assert(fg.submissionGate.CloseAndWait(1s));
-            assert(fixture.call(present1, DXGI_PRESENT_TEST) == S_OK);
-            assert(fixture.nativeCount() == 1);
-        }
-        {
-            Fixture fixture; fixture.state.currentFG = nullptr;
-            assert(fixture.call(present1) == nativeResult);
-            assert(fixture.nativeCount() == 1);
-            assert(semaphoreReleases == 1);
-        }
-    }
-    std::cout << "PASS: complete FGPresent native Present/Present1 lifetime, admission, passthrough and cleanup tests\n";
-}
-'''
-compile_and_run(present_harness + "\n" + present_body + "\n" + present_tests, "native_present")
+# This separate harness preserves the complete native Present/Present1 coverage
+# and adds reopening checks using the independent provider Present gate.
+subprocess.run([sys.executable, str(HERE / "native_present_test.py"), str(ROOT)], check=True)

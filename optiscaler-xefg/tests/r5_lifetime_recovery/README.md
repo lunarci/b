@@ -1,0 +1,12 @@
+# R5 production-path regression harness
+
+Run `python optiscaler-xefg/tests/r5_lifetime_recovery/run.py <OptiScaler source>` or the complete `tests/run.py` entry point. C++20 tests compile with the same MSVC/Linux compiler selection as the existing suites.
+
+The harness extracts the complete current production functions at test time. It substitutes the external COM, driver, Intel provider and Detours boundaries; it does not replace the tested installation, registry, admission, release or telemetry algorithms.
+
+- `observer_harness.cpp` executes the actual D3D12 device-hook caller using DLSSG input, XeFG output and disabled HUD capture. Fake native methods route through the Detours registration created by the production installer. Tests do not call the completion callbacks directly. Fifty-one completed command lists must retire; genuinely delayed lists defer cleanup without waiting or closing future admission, then permit cleanup after real routed submission. Execute, successful/failed Reset, final Release, stale generations, shared native Release targets in both install orders, install transaction failures and lifetime-owner preservation are covered. Actual three-gate soft closure must preserve observers while preventing HUD writes; an in-flight native Execute must defer teardown until its callback finishes.
+- `release_harness.cpp` compiles complete FG and wrapper Release functions. Failed teardown must preserve published pointers and owned references, including after the menu output changes. Success cannot drain borrowed backbuffer/wrapper references.
+- `diagnostics.cpp` tests the production pending/recovery counters, observer counters under concurrent calls, nonblocking snapshot publication, and the added timing stages including zero-duration calls.
+- `r4_baseline.json` contains exact R4 production function bodies and source-file hashes. The runner verifies the fixture SHA-256 before executing five negative controls: the missing DLSSG observer route, closed admission after failed cleanup, release failure propagation, borrowed-reference draining and premature wrapper deletion. Each must fail its named invariant with exit 42; compilation failures and unrelated assertions fail the suite. No Git tag or network access is required in CI.
+
+These are CPU regression tests of production control flow. They cannot prove GPU-driver behavior, native Detours patching, Intel provider completion, game frame-rate recovery, visual quality or long-play stability. Those require the Windows build and gameplay validation.

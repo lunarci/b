@@ -11,7 +11,7 @@ import shutil
 import sys
 import tempfile
 
-root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parents[2]
+root = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path(__file__).resolve().parents[2]
 
 def body(path, signature):
     text = (root / path).read_text()
@@ -35,17 +35,33 @@ create_fg = body('OptiScaler/framegen/xefg/XeFG_Dx12.cpp', 'void XeFG_Dx12::Crea
 constructor = body('OptiScaler/framegen/xefg/XeFG_Dx12.h', 'XeFG_Dx12() : IFGFeature_Dx12(), IFGFeature()')
 # Only the class name is adapted; execute the complete production initializer/body.
 constructor = constructor.replace('XeFG_Dx12()', 'XeFGCtorProbe()', 1)
+recovery_bodies = '\n'.join(body('OptiScaler/framegen/xefg/XeFG_Dx12.cpp', sig) for sig in (
+    'bool XeFG_Dx12::TryCloseCpuAdmission()', 'void XeFG_Dx12::RestoreCpuAdmission()',
+    'bool XeFG_Dx12::QuiesceWork()', 'bool XeFG_Dx12::CommandObjectsReady() const',
+    'void XeFG_Dx12::CreateObjects(', 'bool XeFG_Dx12::DeactivateImpl(',
+    'void XeFG_Dx12::RestoreProviderState('))
 
 harness = r'''
 #include "framegen/FGWorkGate.h"
+#include "misc/XeFGWorkDiagnostics.h"
+#include "misc/LongSessionTiming.h"
+#include <shared_mutex>
+#include <unordered_map>
 #include <cassert>
+#include <format>
 #include <cstdint>
 #include <vector>
 #include <string>
 #include <iostream>
 #include <mutex>
 using UINT=unsigned; using UINT64=uint64_t; using HRESULT=int;
-constexpr HRESULT S_OK=0;
+constexpr HRESULT S_OK=0; constexpr size_t BUFFER_COUNT=4;
+constexpr int D3D12_COMMAND_LIST_TYPE_DIRECT=0,D3D12_FENCE_FLAG_NONE=0,FALSE=0;
+struct CommandObject { unsigned releases=0; void Release(){++releases;} void SetName(const wchar_t*){} HRESULT Close(){return 0;} };
+using ID3D12CommandAllocator=CommandObject; using ID3D12GraphicsCommandList=CommandObject; using IUnknown=void;
+bool CheckForRealObject(const char*,CommandObject*,IUnknown**) {return false;}
+static int eventCalls=0,eventFailAt=0;
+void* CreateEvent(void*,int,int,void*) { ++eventCalls; return eventCalls==eventFailAt ? nullptr : reinterpret_cast<void*>(1); }
 #define FAILED(x) ((x)<0)
 #define LOG_ERROR(...) ((void)0)
 #define LOG_DEBUG(...) ((void)0)
@@ -65,6 +81,12 @@ struct ID3D12Resource {
 };
 struct ID3D12Device {
     int calls=0; HRESULT allocResult=0; ID3D12Resource fresh;
+    int commandCalls=0, failCommandAt=0; CommandObject commandObjects[64];
+    HRESULT allocate(CommandObject** out) { ++commandCalls; if(commandCalls==failCommandAt) return -1;
+        *out=&commandObjects[commandCalls]; return 0; }
+    HRESULT CreateCommandAllocator(int,CommandObject** out){return allocate(out);}
+    HRESULT CreateCommandList(int,int,CommandObject*,void*,CommandObject** out){return allocate(out);}
+    HRESULT CreateFence(int,int,CommandObject** out){return allocate(out);}
     HRESULT CreateCommittedResource(D3D12_HEAP_PROPERTIES* p,int,Desc* d,int,void*,ID3D12Resource** out) {
         ++calls; assert(p->marker==7);
         if (allocResult<0) { *out=nullptr; return allocResult; }
@@ -72,47 +94,62 @@ struct ID3D12Device {
     }
 };
 struct IFGFeature_Dx12 {
+    bool _useIsolatedAllocatorFences=false;
     bool CreateBufferResource(ID3D12Device*,ID3D12Resource*,int,ID3D12Resource**,bool=false,bool=false);
     bool CreateBufferResourceWithSize(ID3D12Device*,ID3D12Resource*,int,ID3D12Resource**,UINT,UINT,bool=false,bool=false);
 };
 struct State { bool isShuttingDown=false, fgChanged=false; static State& Instance() { static State s; return s; } };
 struct IFGFeature {};
 struct FG_Constants {};
-struct XeFGProxy { static void* Module(){ return reinterpret_cast<void*>(1); } static bool InitXeFG(){ return true; } };
+using xefg_swapchain_result_t=int; constexpr int XEFG_SWAPCHAIN_RESULT_SUCCESS=0;
+namespace XeFGPacing { void RequestReset(){} }
+struct XeFGProxy { static void* Module(){return reinterpret_cast<void*>(1);} static bool InitXeFG(){return true;}
+    static int Enabled(void*,bool); static auto SetEnabled(){return &Enabled;} };
 struct XeFGCtorProbe : IFGFeature_Dx12, IFGFeature {
-    FGWorkGate _workGate, _submissionGate;
+    FGWorkGate _workGate, _providerPresentGate, _submissionGate;
     // ACTUAL_CONSTRUCTOR
 };
 static std::vector<char> order;
 namespace MenuOverlayDx { void CleanupRenderTarget(bool,void*) { order.push_back('M'); } }
+namespace ResTrack_Dx12 { static bool observersReady=true;
+    bool HookLifetimeObservers(ID3D12Device*,void*) { return observersReady; } }
 struct XeFG_Dx12 {
-    int drainCalls=0, failDrainAt=0; bool destroyOk=true, quiesceOk=true;
-    std::mutex _lifecycleMutex;
-    FGWorkGate _workGate, _submissionGate;
-    bool _lifecycleFailed=false, _objectsDrained=false;
+    int drainCalls=0, failDrainAt=0; bool destroyOk=true, disableOk=true, discardOk=true;
+    std::mutex _lifecycleMutex, _pendingCommandMutex;
+    FGWorkGate _workGate, _providerPresentGate, _submissionGate;
+    bool _workWasClosed=false,_presentWasClosed=false,_submissionWasClosed=false,_submissionClosedByLifecycle=false;
+    bool _lifecycleFailed=false, _objectsDrained=false, _aliasResetPending=false;
+    bool _pendingTrackingComplete=true; size_t _pendingCommandListCount=0;
+    XeFGDiagnostics::WorkDiagnostics _workDiagnostics;
     void* _fgContext=reinterpret_cast<void*>(1);
-    void* _swapChainContext=reinterpret_cast<void*>(1);
-    ID3D12Device* _device=nullptr;
-    int _lastDispatchedFrame=42; bool _isActive=false;
-    bool QuiesceWork(){
-        order.push_back('A');
-        _workGate.CloseAndWait(std::chrono::milliseconds(0));
-        _submissionGate.CloseAndWait(std::chrono::milliseconds(0));
-        return quiesceOk;
-    }
-    void DeactivateImpl(){ order.push_back('D'); }
-    void Deactivate(){ order.push_back('D'); }
-    void CreateObjects(ID3D12Device*){ order.push_back('O'); }
-    void UpdateTarget(){ order.push_back('U'); }
-    bool DrainLifetimeQueues(){ order.push_back('Q'); return ++drainCalls!=failDrainAt; }
-    bool DestroySwapchainContext(){ order.push_back('X'); return destroyOk; }
-    void ReleaseObjects(){ order.push_back('R'); assert(_objectsDrained); }
-    void ReleaseCommandObjects(){ order.push_back('C'); }
-    void DestroyFGContext();
-    void CreateContext(ID3D12Device*,FG_Constants&);
-    bool Shutdown();
+    void* _swapChainContext=this;
+    ID3D12Device* _device=nullptr; void* _gameCommandQueue=nullptr;
+    int _lastDispatchedFrame=42; bool _isActive=true, _waitingNewFrameData=true;
+    CommandObject* _uiCommandAllocator[BUFFER_COUNT]{}; CommandObject* _uiCommandList[BUFFER_COUNT]{};
+    CommandObject* _scCommandAllocator[BUFFER_COUNT]{}; CommandObject* _scCommandList[BUFFER_COUNT]{};
+    CommandObject* _uiFence=nullptr; CommandObject* _scFence=nullptr;
+    void* _uiFenceEvent=nullptr; void* _scFenceEvent=nullptr;
+    std::shared_mutex _resourceMutex[BUFFER_COUNT];
+    std::unordered_map<int,int> _frameResources[BUFFER_COUNT],_resourceReady[BUFFER_COUNT];
+    bool _noUi[BUFFER_COUNT]{},_noHudless[BUFFER_COUNT]{},_noDistortionField[BUFFER_COUNT]{};
+    bool TryCloseCpuAdmission(); void RestoreCpuAdmission(); bool QuiesceWork();
+    void PublishPendingLocked() {}
+    bool _uiCommandListResetted[BUFFER_COUNT]{};
+    int GetIndex(){return 0;} bool SubmitUICommandList(int){order.push_back('S');return true;}
+    bool DeactivateImpl(bool); void RestoreProviderState(bool);
+    bool DiscardPendingCommandRecordings(){order.push_back('C');return discardOk;}
+    void CreateObjects(ID3D12Device*); bool CommandObjectsReady() const;
+    void RequestHistoryReset(){order.push_back('H');}
+    void UpdateTarget(){order.push_back('U');}
+    bool DrainLifetimeQueues(){order.push_back('Q');return ++drainCalls!=failDrainAt;}
+    bool DestroySwapchainContext(){order.push_back('X');if(destroyOk)_swapChainContext=nullptr;return destroyOk;}
+    void ReleaseObjects(){order.push_back('R');assert(_objectsDrained);}
+    void DestroyFGContext(); void CreateContext(ID3D12Device*,FG_Constants&); bool Shutdown();
 };
-'''
+int XeFGProxy::Enabled(void* context,bool enable) {
+    auto self=static_cast<XeFG_Dx12*>(context); order.push_back(enable?'V':'D');
+    return enable || self->disableOk ? 0 : -1;
+}'''
 
 tests = r'''
 int main() {
@@ -154,49 +191,96 @@ int main() {
     }
     {
         XeFG_Dx12 x; order.clear(); assert(x.Shutdown());
-        assert((order==std::vector<char>{'A','D','Q','M','X','Q','R'}));
+        assert((order==std::vector<char>{'H','D','C','Q','M','X','Q','R'}));
         assert(x._fgContext==nullptr);
-        assert(x._workGate.IsClosed() && x._submissionGate.IsClosed());
+        assert(x._workGate.IsClosed() && x._providerPresentGate.IsClosed() && x._submissionGate.IsClosed());
     }
-    {
-        XeFG_Dx12 x; x.quiesceOk=false; order.clear(); assert(!x.Shutdown());
-        assert(x._lifecycleFailed && !x._objectsDrained);
-        assert((order==std::vector<char>{'A'}));
-        assert(x._fgContext!=nullptr && x.drainCalls==0);
+    for(int busyGate: {0,1,2}) {
+        XeFG_Dx12 x; auto hold=(busyGate==0?x._workGate:busyGate==1?x._providerPresentGate:x._submissionGate).TryEnter();
+        order.clear(); assert(!x.Shutdown());
+        assert(!x._lifecycleFailed && !x._objectsDrained && order.empty());
+        assert(x._fgContext!=nullptr && x.drainCalls==0 && x._isActive);
+        assert(!x._workGate.IsClosed() && !x._providerPresentGate.IsClosed() && !x._submissionGate.IsClosed());
     }
     for(int failAt: {1,2}) {
         XeFG_Dx12 x; x.failDrainAt=failAt; order.clear(); assert(!x.Shutdown());
-        assert(x._lifecycleFailed && !x._objectsDrained);
-        for(char c: order) assert(c!='R');
-        if(failAt==1) for(char c: order) assert(c!='X');
+        assert(x._lifecycleFailed==(failAt==2) && !x._objectsDrained);
+        for(char c:order) assert(c!='R');
+        if(failAt==1) { for(char c:order) assert(c!='X'); assert(x._isActive);
+            assert(!x._workGate.IsClosed() && !x._providerPresentGate.IsClosed() && !x._submissionGate.IsClosed()); }
+        else { assert(x._fgContext==nullptr && x._swapChainContext==nullptr);
+            assert(x._workGate.IsClosed() && x._providerPresentGate.IsClosed() && x._submissionGate.IsClosed()); }
     }
-    {
-        XeFG_Dx12 x; x.destroyOk=false; order.clear(); assert(!x.Shutdown());
-        assert(x._fgContext!=nullptr && !x._objectsDrained && x.drainCalls==1);
-        for(char c: order) assert(c!='R');
+    for(int failure: {0,1,2}) {
+        XeFG_Dx12 x; x.disableOk=failure!=0; x.discardOk=failure!=1; x.destroyOk=failure!=2;
+        order.clear(); assert(!x.Shutdown());
+        assert(x._fgContext!=nullptr && x._swapChainContext!=nullptr && !x._objectsDrained);
+        assert(x._isActive && !x._lifecycleFailed);
+        assert(!x._workGate.IsClosed() && !x._providerPresentGate.IsClosed() && !x._submissionGate.IsClosed());
+        for(char c:order) assert(c!='R');
+        x.disableOk=x.discardOk=x.destroyOk=true; assert(x.Shutdown());
     }
     {
         XeFG_Dx12 x; State::Instance().isShuttingDown=true; order.clear();
-        assert(!x.Shutdown() && order.empty());
-        State::Instance().isShuttingDown=false;
+        assert(!x.Shutdown() && order.empty()); State::Instance().isShuttingDown=false;
     }
     {
-        XeFG_Dx12 x; order.clear(); x.DestroyFGContext();
-        assert((order==std::vector<char>{'A','D','Q','C'}));
-        assert(x._fgContext==nullptr && x._workGate.IsClosed());
-        assert(!x._submissionGate.IsClosed() && x._submissionGate.TryEnter());
-        ID3D12Device device; FG_Constants constants; order.clear();
+        // The R4 log showed 51 pending game recordings. A logical reset must
+        // preserve them and helper objects without waiting for game submission.
+        XeFG_Dx12 x; ID3D12Device device; FG_Constants constants;
+        x.CreateObjects(&device); auto saved=x._uiCommandAllocator[0];
+        auto calls=device.commandCalls; x._pendingCommandListCount=51;
+        for(size_t i=0;i<BUFFER_COUNT;++i){x._frameResources[i][1]=1;x._resourceReady[i][1]=1;}
+        order.clear(); auto begin=std::chrono::steady_clock::now(); x.DestroyFGContext();
+        assert(std::chrono::steady_clock::now()-begin<std::chrono::milliseconds(250));
+        assert((order==std::vector<char>{'H','D','C','H','U'}));
+        assert(x._pendingCommandListCount==51 && !x._lifecycleFailed && !x._aliasResetPending);
+        assert(x._fgContext==nullptr && x._swapChainContext!=nullptr && x.drainCalls==0);
+        assert(x._uiCommandAllocator[0]==saved && saved->releases==0);
+        assert(!x._workGate.IsClosed() && !x._providerPresentGate.IsClosed() && !x._submissionGate.IsClosed());
+        for(size_t i=0;i<BUFFER_COUNT;++i) assert(x._frameResources[i].empty() && x._resourceReady[i].empty() && x._noUi[i] && x._noHudless[i]);
         x.CreateContext(&device,constants);
-        assert((order==std::vector<char>{'A','O'}));
-        assert(x._fgContext==x._swapChainContext && x._device==&device && x._lastDispatchedFrame==0);
-        assert(!x._workGate.IsClosed() && !x._submissionGate.IsClosed());
+        assert(x._fgContext==x._swapChainContext && x._lastDispatchedFrame==0 && x._pendingCommandListCount==51);
+        assert(device.commandCalls==calls && saved->releases==0);
+        assert(!x._workGate.IsClosed() && !x._providerPresentGate.IsClosed() && !x._submissionGate.IsClosed());
+        // Destructive shutdown instead defers immediately and restores admission.
+        assert(!x.Shutdown() && x._pendingCommandListCount==51 && x.drainCalls==0);
+        assert(!x._workGate.IsClosed() && !x._providerPresentGate.IsClosed() && !x._submissionGate.IsClosed());
+        x._pendingCommandListCount=0; assert(x.Shutdown());
     }
-    for(bool failAdmission: {false,true}) {
-        XeFG_Dx12 x; x.quiesceOk=!failAdmission; x.failDrainAt=1;
+    for(int busyGate: {0,1}) {
+        XeFG_Dx12 x; auto hold=(busyGate==0?x._workGate:x._providerPresentGate).TryEnter();
         order.clear(); x.DestroyFGContext();
-        assert(x._lifecycleFailed && x._fgContext!=nullptr);
-        assert(x._workGate.IsClosed() && x._submissionGate.IsClosed());
-        for(char c: order) assert(c!='C' && c!='R');
+        assert(order.empty() && x._fgContext!=nullptr && x._isActive && x._aliasResetPending);
+        assert(!x._lifecycleFailed && !x._workGate.IsClosed() && !x._providerPresentGate.IsClosed() && !x._submissionGate.IsClosed());
+    }
+    for(bool disableFails: {false,true}) {
+        XeFG_Dx12 x; x.disableOk=!disableFails; x.discardOk=disableFails;
+        order.clear(); x.DestroyFGContext();
+        assert(x._fgContext!=nullptr && x._isActive && x._aliasResetPending && !x._lifecycleFailed);
+        assert(!x._workGate.IsClosed() && !x._providerPresentGate.IsClosed() && !x._submissionGate.IsClosed());
+        for(char c:order) assert(c!='U' && c!='R');
+    }
+    for(int failAt=1;failAt<=20;++failAt) {
+        // Exercise every allocator/list/fence/event allocation, including slot0
+        // allocator present + list absent and a late slot partially created.
+        XeFG_Dx12 x; ID3D12Device device; FG_Constants constants; x._fgContext=nullptr;
+        assert(x._workGate.TryCloseWhenIdle()); eventCalls=0;eventFailAt=failAt>18?failAt-18:0;
+        device.failCommandAt=failAt<=18?failAt:0;
+        x.CreateContext(&device,constants);
+        assert(x._fgContext==nullptr && !x.CommandObjectsReady());
+        assert(x._workGate.IsClosed() && !x._providerPresentGate.IsClosed() && !x._submissionGate.IsClosed());
+        auto saved=x._uiCommandAllocator[0]; device.failCommandAt=0;eventFailAt=0;
+        x.CreateContext(&device,constants);
+        assert(x._fgContext==x._swapChainContext && x.CommandObjectsReady());
+        assert(!x._workGate.IsClosed() && !x._providerPresentGate.IsClosed() && !x._submissionGate.IsClosed());
+        if(saved) assert(x._uiCommandAllocator[0]==saved && saved->releases==0);
+    }
+    {
+        XeFG_Dx12 x; ID3D12Device device; FG_Constants constants; x._fgContext=nullptr;
+        x._workGate.TryCloseWhenIdle(); ResTrack_Dx12::observersReady=false;
+        x.CreateContext(&device,constants); assert(x._fgContext==nullptr && device.commandCalls==0);
+        assert(x._workGate.IsClosed() && !x._submissionGate.IsClosed()); ResTrack_Dx12::observersReady=true;
     }
     std::cout << "XeFG allocation and teardown fault injection passed\n";
 }
@@ -205,12 +289,12 @@ with tempfile.TemporaryDirectory(prefix='xefg_lifetime_') as temp:
     temp=Path(temp)
     cpp=temp/'test.cpp'; exe=temp/('test.exe' if os.name=='nt' else 'test')
     cpp.write_text(harness.replace('// ACTUAL_CONSTRUCTOR',constructor)+'\n'+allocation+'\n'+allocation_sized+
-                   '\n'+shutdown+'\n'+destroy_fg+'\n'+create_fg+'\n'+tests)
+                   '\n'+recovery_bodies+'\n'+shutdown+'\n'+destroy_fg+'\n'+create_fg+'\n'+tests)
     compiler=os.environ.get('CXX') or ('cl' if os.name=='nt' and shutil.which('cl') else 'g++')
     if Path(compiler).name.lower() in ('cl','cl.exe'):
-        command=[compiler,'/nologo','/std:c++20','/EHsc','/Od','/I'+str(root/'OptiScaler'),str(cpp),'/Fe:'+str(exe)]
+        command=[compiler,'/nologo','/std:c++20','/EHsc','/Od','/UNDEBUG','/I'+str(root/'OptiScaler'),str(cpp),'/Fe:'+str(exe)]
     else:
-        command=[compiler,'-std=c++20','-O0','-pthread','-I',str(root/'OptiScaler'),str(cpp),'-o',str(exe)]
+        command=[compiler,'-std=c++20','-O0','-UNDEBUG','-pthread','-I',str(root/'OptiScaler'),str(cpp),'-o',str(exe)]
     subprocess.run(command,check=True,cwd=temp)
     subprocess.run([str(exe)],check=True)
 
@@ -240,6 +324,8 @@ struct XeFG_Dx12 {
     Object* _uiCommandAllocator[BUFFER_COUNT]{}; Object* _uiCommandList[BUFFER_COUNT]{};
     Object* _scCommandAllocator[BUFFER_COUNT]{}; Object* _scCommandList[BUFFER_COUNT]{};
     bool _scCommandListResetted[BUFFER_COUNT]{}; bool _uiCommandListResetted[BUFFER_COUNT]{};
+    Object* _uiSlotFences[BUFFER_COUNT]{}; Object* _scSlotFences[BUFFER_COUNT]{};
+    bool _uiSubmissionFailed[BUFFER_COUNT]{},_scSubmissionFailed[BUFFER_COUNT]{};
     UINT64 _scAllocatorFenceValues[BUFFER_COUNT]{}; UINT64 _uiAllocatorFenceValues[BUFFER_COUNT]{};
     std::shared_mutex _resourceMutex[BUFFER_COUNT];
     std::unordered_map<int,BorrowedResource> _frameResources[BUFFER_COUNT];
@@ -264,12 +350,15 @@ int main(){
     x._uiFence=&uiFence; x._scFence=&scFence;
     x._uiFenceEvent=reinterpret_cast<void*>(1); x._scFenceEvent=reinterpret_cast<void*>(2);
     x._lifetimeQueues[0]={&queueFence,reinterpret_cast<void*>(3),&queue}; x._lifetimeQueueCount=1;
+    Object uiSlotFence,scSlotFence; x._uiSlotFences[0]=&uiSlotFence;x._scSlotFences[3]=&scSlotFence;
+    x._uiSubmissionFailed[0]=x._scSubmissionFailed[3]=true;
     x._uiCommandList[0]=&command; x._gameCommandQueue=&queue;
     x.ReleaseObjects(); assert(own.releases==0 && command.releases==0 && closes==0);
     x._objectsDrained=true; x._swapChainContext=reinterpret_cast<void*>(1);
     x.ReleaseObjects(); assert(own.releases==0 && command.releases==0 && closes==0);
     x._swapChainContext=nullptr; x.ReleaseObjects();
     assert(own.releases==1 && borrowed.releases==0 && command.releases==1);
+    assert(uiSlotFence.releases==1 && scSlotFence.releases==1 && !x._uiSubmissionFailed[0] && !x._scSubmissionFailed[3]);
     assert(uiFence.releases==1 && scFence.releases==1 && queueFence.releases==1 && queue.releases==1);
     assert(x._frameResources[0].empty() && x._resourceCopy[0].empty() && closes==3);
     assert(!x._lifecycleFailed && x._gameCommandQueue==nullptr);
@@ -287,8 +376,8 @@ with tempfile.TemporaryDirectory(prefix='xefg_cleanup_') as temp:
     cpp.write_text(cleanup_harness+'\n'+release_commands+'\n'+release_objects+'\n'+cleanup_tests)
     compiler=os.environ.get('CXX') or ('cl' if os.name=='nt' and shutil.which('cl') else 'g++')
     if Path(compiler).name.lower() in ('cl','cl.exe'):
-        command=[compiler,'/nologo','/std:c++20','/EHsc','/Od','/I'+str(root/'OptiScaler'),str(cpp),'/Fe:'+str(exe)]
+        command=[compiler,'/nologo','/std:c++20','/EHsc','/Od','/UNDEBUG','/I'+str(root/'OptiScaler'),str(cpp),'/Fe:'+str(exe)]
     else:
-        command=[compiler,'-std=c++20','-O0','-I',str(root/'OptiScaler'),str(cpp),'-o',str(exe)]
+        command=[compiler,'-std=c++20','-O0','-UNDEBUG','-I',str(root/'OptiScaler'),str(cpp),'-o',str(exe)]
     subprocess.run(command,check=True,cwd=temp)
     subprocess.run([str(exe)],check=True)

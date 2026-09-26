@@ -46,6 +46,7 @@ def main():
         ("Descriptor metadata publication without registry-lock allocation", here / "tracking/run.py"),
         ("Owned-copy allocation failures and safe GPU/provider teardown", here / "memory_lifetime/run.py"),
         ("R4 copied-resource retagging and concurrent lifecycle admission", here / "r4_resource_safety/run.py"),
+        ("R5 installed lifetime observers, playable recovery and release propagation", here / "r5_lifetime_recovery/run.py"),
     ]
     report = {"passed": False, "gpu_game_tested": False, "tests": []}
     try:

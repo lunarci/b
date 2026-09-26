@@ -29,7 +29,7 @@ def extract_function(text, signature):
     raise ValueError("Unclosed production function: " + signature)
 
 
-def compile_and_run(source, cpp_text, title):
+def compile_and_run(source, cpp_text, title, expected_exit=0, expected_output=None):
     compiler = os.environ.get("CXX") or (shutil.which("cl") if os.name == "nt" else shutil.which("c++"))
     if not compiler:
         raise RuntimeError("Run tests/run.py to initialize the MSVC compiler environment")
@@ -45,7 +45,12 @@ def compile_and_run(source, cpp_text, title):
             command = [compiler, "-std=c++20", "-O0", "-UNDEBUG", "-pthread",
                        "-I", str(source / "OptiScaler"), str(cpp), "-o", str(executable)]
         subprocess.run(command, cwd=directory, check=True)
-        subprocess.run([str(executable)], cwd=directory, check=True, timeout=30)
+        result = subprocess.run([str(executable)], cwd=directory, timeout=30,
+                                capture_output=expected_exit != 0, text=True)
+        if result.returncode != expected_exit:
+            raise RuntimeError(f"{title}: expected exit {expected_exit}, got {result.returncode}; {result.stdout or ''}{result.stderr or ''}")
+        if expected_output and expected_output not in (result.stdout or "") + (result.stderr or ""):
+            raise AssertionError(f"Negative control failed for an unexpected reason: {result.stdout}{result.stderr}")
     print("PASS: " + title, flush=True)
 
 
@@ -181,7 +186,8 @@ struct XeFG_Dx12 {
     ID3D12Resource* nextFlipOutput = &freshCopy;
     unsigned copyCalls = 0, readinessCalls = 0;
     unsigned pendingCalls = 0;
-    void TrackPendingCommandList(ID3D12GraphicsCommandList*) { ++pendingCalls; }
+    bool pendingOk = true;
+    bool TrackPendingCommandList(ID3D12GraphicsCommandList*) { ++pendingCalls; return pendingOk; }
     bool IsActive() const { return active; }
     bool IsPaused() const { return paused; }
     int GetIndex() const { return 0; }
@@ -333,7 +339,28 @@ static void flipOwnershipAccounting() {
     }
 }
 #endif
+#if R5_SOURCE
+static void observerFailureRejectsBeforeGpuWork() {
+    for(auto type:{FG_ResourceType::UIColor,FG_ResourceType::HudlessColor,FG_ResourceType::Depth,FG_ResourceType::Velocity}) {
+        resetGlobals(); XeFG_Dx12 subject; ID3D12Resource original,oldCopy; ID3D12GraphicsCommandList list;
+        Dx12Resource input; input.resource=&original;input.cmdList=&list;input.frameIndex=0;input.type=type;
+        input.validity=FG_ResourceValidity::ValidButMakeCopy;
+        subject.pendingOk=false; subject._resourceCopy[0][type]=&oldCopy;
+        assert(!subject.SetResource(&input));
+        assert(subject.pendingCalls==1 && subject.copyCalls==0 && XeFGProxy::tagCalls==0 && subject.readinessCalls==0);
+        assert(!subject._frameResources[0].contains(type) && !subject._resourceReady[0].contains(type));
+        assert(subject._resourceCopy[0][type]==&oldCopy && oldCopy.live);
+        if(type==FG_ResourceType::UIColor) assert(subject._noUi[0]);
+        if(type==FG_ResourceType::HudlessColor) assert(subject._noHudless[0]);
+        subject.pendingOk=true; assert(subject.SetResource(&input));
+        assert(subject.copyCalls==1 && subject._resourceCopy[0][type]==&subject.freshCopy);
+    }
+}
+#endif
 int main() {
+#if R5_SOURCE
+    if (!ALIAS_ONLY) observerFailureRejectsBeforeGpuWork();
+#endif
     selfAlias(EXPECT_ALIAS_LOST);
     if (!ALIAS_ONLY) { freshInput(); copyFailureAndRetry(); }
 #if R4_SOURCE
@@ -371,6 +398,7 @@ def main():
         harness = harness.replace("// ACTUAL_INLINE_FAILURE_HANDLER", inline_failure)
     definitions = "#define ALIAS_ONLY " + str(int(args.alias_only)) + "\n"
     definitions += "#define EXPECT_ALIAS_LOST " + str(int(args.expect_alias_lost)) + "\n"
+    definitions += "#define R5_SOURCE " + str(int("!TrackPendingCommandList(" in actual)) + "\n"
     definitions += "#define R4_SOURCE " + str(int("_resourceDiagnostics" in actual)) + "\n"
     compile_and_run(source, definitions + harness + "\n" + actual + "\n" + TESTS,
                     "actual XeFG SetResource/FlipResource lifetime selection and allocation accounting")
