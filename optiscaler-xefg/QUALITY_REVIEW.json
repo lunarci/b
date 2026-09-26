@@ -1,0 +1,201 @@
+{
+  "schema_version": 1,
+  "reviewed_at_utc": "2026-09-26T15:29:04.793142+00:00",
+  "baseline_source_commit": "94e66579b7b70eaa1a9e3a6274abc5efe41b2544",
+  "baseline_description": "Verified deployed R5 source baseline (d2ea5898907c)",
+  "scope": "Source-level preservation of quality settings, shaders, metadata calculations and six-times capability. This is not a GPU image-quality/performance test.",
+  "passed": true,
+  "prior_core_file_count": 13,
+  "byte_identical_core_file_count": 12,
+  "core_files": [
+    {
+      "path": "OptiScaler/Config.cpp",
+      "identical_to_r5": true,
+      "sha256": "95132e6d1508a5c95abda3767bf093398e65daa6df561970801844b3afbd2ed3",
+      "baseline_sha256": "95132e6d1508a5c95abda3767bf093398e65daa6df561970801844b3afbd2ed3"
+    },
+    {
+      "path": "OptiScaler/Config.h",
+      "identical_to_r5": true,
+      "sha256": "2dc26c030e50da25a2f702ec6b3a06004c5f1d306030272d7bd4b6a54597cc75",
+      "baseline_sha256": "2dc26c030e50da25a2f702ec6b3a06004c5f1d306030272d7bd4b6a54597cc75"
+    },
+    {
+      "path": "OptiScaler/NVNGX_Parameter.cpp",
+      "identical_to_r5": true,
+      "sha256": "44ed999f681ed821c0019d6c69fcbb73e2d0790dd93565ba2924387274e29d20",
+      "baseline_sha256": "44ed999f681ed821c0019d6c69fcbb73e2d0790dd93565ba2924387274e29d20"
+    },
+    {
+      "path": "OptiScaler/proxies/XeFGUnlock.h",
+      "identical_to_r5": true,
+      "sha256": "96032aa374bc6800317d72cb44ac14b7b803b8ca2e00e800bb55b0d80e5cf762",
+      "baseline_sha256": "96032aa374bc6800317d72cb44ac14b7b803b8ca2e00e800bb55b0d80e5cf762"
+    },
+    {
+      "path": "OptiScaler/proxies/XeLLUnLock.h",
+      "identical_to_r5": true,
+      "sha256": "fab080cf89e34472dbc2e50f6afdd3918717b8b6231bf62b29658e69300480bf",
+      "baseline_sha256": "fab080cf89e34472dbc2e50f6afdd3918717b8b6231bf62b29658e69300480bf"
+    },
+    {
+      "path": "OptiScaler/proxies/XeFGPacing.h",
+      "identical_to_r5": true,
+      "sha256": "58ce5f43bd1409086db18ef9906ac1a5b42ead502e8b8b6f3e20b9dbd4980b06",
+      "baseline_sha256": "58ce5f43bd1409086db18ef9906ac1a5b42ead502e8b8b6f3e20b9dbd4980b06"
+    },
+    {
+      "path": "OptiScaler/proxies/XeFGPacingGuard.h",
+      "identical_to_r5": true,
+      "sha256": "03bdc66d40c7d27d2860892f7d4df1da753fe933c15294b47a49380b67920758",
+      "baseline_sha256": "03bdc66d40c7d27d2860892f7d4df1da753fe933c15294b47a49380b67920758"
+    },
+    {
+      "path": "OptiScaler/hooks/Streamline_Hooks.cpp",
+      "identical_to_r5": true,
+      "sha256": "cfab569047bdb05832e0dd48b04d91fdc8a04eef86c01fc1f271a6af16a7f521",
+      "baseline_sha256": "cfab569047bdb05832e0dd48b04d91fdc8a04eef86c01fc1f271a6af16a7f521"
+    },
+    {
+      "path": "OptiScaler/inputs/FG/Streamline_Inputs_Dx12.cpp",
+      "identical_to_r5": false,
+      "sha256": "026572b0c9203b00bd31626f9d76945b5a4b7527fd6635f0f645bcd401b1e0c9",
+      "baseline_sha256": "6405fdc0d74766cf3b50d3308ee55446e3bfe08a8e20cee31732afdb81892b48"
+    },
+    {
+      "path": "OptiScaler/upscalers/ffx/FFXFeature_Dx12.cpp",
+      "identical_to_r5": true,
+      "sha256": "44861f8e08e1e40747c81f2fce814a4bd858ce031ffaee4adb9d6f927c09e5a9",
+      "baseline_sha256": "44861f8e08e1e40747c81f2fce814a4bd858ce031ffaee4adb9d6f927c09e5a9"
+    },
+    {
+      "path": "OptiScaler/upscalers/ffx/FFXFeature_Dx12.h",
+      "identical_to_r5": true,
+      "sha256": "e9c402e94dd6b83a4a3f6e8898d22968e13736ca36e89b6be55308c443b2b30f",
+      "baseline_sha256": "e9c402e94dd6b83a4a3f6e8898d22968e13736ca36e89b6be55308c443b2b30f"
+    },
+    {
+      "path": "OptiScaler/upscalers/ffx/FFXFeature.cpp",
+      "identical_to_r5": true,
+      "sha256": "0118d4710a5b978118a9d4ffa03c243eb03628e642e47cf8cea20b37a9b7c5ce",
+      "baseline_sha256": "0118d4710a5b978118a9d4ffa03c243eb03628e642e47cf8cea20b37a9b7c5ce"
+    },
+    {
+      "path": "OptiScaler/upscalers/IFeature_Dx12.cpp",
+      "identical_to_r5": true,
+      "sha256": "76bdf475b972a9443cb5cca5be6c3315444db8b5c58f8be947fbcb76e2e1e1c9",
+      "baseline_sha256": "76bdf475b972a9443cb5cca5be6c3315444db8b5c58f8be947fbcb76e2e1e1c9"
+    }
+  ],
+  "semantically_reviewed_inputs": [
+    {
+      "path": "OptiScaler/inputs/FG/Streamline_Inputs_Dx12.cpp",
+      "sha256": "026572b0c9203b00bd31626f9d76945b5a4b7527fd6635f0f645bcd401b1e0c9",
+      "baseline_sha256": "6405fdc0d74766cf3b50d3308ee55446e3bfe08a8e20cee31732afdb81892b48",
+      "review": "Adds current-frame readiness metadata after unchanged camera, projection, motion, jitter, reset and frame-time calculations."
+    },
+    {
+      "path": "OptiScaler/inputs/FG/Streamline_Inputs_Sl1_Dx12.cpp",
+      "sha256": "4f02a2d3d64cda49c41afa4894fbf0547a090f015a31f45d964dd93a97bdcb94",
+      "baseline_sha256": "49c2a6f898abee349034e05798e11e5b17a16acb715498bef4b3871a515da465",
+      "review": "Adds cached-constant frame identity and readiness eligibility; existing matrix/motion calculations and cached-constant application remain. Stale cached constants cannot establish recovery readiness."
+    },
+    {
+      "path": "OptiScaler/inputs/FG/Streamline_Inputs_Sl1_Dx12.h",
+      "sha256": "8638e0676ec1c02b88ea844fe87f9c139b1c62bdb1e6ce6a632d1bdc15f5bb45",
+      "baseline_sha256": "b2353afd947417dad8af5fdc30d34fc9c55ac26a7563b50b3f5e7e55b05a72a2",
+      "review": "Adds lastConstantsFrame and freshForFrame metadata argument only."
+    },
+    {
+      "path": "OptiScaler/inputs/FG/FSR3_Dx12_FG.cpp",
+      "sha256": "41d9107a8de4ac4098fdc1bdfa713ee75db66844465c7998da2988a465ba422d",
+      "baseline_sha256": "9c4a003fa25be20af0311e8be46ef0857e0ed4a32de2c9b121d7d30180d139de",
+      "review": "Adds frame-stamped readiness after unchanged SetCameraValues/SetJitter/SetReset/SetInterpolationRect calls; no new FG backend enabled."
+    },
+    {
+      "path": "OptiScaler/inputs/FG/FfxApi_Dx12_FG.cpp",
+      "sha256": "4a418408cbd391f1e755fed6560e7e607b3a59f2491aecb4f21ee05305d3882a",
+      "baseline_sha256": "65c3c94546b28fe6af9faf0f7e6dcb7aba236441b1fd226a89f93501c17d2e08",
+      "review": "Adds readiness only for matching internal frame/index; existing camera/motion/jitter math unchanged."
+    },
+    {
+      "path": "OptiScaler/inputs/FG/Upscaler_Inputs_Dx11wDx12.cpp",
+      "sha256": "7acc7b43757a8895c9ff59c91e07916d80e34d47b5e0783cee6cdbb1866bb2b4",
+      "baseline_sha256": "a9ea45382bee1ee7aec26689c9a29dcb876452ff3395b74db860eb9b6d05e28e",
+      "review": "Adds constants readiness metadata following unchanged camera/motion/jitter/reset assignments."
+    },
+    {
+      "path": "OptiScaler/inputs/FG/Upscaler_Inputs_Dx12.cpp",
+      "sha256": "b9ea5d3946fda98a8d4a2a675afdd426fc0ab9e453023256ec1a826181c8ed29",
+      "baseline_sha256": "7a7a026ff96d2039b76401109af60cbe2627d23c06350f908c98b36ba91ace82",
+      "review": "Adds constants readiness metadata following unchanged camera/motion/jitter/reset assignments."
+    }
+  ],
+  "exact_body_checks": [
+    {
+      "signature": "IFGFeature::StartNewFrame(",
+      "identical_to_r5": true,
+      "sha256": "7bc1b1e4e196be7a3c1cffd0a24e35c1dc82c6cba7c33db9ca9970888f65af85"
+    },
+    {
+      "signature": "IFGFeature::SetFrameCount(",
+      "identical_to_r5": true,
+      "sha256": "8ddf6d0e886e59f325fd44e14c68f72cd4311bf0184c6260cb435cccb4304ffd"
+    },
+    {
+      "signature": "XeFG_Dx12::GetResourceData(",
+      "identical_to_r5": true,
+      "sha256": "65f5201c0285093bf0ead8cce4fab24694fb236a11e1c1d16a354822bebc700e"
+    },
+    {
+      "signature": "XeFG_Dx12::CreateContext(",
+      "identical_to_r5": true,
+      "sha256": "904765fa1b3009dd9ae80d95cc6cc7a707c66581b6ed46a97150f5852624b72a"
+    },
+    {
+      "signature": "XeFG Dispatch camera/projection/jitter/motion/frame-time/history constant preparation",
+      "identical_to_r5": true,
+      "sha256": "d25b55f33a92138919bf3146c005314fdcdfa800274f1ee1851898e1df1b8813"
+    },
+    {
+      "signature": "XeFG_Dx12::CreateSwapchain( maximum interpolation capacity selection",
+      "identical_to_r5": true,
+      "sha256": "deb074ec14b80139d1f7fb4996875c94c12230eee71001a0f3727fd764c3814e"
+    },
+    {
+      "signature": "XeFG_Dx12::CreateSwapchain1( maximum interpolation capacity selection",
+      "identical_to_r5": true,
+      "sha256": "deb074ec14b80139d1f7fb4996875c94c12230eee71001a0f3727fd764c3814e"
+    },
+    {
+      "signature": "XeFG selected interpolation count and game/config fallback",
+      "identical_after_removing_diagnostic_call": true,
+      "sha256_without_diagnostic": "f9f2c9f4953fc971e5e7ad9df032d4f60562d40b8a3906e51dc80f888ba0e857"
+    }
+  ],
+  "shaders": {
+    "tracked_file_count": 241,
+    "all_git_blob_identities_match_r5": true,
+    "aggregate_paths_and_sha256": "f5c2d9d8f49c35feb9b86573ee904e3533b94030e7b49bdbadaf44563d2eb648"
+  },
+  "ffx_registry": {
+    "proxy_sha256": "b64be8a90eb79e0b91aa2c7f73392d661ac27ea25af147c7f1423ab669a5b25c",
+    "helper_sha256": "2406b2c8eeff65bf0cdec2f8a2277497169dd6e1fbf79f9a3ec10dc6f19271b6",
+    "review": "Only context-to-provider routing metadata is synchronized. Existing ankerl container, SDK calls, fallback types and insertion behavior remain; shader and quality parameters are unchanged."
+  },
+  "intentional_behavior_changes": [
+    "Per-frame recovery evidence and stale-constant rejection affect when XeFG may resume, without changing the preserved camera/motion formulas.",
+    "Changed Hudless formats reset temporal history and undergo SDK validation instead of permanent rejection behind an old static value.",
+    "SDK input/activation/Present errors and confirmed interpolation determine recovery state. This may change frame availability at transitions and is the intended fix."
+  ],
+  "preserved_configuration_intent": [
+    "Intel XeFG only; no DLSS5/NR or additional FG stacking.",
+    "Upscale ratio 1.5, original HDR/exposure/sharpening/FSR profile and pacing source preserved.",
+    "Initial selected total 3x and maximum total 6x remain; no automatic multiplier or resolution reduction."
+  ],
+  "limits": [
+    "Payload/INI exact bytes and Intel runtime hashes are verified by the separate final package audit, not this source review.",
+    "New diagnostics add CPU observation work; real-device overhead and visual equivalence are unmeasured.",
+    "Passing preservation checks does not prove Dogtown performance recovery or absence of engine/provider/driver leaks."
+  ]
+}

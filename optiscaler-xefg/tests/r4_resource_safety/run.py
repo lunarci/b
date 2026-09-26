@@ -75,6 +75,10 @@ struct FGWorkGate { struct Scope { explicit operator bool() const { return true;
 #if __has_include("misc/XeFGResourceDiagnostics.h")
 #define TEST_HAS_DIAGNOSTICS 1
 #include "misc/XeFGResourceDiagnostics.h"
+#if __has_include("misc/XeFGPresentDiagnostics.h")
+#include "misc/XeFGPresentDiagnostics.h"
+#include "framegen/xefg/XeFGRecovery.h"
+#endif
 #endif
 #define LOG_ERROR(...) ((void)0)
 #define LOG_WARN(...) ((void)0)
@@ -86,7 +90,7 @@ enum D3D12_RESOURCE_STATES { D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_C
     D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS };
 using DXGI_FORMAT = int;
 constexpr DXGI_FORMAT DXGI_FORMAT_UNKNOWN = 0;
-enum class FG_ResourceType { UIColor, Depth, Velocity, HudlessColor, Distortion };
+enum class FG_ResourceType { Depth=0, Velocity=1, HudlessColor=2, UIColor=3, Distortion=4, ResourceTypeCOUNT=5 };
 enum class FG_ResourceValidity { ValidNow, UntilPresent, UntilPresentFromDispatch, ValidButMakeCopy, JustTrackCmdlist };
 enum class FGInput { Upscaler, Other };
 struct feature_version {
@@ -96,7 +100,7 @@ struct feature_version {
     }
 };
 struct ID3D12GraphicsCommandList {};
-struct Desc { int Format = 28; };
+struct Desc { int Format = 28; uint64_t Width = 2560; unsigned Height = 1440; };
 struct ID3D12Device {
     struct AllocationInfo { uint64_t SizeInBytes = 8192; };
     AllocationInfo GetResourceAllocationInfo(unsigned, unsigned, const Desc*) { return {}; }
@@ -141,7 +145,7 @@ struct RF_Dx12 {
     bool IsInit() const { return true; }
     bool Dispatch(ID3D12GraphicsCommandList*, ID3D12Resource*, ID3D12Resource*, UINT64, UINT, bool) { return true; }
 };
-enum xefg_swapchain_result_t { XEFG_SWAPCHAIN_RESULT_SUCCESS, XEFG_SWAPCHAIN_RESULT_ERROR };
+enum xefg_swapchain_result_t { XEFG_SWAPCHAIN_RESULT_SUCCESS=0, XEFG_SWAPCHAIN_RESULT_ERROR=-1 };
 constexpr int XEFG_SWAPCHAIN_RV_UNTIL_NEXT_PRESENT = 1;
 struct xefg_swapchain_d3d12_resource_data_t {
     ID3D12Resource* resource = nullptr;
@@ -168,6 +172,15 @@ struct XeFG_Dx12 {
     XeFGDiagnostics::Context _resourceDiagnostics;
     struct CopyAllocationInfo { uint64_t bytes = 0; bool known = false; };
     std::unordered_map<FG_ResourceType, CopyAllocationInfo> _copyAllocationInfo[BUFFER_COUNT];
+#endif
+#if __has_include("misc/XeFGPresentDiagnostics.h")
+    XeFGRecovery _recovery;
+    DXGI_FORMAT _hudlessObservedFormat[BUFFER_COUNT]{},_hudlessAcceptedFormat[BUFFER_COUNT]{};
+    unsigned historyResetCalls=0,recoveryFaultCalls=0;
+    void RequestHistoryReset(){++historyResetCalls;}
+    void ReportFormatTransition(bool,int,int,UINT64,int,UINT64,UINT){}
+    bool TryBeginRecoveryTrial(UINT64){assert(false && "recovery policy belongs to the R6 suite");return false;}
+    void NoteRecoveryFault(UINT64,const char*,int32_t){++recoveryFaultCalls;}
 #endif
     bool _lifecycleFailed = false, active = true, paused = false, failCopy = false;
     std::shared_mutex _resourceMutex[BUFFER_COUNT];

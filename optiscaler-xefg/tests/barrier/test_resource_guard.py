@@ -36,12 +36,15 @@ prefix = r'''
 #include <stdexcept>
 #include <tuple>
 #include <vector>
+#include <unordered_map>
+#include "misc/XeFGPresentDiagnostics.h"
+#include "framegen/xefg/XeFGRecovery.h"
 #define LOG_ERROR(...) ((void)0)
 #define LOG_DEBUG(...) ((void)0)
 enum D3D12_RESOURCE_STATES { D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE,
     D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE };
-enum class FG_ResourceType { UIColor, Depth };
-enum xefg_result { XEFG_SWAPCHAIN_RESULT_SUCCESS, XEFG_SWAPCHAIN_RESULT_ERROR };
+enum class FG_ResourceType { Depth=0, Velocity=1, HudlessColor=2, UIColor=3, Distortion=4 };
+enum xefg_result { XEFG_SWAPCHAIN_RESULT_SUCCESS=0, XEFG_SWAPCHAIN_RESULT_ERROR=-1 };
 constexpr int XEFG_SWAPCHAIN_RV_UNTIL_NEXT_PRESENT = 1, BUFFER_COUNT = 4;
 struct feature_version {
     int major, minor, patch;
@@ -60,7 +63,7 @@ struct xefg_swapchain_d3d12_resource_data_t {
     D3D12_RESOURCE_STATES incomingState;
     int validity = XEFG_SWAPCHAIN_RV_UNTIL_NEXT_PRESENT;
 };
-enum Event { Forward, Tag, Restore, Update, DeactivateEvent, Ready };
+enum Event { Forward, Tag, Restore, Update, DeactivateEvent, Ready, RecoveryFault };
 static std::vector<Event> events;
 static bool failTag;
 static Resource* liveResource;
@@ -84,6 +87,12 @@ struct XeFGProxy {
     static auto D3D12TagFrameResource() { return &TagResource; }
 };
 struct Subject {
+    XeFGRecovery _recovery;
+    std::unordered_map<FG_ResourceType, bool> _frameResources[BUFFER_COUNT], _resourceReady[BUFFER_COUNT];
+    bool _noUi[BUFFER_COUNT]{}, _noHudless[BUFFER_COUNT]{};
+    void NoteRecoveryFault(uint64_t, const char*, int32_t code) {
+        assert(code < 0); events.push_back(RecoveryFault);
+    }
     Dx12Resource* tagged = nullptr;
     uint64_t _frameCount = 8;
     void* _swapChainContext = nullptr;
@@ -107,6 +116,11 @@ struct Subject {
         tagged = fResource;
         auto type = skipUi ? FG_ResourceType::UIColor : FG_ResourceType::Depth;
         int fIndex = 0;
+        const auto resourceFrame = _frameCount;
+        const auto kind = skipUi ? XeFGDiagnostics::InputKind::UI : XeFGDiagnostics::InputKind::Depth;
+        auto reject = [](XeFGDiagnostics::InputReason) { return false; };
+        _frameResources[fIndex][type] = true;
+        _resourceReady[fIndex][type] = true;
 '''
 suffix = r'''
         return true;
@@ -136,11 +150,17 @@ int main() {
         assert(std::count(events.begin(), events.end(), Restore) == (legacyCopy && !unsupported ? 1 : 0));
         assert(std::count(events.begin(), events.end(), Tag) == (!unsupported && !skipUi ? 1 : 0));
         assert(std::count(events.begin(), events.end(), Ready) == (result ? 1 : 0));
-        assert(State::Instance().fgChanged == tagFailed);
+        assert(!State::Instance().fgChanged);
+        // R6 schedules bounded recovery only after restoring the borrowed state.
+        assert(std::count(events.begin(), events.end(), RecoveryFault) == (tagFailed ? 1 : 0));
+        if (tagFailed) {
+            const auto type = skipUi ? FG_ResourceType::UIColor : FG_ResourceType::Depth;
+            assert(!subject._frameResources[0].contains(type));
+            assert(!subject._resourceReady[0].contains(type));
+        }
         if (unsupported) assert(events.empty());
         if (tagFailed && legacyCopy) {
-            assert(std::find(events.begin(), events.end(), Restore) < std::find(events.begin(), events.end(), Update));
-            assert(std::find(events.begin(), events.end(), Update) < std::find(events.begin(), events.end(), DeactivateEvent));
+            assert(std::find(events.begin(), events.end(), Restore) < std::find(events.begin(), events.end(), RecoveryFault));
         }
         ++cases;
     }
@@ -153,7 +173,7 @@ with tempfile.TemporaryDirectory(prefix="xefg-guard-") as tmp:
     executable = directory / "guard-test"
     cpp.write_text(prefix + actual_block + "\n" + suffix, encoding="utf-8")
     if compiler is not None:
-        subprocess.run([compiler, "-std=c++17", "-Wall", "-Wextra", "-Werror", str(cpp), "-o", str(executable)], check=True)
+        subprocess.run([compiler, "-std=c++20", "-Wall", "-Wextra", "-Werror", "-I", str(args.source / "OptiScaler"), str(cpp), "-o", str(executable)], check=True)
     else:
         vswhere = Path(os.environ["ProgramFiles(x86)"]) / "Microsoft Visual Studio/Installer/vswhere.exe"
         msbuild = subprocess.check_output([str(vswhere), "-latest", "-products", "*", "-requires",
@@ -167,11 +187,11 @@ with tempfile.TemporaryDirectory(prefix="xefg-guard-") as tmp:
   <PropertyGroup Label="Configuration"><ConfigurationType>Application</ConfigurationType><UseDebugLibraries>false</UseDebugLibraries><PlatformToolset>v143</PlatformToolset></PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <PropertyGroup><OutDir>$(ProjectDir)out\</OutDir><IntDir>$(ProjectDir)obj\</IntDir><TargetName>guard-test</TargetName></PropertyGroup>
-  <ItemDefinitionGroup><ClCompile><LanguageStandard>stdcpp17</LanguageStandard><WarningLevel>Level4</WarningLevel><Optimization>Disabled</Optimization><UndefinePreprocessorDefinitions>NDEBUG;%(UndefinePreprocessorDefinitions)</UndefinePreprocessorDefinitions></ClCompile><Link><SubSystem>Console</SubSystem></Link></ItemDefinitionGroup>
+  <ItemDefinitionGroup><ClCompile><LanguageStandard>stdcpp20</LanguageStandard><AdditionalIncludeDirectories>__SOURCE_INCLUDE__;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories><WarningLevel>Level4</WarningLevel><Optimization>Disabled</Optimization><UndefinePreprocessorDefinitions>NDEBUG;%(UndefinePreprocessorDefinitions)</UndefinePreprocessorDefinitions></ClCompile><Link><SubSystem>Console</SubSystem></Link></ItemDefinitionGroup>
   <ItemGroup><ClCompile Include="guard.cpp" /></ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>
-''', encoding="utf-8")
+'''.replace('__SOURCE_INCLUDE__', str((args.source / 'OptiScaler').resolve())), encoding="utf-8")
         subprocess.run([msbuild, str(project), "/p:Configuration=Debug", "/p:Platform=x64", "/verbosity:minimal"], check=True)
         executable = directory / "out/guard-test.exe"
     subprocess.run([str(executable)], check=True)

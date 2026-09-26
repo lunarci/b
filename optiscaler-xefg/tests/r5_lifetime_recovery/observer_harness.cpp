@@ -128,10 +128,24 @@ static void InitializeTables(){
 struct D3D12_COMMAND_QUEUE_DESC {int Type=0,Flags=0,NodeMask=0,Priority=0;};
 struct CD3DX12_RESOURCE_DESC {static int Buffer(int n){return n;}};
 struct CD3DX12_HEAP_PROPERTIES {explicit CD3DX12_HEAP_PROPERTIES(int){}};
+// GPU allocation/residency diagnostics are an external boundary in this
+// lifetime-observer suite. Their real hook/notifier behavior is checked by R6.
+struct LUID { unsigned LowPart=1; long HighPart=0; };
+static bool IsEqualLUID(LUID a,LUID b){return a.LowPart==b.LowPart && a.HighPart==b.HighPart;}
+static uint64_t ResidencyLuidKey(LUID a){return (uint64_t(uint32_t(a.HighPart))<<32)|a.LowPart;}
+enum class VendorId { AMD, Other };
+namespace IdentifyGpu {
+struct Gpu { LUID luid; VendorId vendorId=VendorId::AMD; };
+static std::array<Gpu,1> getAllGpus(){return {};}
+}
+static std::atomic<bool> residencyAmdKnown{false};
+static std::atomic<uint64_t> residencyAmdLuid{0};
+static bool coreUeHooksInstalled=false;
 struct ID3D12Device1: IUnknown {};
 struct ID3D12Device: IUnknown {
     ID3D12CommandQueue queue;ID3D12GraphicsCommandList list;
     ID3D12CommandAllocator allocator;ID3D12Resource resource;
+    LUID GetAdapterLuid(){return {};}
     ID3D12Device(){vtable=deviceTable.data();queue.vtable=queueTable.data();list.vtable=listTable.data();
         allocator.vtable=allocatorTable.data();resource.vtable=resourceTable.data();}
     HRESULT CreateCommandQueue(D3D12_COMMAND_QUEUE_DESC*,ID3D12CommandQueue** out){queue.refs=1;*out=&queue;return S_OK;}
@@ -207,6 +221,10 @@ static Generic o_GetResourceAllocationInfo=nullptr,o_CreateCommittedResource=nul
 static Generic o_SetResidencyPriority=nullptr;static PFN_Release o_D3D12DeviceRelease=nullptr;
 void hkCreateSampler(){}void hkCreateRootSignature(){}void hkD3D12DeviceRelease(){}void hkSetResidencyPriority(){}
 void hkCheckFeatureSupport(){}void hkCreateCommittedResource(){}void hkCreatePlacedResource(){}void hkGetResourceAllocationInfo(){}
+namespace GpuAllocationHooks {
+static unsigned installCalls=0;
+static void Install(ID3D12Device* device,Generic*,Generic,bool){assert(device);++installCalls;}
+}
 static Generic o_CreateDescriptorHeap=nullptr; void hkCreateDescriptorHeap(){}
 static Generic o_CreateRenderTargetView=nullptr; void hkCreateRenderTargetView(){}
 static Generic o_CreateShaderResourceView=nullptr; void hkCreateShaderResourceView(){}
@@ -243,6 +261,7 @@ struct ResTrack_Dx12 {
 
 static void ResetInstallation(){
     installed.clear();staged.clear();failAt=0;transactions=0;
+    coreUeHooksInstalled=false;residencyAmdKnown=false;residencyAmdLuid=0;GpuAllocationHooks::installCalls=0;
     o_CreateSampler=o_CheckFeatureSupport=o_CreateRootSignature=nullptr;
     o_GetResourceAllocationInfo=o_CreateCommittedResource=o_CreatePlacedResource=nullptr;
     o_D3D12DeviceRelease=nullptr;o_ExecuteCommandLists=nullptr;o_ResetCommandList=nullptr;

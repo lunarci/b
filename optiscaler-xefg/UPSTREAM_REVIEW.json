@@ -1,43 +1,58 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "review_date": "2026-09-26",
-  "scope": "Selective upstream changes for Intel XeFG R5; preserve R4 quality profile and maximum 6x. This review records source decisions, not gameplay validation.",
-  "donor": {
-    "repo": "Coldwood1026/OptiScalerDp4aUnlock",
-    "sha": "9eea95bba9fda7121f214d2eba358423be598d7e",
-    "date": "2026-09-19T11:12:38Z",
-    "status": "Still newest donor head at review time"
-  },
-  "official_latest": {
-    "head": "44cfee4d436857742a9bf71bbe81396ec9989715",
-    "date": "2026-09-25T19:27:13Z",
-    "nightly": "nightly-20260926",
-    "published": "2026-09-26T09:12:34Z",
+  "scope": "R6 source review for Night City to Dogtown persistent degradation. Intel XeFG only; preserve ratio 1.5, original color/HDR/upscaler profile and 6x unlock. Source evidence is not gameplay validation.",
+  "repositories": [
+    {
+      "repository": "https://github.com/optiscaler/OptiScaler",
+      "head": "44cfee4d436857742a9bf71bbe81396ec9989715",
+      "date": "2026-09-25T19:27:13Z",
+      "decision": "No whole-nightly replacement; latest head is unchanged since R5 review. Reprojection/shader changes are outside this stability task.",
+      "source_url": "https://github.com/optiscaler/OptiScaler/tree/44cfee4d436857742a9bf71bbe81396ec9989715"
+    },
+    {
+      "repository": "https://github.com/Coldwood1026/OptiScalerDp4aUnlock",
+      "head": "9eea95bba9fda7121f214d2eba358423be598d7e",
+      "date": "2026-09-19T11:12:38Z",
+      "decision": "Retain donor and unlock. No newer donor change found at review time.",
+      "source_url": "https://github.com/Coldwood1026/OptiScalerDp4aUnlock/commit/9eea95bba9fda7121f214d2eba358423be598d7e"
+    },
+    {
+      "repository": "https://github.com/intel/xess",
+      "head": "de0fb9c1c510661c571164e1418ceca8101dab69",
+      "date": "2026-09-09T15:39:03Z",
+      "decision": "Use pinned public API contracts for recovery/status logic; retain already current runtime binaries. Head change is public-header license update.",
+      "source_url": "https://github.com/intel/xess/tree/de0fb9c1c510661c571164e1418ceca8101dab69"
+    },
+    {
+      "repository": "https://github.com/Nukem9/dlssg-to-fsr3",
+      "head": "0e253f63c3c66ee7582406bfa3dec698df7ab2c1",
+      "date": "2025-03-16T18:25:38Z",
+      "decision": "No Nukem FG runtime or stacking adopted; its FSR optical-flow implementation is not the Intel provider.",
+      "source_url": "https://github.com/Nukem9/dlssg-to-fsr3/commit/0e253f63c3c66ee7582406bfa3dec698df7ab2c1"
+    },
+    {
+      "repository": "https://github.com/3zwr1/AMD-NR---OptiScaler",
+      "head": "6097991869c8c10f957f529f6b78323ff1def0f4",
+      "date": "2026-09-26T07:12:03Z",
+      "decision": "No adoption: reviewed tree contains distributed binaries/docs, no auditable C++ source patch for this failure. Neural rendering/extra mod stacking is outside requested scope.",
+      "source_url": "https://github.com/3zwr1/AMD-NR---OptiScaler/tree/6097991869c8c10f957f529f6b78323ff1def0f4"
+    }
+  ],
+  "latest_nightly": {
+    "tag": "nightly-20260926",
+    "published_at": "2026-09-26T09:12:34Z",
     "asset": "OptiScaler_v10.0.0-pre1_20260926.7z",
     "sha256": "464e2ecc5dab477e940186959a7fdee64880f61c63f52ff0f516e5502bc74e94",
-    "repository": "https://github.com/optiscaler/OptiScaler",
-    "nightly_repository": "https://github.com/optiscaler/OptiScaler-nightly",
-    "nightly_url": "https://github.com/optiscaler/OptiScaler-nightly/releases/tag/nightly-20260926",
-    "decision": "Keep pinned donor plus reviewed patches; do not replace the complete runtime with latest nightly."
+    "url": "https://github.com/optiscaler/OptiScaler-nightly/releases/tag/nightly-20260926",
+    "decision": "Reviewed, not installed wholesale."
   },
-  "intel_runtime": {
-    "repository": "https://github.com/intel/xess",
-    "latest_tag": "v3.0.2",
+  "runtime": {
+    "latest_release": "v3.0.2",
     "published_at": "2026-07-24T18:24:17Z",
-    "decision": "Retain R4 Intel runtime files; current release improvements are already in the existing versions.",
-    "release_facts": [
-      {
-        "tag": "v3.0.2",
-        "url": "https://github.com/intel/xess/releases/tag/v3.0.2",
-        "changes": "Updates XeLL to 1.3.2.10: non-Intel leak when Present stops while markers continue; Streamline proxy handling; sleep-mode interval units."
-      },
-      {
-        "tag": "v3.0.1",
-        "url": "https://github.com/intel/xess/releases/tag/v3.0.1",
-        "changes": "FG fixes tight-alignment crashes and FPS-limit lowering after ResizeBuffers or interpolation-count changes."
-      }
-    ],
-    "r4_runtime_files": [
+    "url": "https://github.com/intel/xess/releases/tag/v3.0.2",
+    "decision": "Preserve R4/R5 payload. XeLL marker-without-Present leak and Streamline proxy fixes are already included by version; do not advertise as new R6 fixes.",
+    "files": [
       {
         "path": "OptiScaler/libxess_fg.dll",
         "file_version": "1.3.1.78",
@@ -49,68 +64,88 @@
         "sha256": "d2030dcd694fda8f2ec7e044b13e6db8f0b56d4ba9113a5efad334e3f3ded8c7"
       }
     ],
-    "verification": "R4 package SHA256 and PE version metadata checked locally. Release status checked through GitHub API; no fresh SDK archive byte comparison was performed in this review."
+    "verification": "R4 PE versions and hashes checked locally in R5 review. Current upstream release checked via GitHub API; no fresh SDK archive byte comparison in this review."
   },
-  "decisions": [
+  "source_decisions": [
     {
-      "repository": "https://github.com/optiscaler/OptiScaler",
       "commit": "349176128f5ce87fb81a4c636569c60c44557fec",
       "date": "2026-09-18T12:04:54Z",
-      "title": "Disable XeFG backbuffer release hack",
-      "decision": "adopt_narrow",
-      "reason": "R4 still contains both repeated backbuffer Release loops in FG_Hooks ResizeBuffers/1. Official commit disables these ownership-violating forced decrements. No new shader, quality profile or FG implementation.",
-      "url": "https://github.com/optiscaler/OptiScaler/commit/349176128f5ce87fb81a4c636569c60c44557fec"
+      "url": "https://github.com/optiscaler/OptiScaler/commit/349176128f5ce87fb81a4c636569c60c44557fec",
+      "decision": "Retain prior R5 adoption, not a new R6 cherry-pick.",
+      "reason": "Removes forced borrowed-backbuffer Release loop; no quality/profile changes."
     },
     {
-      "repository": "https://github.com/optiscaler/OptiScaler",
-      "commit": "9df3ed0c14ab353f4476cef4498c1362c27a5cd2",
-      "date": "2026-09-18T12:45:43Z",
-      "title": "Applied Dx11 like lock for XeFG on Dx12",
-      "decision": "do_not_cherry_pick",
-      "reason": "Shared resizeLock scopes do not span actual native Present/Resize calls; helper retains5000ms waits and callers continue on failure. Review concept under R5 redesign only; do not reintroduce repeated stalls.",
-      "url": "https://github.com/optiscaler/OptiScaler/commit/9df3ed0c14ab353f4476cef4498c1362c27a5cd2"
+      "commit": "c9cfac218c5f9fa4b8be89a35e940087dee567e5",
+      "date": "2025-02-13T08:16:46Z",
+      "url": "https://github.com/Nukem9/dlssg-to-fsr3/commit/c9cfac218c5f9fa4b8be89a35e940087dee567e5",
+      "decision": "Reviewed, not ported.",
+      "reason": "Cleans partial FSR optical-flow/backend construction, resets optional handles, frees failed scratch allocation. No corresponding Intel XeFG allocation path; not evidence of this Dogtown failure."
     },
     {
-      "repository": "https://github.com/optiscaler/OptiScaler",
-      "commit": "6ded74bfa4fbb932fda7184c1263fc45380d5b1d",
-      "date": "2026-09-23T18:49:11Z",
-      "title": "Factor out FGPreserveSwapChain handling into common code",
-      "decision": "defer",
-      "reason": "Commonizes duplicate FGPreserveSwapChain logic without solving pending-command observer/recovery; broad backend interface changes. It also keeps forced real swapchain Release until0. R4 added ReleaseSwapchain failure check would need preservation.",
-      "url": "https://github.com/optiscaler/OptiScaler/commit/6ded74bfa4fbb932fda7184c1263fc45380d5b1d"
-    },
-    {
-      "repository": "https://github.com/optiscaler/OptiScaler",
-      "commit": "22e6ea28e999ca83c6d17b074bd8a51089b7d320",
-      "date": "2026-09-16T21:59:56Z",
-      "title": "Fix active Streamline binding and resource view cleanup [#1157]",
-      "decision": "defer",
-      "reason": "Active Opti Streamline proxy binding pertains to own DLSSG output, not user game Streamline input feeding XeFG. Graphics view changes are separate depth-plane helper fix not established cause of current stalls.",
-      "url": "https://github.com/optiscaler/OptiScaler/commit/22e6ea28e999ca83c6d17b074bd8a51089b7d320"
-    },
-    {
-      "repository": "https://github.com/optiscaler/OptiScaler",
-      "commit": "e8c9834db76df81c2bfe2abc1c4d8df3de0a6dfd",
-      "date": "2026-09-18T18:31:55Z",
-      "title": "Removed JustTrackCmdList and hooks needed for it",
-      "decision": "defer",
-      "reason": "Removes old HUDfix JustTrackCmdList feature through broad resource tracker refactor. Not R4 pending submission state tracking. Avoid enabling broad HUDfix tracking just to observe queue/reset.",
-      "url": "https://github.com/optiscaler/OptiScaler/commit/e8c9834db76df81c2bfe2abc1c4d8df3de0a6dfd"
-    },
-    {
-      "repository": "https://github.com/optiscaler/OptiScaler",
       "commit": "44cfee4d436857742a9bf71bbe81396ec9989715",
-      "date": "2026-09-25T19:27:13Z",
-      "title": "Latest official head / reprojection merge series",
-      "decision": "do_not_replace_baseline_with_latest",
-      "reason": "Sep25/26 merge series adds reprojection/shaders/input camera pipeline and known AL2-disabled/multiple inflight camera artifacts; extra feature outside Intel-only stability task.",
-      "url": "https://github.com/optiscaler/OptiScaler/commit/44cfee4d436857742a9bf71bbe81396ec9989715"
+      "url": "https://github.com/optiscaler/OptiScaler/blob/44cfee4d436857742a9bf71bbe81396ec9989715/OptiScaler/framegen/xefg/XeFG_Dx12.cpp#L1494-L1552",
+      "decision": "Correct original inherited control-flow locally; no upstream fix available at this head.",
+      "reason": "Static lastFormat returns on changed format before updating remembered value; tag result !=SUCCESS enters fgChanged/Deactivate loop. These mechanisms remain in latest upstream. Whether Dogtown triggered either is unproven by R5 logs."
     }
   ],
-  "integration_notes": [
-    "Apply the behavior of 349176128f5ce87fb81a4c636569c60c44557fec to both ResizeBuffers variants: remove forced borrowed-backbuffer Release loops. Do not claim the entire commit series was cherry-picked.",
-    "Queue Execute and command-list Reset observers must work for Streamline DLSSG input without enabling unrelated HUDfix capture or broad resource tracking.",
-    "Do not alter upscale ratio, AMD upscaler binary, HDR/color/exposure defaults, MFG unlock signature checks, or the maximum 6x setting as part of upstream adoption.",
-    "The latest reprojection series documents AL2-disabled and multiple-inflight camera artifacts. Its shaders and input pipeline are outside this stability task."
+  "sdk_contracts": {
+    "guide": "https://github.com/intel/xess/blob/de0fb9c1c510661c571164e1418ceca8101dab69/doc/xess_fg_developer_guide_english.md",
+    "header": "https://github.com/intel/xess/blob/de0fb9c1c510661c571164e1418ceca8101dab69/inc/xess_fg/xefg_swapchain.h",
+    "resource_header": "https://github.com/intel/xess/blob/de0fb9c1c510661c571164e1418ceca8101dab69/inc/xess_fg/xefg_swapchain_d3d12.h",
+    "rules": [
+      "Guide L656-657,890-893: disabling marks history cleanup for next enable and prevents history retention. Disabled tag success alone cannot prove retained inputs or recovery; no explicit guarantee of disabled tagging persistence was found.",
+      "Guide L883-893: resetHistory skips only current interpolation while retaining current-frame inputs. Avoid treating expected scene-history reset as a permanent provider failure.",
+      "Guide L1016-1022,1106-1108: submit tagging command lists and finish input/PresentId calls before matching Present.",
+      "Guide L1112-1137: positive return codes are warnings, negative codes errors. Warning RESOURCE_SIZES_MISMATCH=6 explicitly skips interpolation; warning does not prove a coherent frame or require a permanent fault.",
+      "Header L300-308 and guide L1032-1053: last status has framesPresented, frameGenResult and isFrameGenEnabled. framesPresented includes rendered frames; every Present including DXGI_PRESENT_TEST updates status. API success alone is not generated-frame proof.",
+      "Guide L860: Hudless texture format must match backbuffer. No process-global immutable format requirement was found; input transitions still need current-frame consistency.",
+      "Guide L1058-1084: resize/destroy require tagging-work completion and no concurrent context use. Recovery must retain R5 lifetime protections.",
+      "Header L463-483: initial maxInterpolatedFrames bounds later selection; frequent SetNumInterpolatedFrames may compile/reallocate. Retain initialized 6x capability; required heap sizes are not measured resident allocation."
+    ]
+  },
+  "issue_evidence": [
+    {
+      "url": "https://github.com/Nukem9/dlssg-to-fsr3/issues/56",
+      "finding": "Old FSR-mod Dogtown counter-versus-smoothness anecdote; not the same provider/runtime and no verified transferable patch."
+    },
+    {
+      "url": "https://github.com/optiscaler/OptiScaler/issues/799",
+      "finding": "Witcher 3 Linux/OptiFG 0.7.9 degradation report; different OS/input/runtime. No code-backed fix for current path."
+    },
+    {
+      "url": "https://github.com/intel/xess/issues/42",
+      "finding": "Battlefield 6 leak report closed with developer-fix comment; no source patch establishing applicability to this custom Cyberpunk path."
+    }
+  ],
+  "limits": [
+    "No reviewed upstream change proves or fully fixes the user-specific Dogtown reproduction. New local fixes must be tested and clearly separated from hypotheses.",
+    "R5 LOCAL usage exceeds its budget while native Present delays grow; process-wide counters do not identify engine, driver or provider ownership. No proven automatic eviction or RAM-spill fix is adopted.",
+    "Preserve shaders, upscaler binary/profile, ratio 1.5, color/HDR/exposure behavior, default 3x and maximum 6x unlock; exclude DLSS5 and extra mod stacking.",
+    "Final production diff, artifact hashes and test status are recorded separately; this review does not assert unrun gameplay tests."
+  ],
+  "memory_contracts": [
+    {
+      "url": "https://learn.microsoft.com/en-us/windows/win32/api/dxgi1_4/ns-dxgi1_4-dxgi_query_video_memory_info",
+      "finding": "Microsoft documents possible stuttering and performance penalties when application CurrentUsage exceeds Budget. This supports a pressure hypothesis, not ownership or a proven leak."
+    },
+    {
+      "url": "https://learn.microsoft.com/en-us/windows/win32/direct3d12/residency",
+      "finding": "Over-budget residency can intermittently freeze the process. Moving frequently used resources to system memory can severely reduce FPS; no simple API identifies safely spillable engine resources."
+    }
+  ],
+  "local_source_corrections": [
+    {
+      "name": "FFX context routing registry synchronization",
+      "decision": "adopt_local_fix",
+      "evidence": [
+        "OptiScaler/upscalers/FeatureProvider_Dx12.cpp:143 moves the old feature into DelayedDestroy.",
+        "OptiScaler/Util.h:61-63 destroys it on a detached worker after two seconds.",
+        "OptiScaler/upscalers/ffx/FFXFeature_Dx12.h:32-38 calls D3D12_DestroyContext on that worker.",
+        "OptiScaler/proxies/FfxApi_Proxy.h previously read/inserted/erased the same ankerl map without synchronization. Foreground create/configure and other delayed destroy workers can overlap."
+      ],
+      "implementation": "FfxContextRegistry retains the existing map type; short locks serialize Set/Find/atomic Take. External provider calls stay outside locks. Original dispatch/fallback and quality settings are unchanged.",
+      "validation": "tests/r6_ffx_registry compiles the production helper and exercises 16000 concurrent context lifetimes, single-winner removal and fallback semantics. Final aggregate results are in TEST_RESULTS.json.",
+      "limit": "Concrete source data race corrected; R5 log does not establish that this race occurred at Dogtown or caused its memory growth."
+    }
   ]
 }

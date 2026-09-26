@@ -80,6 +80,7 @@ struct MockFG {
     bool IsActive() { return active; }
     bool IsPaused() { return paused; }
     void Activate() { active = true; }
+    uint64_t FrameCount() const { return 100; }
 };
 struct SlSubject {
     std::mutex _frameBoundaryMutex;
@@ -216,7 +217,7 @@ counter_subject = "struct CounterSubject { UINT64 _frameCount = 0; FGHistoryRese
 body = (preamble + counter_subject + optional_code + auto_flag_code + scaffold + frame_check +
         "\n bool Feed(MockFG& fg, Constants data, uint32_t frameId) {\n"
         " auto* fgOutput = &fg; bool infiniteDepth = false; reachedFrameData = false;\n" +
-        constants_prelude + "\n reachedFrameData = true; return true;\n }\n};\n" + tests)
+        constants_prelude.replace("const auto constantsInternalFrame", "[[maybe_unused]] const auto constantsInternalFrame") + "\n reachedFrameData = true; return true;\n }\n};\n" + tests)
 with tempfile.TemporaryDirectory(prefix="xefg-history-") as folder:
     tmp = Path(folder)
     cpp = tmp / "history.cpp"

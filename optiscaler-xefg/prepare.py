@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 
 PIN = '9eea95bba9fda7121f214d2eba358423be598d7e'
 REPOSITORY = 'https://github.com/Coldwood1026/OptiScalerDp4aUnlock'
-NAME = 'JaeYun-XeFG6x-r5'
+NAME = 'JaeYun-XeFG6x-r6'
 KIT = Path(__file__).resolve().parent
 NS = {'m': 'http://schemas.microsoft.com/developer/msbuild/2003'}
 

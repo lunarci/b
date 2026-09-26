@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 
 
@@ -38,3 +39,5 @@ with tempfile.TemporaryDirectory(prefix="long-session-tests-") as tmp:
                    "-I", str(include), str(cpp), "-o", str(executable)]
     subprocess.run(command, cwd=directory, check=True)
     subprocess.run([str(executable)], check=True)
+
+subprocess.run([sys.executable, str(Path(__file__).with_name("monitor_log_test.py")), str(args.source.resolve())], check=True)

@@ -54,6 +54,8 @@ present_harness = r'''
 #include <framegen/FGWorkGate.h>
 #include <misc/LongSessionTiming.h>
 #include <misc/XeFGWorkDiagnostics.h>
+#include <misc/XeFGPresentDiagnostics.h>
+#include <framegen/xefg/XeFGRecovery.h>
 #include <shared_mutex>
 #include <unordered_map>
 #include <atomic>
@@ -106,7 +108,10 @@ struct OwnedMutex {
 };
 struct ID3D12Device {}; struct ID3D12CommandQueue {}; struct FG_Constants {};
 constexpr unsigned BUFFER_COUNT = 4;
-enum xefg_swapchain_result_t { XEFG_SWAPCHAIN_RESULT_SUCCESS, XEFG_SWAPCHAIN_RESULT_ERROR };
+enum xefg_swapchain_result_t { XEFG_SWAPCHAIN_RESULT_SUCCESS=0, XEFG_SWAPCHAIN_RESULT_ERROR=-1 };
+using xefg_swapchain_handle_t=void*;
+constexpr int DXGI_FORMAT_UNKNOWN=0;
+struct xefg_swapchain_present_status_t { uint32_t framesPresented=0; xefg_swapchain_result_t frameGenResult=XEFG_SWAPCHAIN_RESULT_SUCCESS; uint32_t isFrameGenEnabled=0; };
 namespace XeFGPacing { void RequestReset() {} }
 namespace XeFGProxy {
     static bool failDisable=false, failEnable=false;
@@ -116,6 +121,17 @@ namespace XeFGProxy {
         return (enabled ? failEnable : failDisable) ? XEFG_SWAPCHAIN_RESULT_ERROR : XEFG_SWAPCHAIN_RESULT_SUCCESS;
     }
     auto SetEnabled() { return &set; }
+    static std::atomic<unsigned> statusQueries{0};
+    static bool statusAvailable=true; static xefg_swapchain_result_t statusResult=XEFG_SWAPCHAIN_RESULT_SUCCESS;
+    static std::latch* queryEntered=nullptr; static std::latch* queryRelease=nullptr;
+    static bool nativeReturned=false;
+    xefg_swapchain_result_t status(void*,xefg_swapchain_present_status_t* out) {
+        assert(nativeReturned && "status query must follow the actual native call");
+        ++statusQueries;
+        if(queryEntered) queryEntered->count_down();
+        if(queryRelease) queryRelease->wait();
+        *out={3,XEFG_SWAPCHAIN_RESULT_SUCCESS,1};return statusResult; }
+    auto GetLastPresentStatus() { return statusAvailable ? &status : nullptr; }
 }
 struct XeFG_Dx12 {
     FGWorkGate _workGate, _submissionGate, _providerPresentGate;
@@ -133,8 +149,15 @@ struct XeFG_Dx12 {
     void* _fgContext=reinterpret_cast<void*>(1);
     void* _swapChainContext=reinterpret_cast<void*>(1);
     ID3D12Device* _device=nullptr; ID3D12CommandQueue* _gameCommandQueue=nullptr;
-    uint64_t _lastDispatchedFrame=7;
+    uint64_t _lastDispatchedFrame=7, _frameCount=57;
+    unsigned recoveryFaults=0;uint64_t lastFaultFrame=0;int32_t lastFaultResult=0;
+    void NoteRecoveryFault(uint64_t frame,const char* stage,int32_t result){
+        assert(result<0 && std::string(stage)=="disable");
+        ++recoveryFaults;lastFaultFrame=frame;lastFaultResult=result;
+    }
     XeFGDiagnostics::WorkDiagnostics _workDiagnostics;
+    XeFGRecovery _recovery;
+    int _hudlessObservedFormat[BUFFER_COUNT]{},_hudlessAcceptedFormat[BUFFER_COUNT]{};
     auto AcquireWork(){return _workGate.TryEnter();}
     bool TryCloseCpuAdmission();void RestoreCpuAdmission();void RestoreProviderState(bool);
     bool DeactivateImpl(bool submitPending=true);void DestroyFGContext();
@@ -152,7 +175,13 @@ struct XeFG_Dx12 {
     bool IsActive() const { return active; }
     bool IsPaused() const { return paused; }
     unsigned FrameCount() const { return 1; }
-    void Present() { ++fgPresents; }
+    bool Present() { ++fgPresents; return true; }
+    unsigned prepares=0,statusObservations=0;
+    void PreparePresent() { ++prepares; }
+    uint64_t PresentRecoveryToken() { return 42; }
+    void ObservePresentStatus(uint64_t token,HRESULT hr,int32_t query,uint32_t frames,int32_t frameResult,bool enabled) {
+        assert(token==42 && hr==S_OK && query==0 && frames==3 && frameResult==0 && enabled);++statusObservations; }
+    void* SwapchainContext() {return _swapChainContext;}
     auto AcquirePresentWork() {
         if (requireMutexBeforeAdmission) assert(Mutex.getOwner() == 2);
         return submissionGate.TryEnter();
@@ -234,9 +263,15 @@ static unsigned nativePresentCalls = 0, nativePresent1Calls = 0;
 static std::latch* nativeEntered = nullptr;
 static std::latch* nativeRelease = nullptr;
 static HRESULT nativeResult = 7;
+static bool nestedTestDuringNative=false;
 HRESULT nativeWait() {
+    if(nestedTestDuringNative) {
+        nestedTestDuringNative=false; IDXGISwapChain nested;
+        assert(FGHooks::FGPresent(&nested,0,DXGI_PRESENT_TEST,nullptr)==S_OK);
+    }
     if (nativeEntered) nativeEntered->count_down();
     if (nativeRelease) nativeRelease->wait();
+    XeFGProxy::nativeReturned=true;
     return nativeResult;
 }
 HRESULT o_FGSCPresent(IDXGISwapChain*, UINT, UINT) {
@@ -255,6 +290,8 @@ struct Fixture {
         nativePresentCalls = nativePresent1Calls = semaphoreReleases = 0;
         Hudfix_Dx12::starts = Hudfix_Dx12::ends = 0;
         nativeEntered = nativeRelease = nullptr; nativeResult = 7;
+        XeFGProxy::statusAvailable=true; XeFGProxy::statusResult=XEFG_SWAPCHAIN_RESULT_SUCCESS;
+        XeFGProxy::queryEntered=XeFGProxy::queryRelease=nullptr; XeFGProxy::nativeReturned=false; nestedTestDuringNative=false;
         FGHooks::_lastFGFrameTime = 0.0;
         XeFGProxy::failDisable=XeFGProxy::failEnable=false;
         XeFGProxy::enableCalls=XeFGProxy::disableCalls=0;
@@ -336,6 +373,7 @@ int main() {
         assert(fixture.call(present1)==nativeResult && fixture.nativeCount()==1);
         // Run the real alias-reset failure paths, then the full FGPresent body.
         XeFGProxy::failDisable=true;fg.DestroyFGContext();
+        assert(fg.recoveryFaults==1 && fg.lastFaultFrame==fg._frameCount && fg.lastFaultResult==-1);
         assert(fg.IsActive() && fg._fgContext==fg._swapChainContext);
         assert(!fg._workGate.IsClosed() && !fg._providerPresentGate.IsClosed() && !fg._submissionGate.IsClosed());
         assert(fixture.call(present1)==nativeResult && fixture.nativeCount()==2);
@@ -357,8 +395,67 @@ int main() {
         assert(!fg._workGate.IsClosed() && !fg._providerPresentGate.IsClosed() && !fg._submissionGate.IsClosed());
         assert(fixture.call(present1)==nativeResult && fixture.nativeCount()==6 && fg.fgPresents==5);
         assert((present1 ? nativePresent1Calls : nativePresentCalls)==6);
+        assert(fg.recoveryFaults==1);
         assert(fg.Mutex.locks==fg.Mutex.unlocks && fg.Mutex.getOwner()==0);
         assert(semaphoreReleases==7 && Hudfix_Dx12::ends==7);
+    }
+    for (bool present1 : {false,true}) {
+        Fixture fixture; FakeFG fg; fixture.state.currentFG=&fg;
+        auto queries=XeFGProxy::statusQueries.load();
+        auto before=XeFGDiagnostics::ReadPresentSnapshot();
+        nativeResult=S_OK;
+        assert(fixture.call(present1)==S_OK && fg.statusObservations==1 && fg.prepares==1);
+        assert(XeFGProxy::statusQueries==queries+1);
+        auto after=XeFGDiagnostics::ReadPresentSnapshot();
+        assert(after.validSamples==before.validSamples+1 && after.queuedFrames==before.queuedFrames+3);
+        assert(fixture.call(present1,DXGI_PRESENT_TEST)==S_OK && fg.statusObservations==1 && fg.prepares==1);
+        assert(XeFGProxy::statusQueries==queries+1);
+        assert(XeFGDiagnostics::ReadPresentSnapshot().testCalls==before.testCalls+1);
+        // Native failed/occluded calls, unavailable status and missing-status
+        // warning must never confirm a provider recovery or count queued frames.
+        for(HRESULT hr : {-1,1}) {nativeResult=hr;assert(fixture.call(present1)==hr);}
+        nativeResult=S_OK;XeFGProxy::statusAvailable=false;assert(fixture.call(present1)==S_OK);
+        XeFGProxy::statusAvailable=true;XeFGProxy::statusResult=static_cast<xefg_swapchain_result_t>(5);
+        assert(fixture.call(present1)==S_OK);
+        assert(fg.statusObservations==1);
+        assert(XeFGDiagnostics::ReadPresentSnapshot().queuedFrames==after.queuedFrames);
+    }
+    for(bool present1 : {false,true}) {
+        // An inactive provider must still get its nonblocking recovery opportunity.
+        Fixture fixture; FakeFG fg; fixture.state.currentFG=&fg; fg.active=false; nativeResult=S_OK;
+        auto queries=XeFGProxy::statusQueries.load();
+        assert(fixture.call(present1)==S_OK && fg.prepares==1 && fg.fgPresents==0);
+        assert(fg.statusObservations==1 && XeFGProxy::statusQueries==queries+1);
+        assert(fg._providerPresentGate.TryCloseWhenIdle());
+        assert(fixture.call(present1)==S_OK && fg.prepares==1);
+        assert(fixture.nativeCount()==1 && XeFGProxy::statusQueries==queries+1 && fg.statusObservations==1);
+        fg._providerPresentGate.Open();fg._swapChainContext=nullptr;
+        assert(fixture.call(present1)==S_OK && fixture.nativeCount()==2);
+        assert(XeFGProxy::statusQueries==queries+1 && fg.statusObservations==1);
+    }
+    for(bool present1 : {false,true}) {
+        // Teardown cannot close provider admission while the status query still
+        // references its context after native Present has already returned.
+        Fixture fixture; FakeFG fg; fixture.state.currentFG=&fg; nativeResult=S_OK;
+        std::latch entered{1},release{1}; XeFGProxy::queryEntered=&entered;XeFGProxy::queryRelease=&release;
+        std::thread thread([&]{assert(fixture.call(present1)==S_OK);});
+        entered.wait(); assert(!fg._providerPresentGate.TryCloseWhenIdle());
+        assert(!fg._providerPresentGate.IsClosed()); release.count_down();thread.join();
+        XeFGProxy::queryEntered=XeFGProxy::queryRelease=nullptr;
+        assert(fg.statusObservations==1 && fg._providerPresentGate.TryCloseWhenIdle());
+        fg._providerPresentGate.Open();
+    }
+    for(bool present1 : {false,true}) {
+        // A nested native TEST also replaces the SDK's last status, so neither
+        // its status nor the overlapping outer status may confirm recovery.
+        Fixture fixture; FakeFG fg; fixture.state.currentFG=&fg; nativeResult=S_OK;
+        const auto before=XeFGDiagnostics::ReadPresentSnapshot();
+        auto queries=XeFGProxy::statusQueries.load();nestedTestDuringNative=true;
+        assert(fixture.call(present1)==S_OK);
+        const auto after=XeFGDiagnostics::ReadPresentSnapshot();
+        assert(after.testCalls==before.testCalls+1 && after.ambiguous==before.ambiguous+2);
+        assert(after.queuedFrames==before.queuedFrames && after.validSamples==before.validSamples);
+        assert(fg.statusObservations==0 && XeFGProxy::statusQueries==queries+1);
     }
     std::cout << "PASS: complete FGPresent/Present1 lifetime plus actual provider-disable rollback and CreateContext resume\n";
 }

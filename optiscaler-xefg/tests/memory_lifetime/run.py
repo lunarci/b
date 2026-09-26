@@ -44,6 +44,8 @@ recovery_bodies = '\n'.join(body('OptiScaler/framegen/xefg/XeFG_Dx12.cpp', sig) 
 harness = r'''
 #include "framegen/FGWorkGate.h"
 #include "misc/XeFGWorkDiagnostics.h"
+#include "misc/XeFGPresentDiagnostics.h"
+#include "framegen/xefg/XeFGRecovery.h"
 #include "misc/LongSessionTiming.h"
 #include <shared_mutex>
 #include <unordered_map>
@@ -55,6 +57,7 @@ harness = r'''
 #include <iostream>
 #include <mutex>
 using UINT=unsigned; using UINT64=uint64_t; using HRESULT=int;
+constexpr int DXGI_FORMAT_UNKNOWN=0;
 constexpr HRESULT S_OK=0; constexpr size_t BUFFER_COUNT=4;
 constexpr int D3D12_COMMAND_LIST_TYPE_DIRECT=0,D3D12_FENCE_FLAG_NONE=0,FALSE=0;
 struct CommandObject { unsigned releases=0; void Release(){++releases;} void SetName(const wchar_t*){} HRESULT Close(){return 0;} };
@@ -115,12 +118,19 @@ namespace ResTrack_Dx12 { static bool observersReady=true;
     bool HookLifetimeObservers(ID3D12Device*,void*) { return observersReady; } }
 struct XeFG_Dx12 {
     int drainCalls=0, failDrainAt=0; bool destroyOk=true, disableOk=true, discardOk=true;
+    int disableResult=-1; unsigned recoveryFaults=0; UINT64 _frameCount=57,lastFaultFrame=0;
+    int32_t lastFaultResult=0; std::string lastFaultStage;
+    void NoteRecoveryFault(UINT64 frame,const char* stage,int32_t result) {
+        assert(result<0); ++recoveryFaults;lastFaultFrame=frame;lastFaultStage=stage;lastFaultResult=result;
+    }
     std::mutex _lifecycleMutex, _pendingCommandMutex;
     FGWorkGate _workGate, _providerPresentGate, _submissionGate;
     bool _workWasClosed=false,_presentWasClosed=false,_submissionWasClosed=false,_submissionClosedByLifecycle=false;
     bool _lifecycleFailed=false, _objectsDrained=false, _aliasResetPending=false;
     bool _pendingTrackingComplete=true; size_t _pendingCommandListCount=0;
     XeFGDiagnostics::WorkDiagnostics _workDiagnostics;
+    XeFGRecovery _recovery;
+    int _hudlessObservedFormat[BUFFER_COUNT]{},_hudlessAcceptedFormat[BUFFER_COUNT]{};
     void* _fgContext=reinterpret_cast<void*>(1);
     void* _swapChainContext=this;
     ID3D12Device* _device=nullptr; void* _gameCommandQueue=nullptr;
@@ -148,7 +158,7 @@ struct XeFG_Dx12 {
 };
 int XeFGProxy::Enabled(void* context,bool enable) {
     auto self=static_cast<XeFG_Dx12*>(context); order.push_back(enable?'V':'D');
-    return enable || self->disableOk ? 0 : -1;
+    return enable || self->disableOk ? 0 : self->disableResult;
 }'''
 
 tests = r'''
@@ -157,6 +167,18 @@ int main() {
         XeFGCtorProbe startup;
         assert(startup._workGate.IsClosed() && !startup._submissionGate.IsClosed());
         assert(!startup._workGate.TryEnter() && startup._submissionGate.TryEnter());
+    }
+    // Execute the actual disable path: warnings preserve state without a
+    // recovery fault; every negative result must propagate its exact frame,
+    // stage and result to recovery before the failed lifecycle returns.
+    for(int result : {0,2,-1,-4,-17}) {
+        XeFG_Dx12 x; x.disableOk=result==0; x.disableResult=result;
+        order.clear(); assert(x.DeactivateImpl(false)==(result==0));
+        assert(x._isActive==(result!=0));
+        assert(x._waitingNewFrameData==(result!=0));
+        assert(x.recoveryFaults==(result<0?1u:0u));
+        if(result<0) assert(x.lastFaultFrame==x._frameCount && x.lastFaultStage=="disable" && x.lastFaultResult==result);
+        assert((order==std::vector<char>{'H','D'}));
     }
     IFGFeature_Dx12 f;
     {
@@ -218,7 +240,10 @@ int main() {
         assert(x._isActive && !x._lifecycleFailed);
         assert(!x._workGate.IsClosed() && !x._providerPresentGate.IsClosed() && !x._submissionGate.IsClosed());
         for(char c:order) assert(c!='R');
+        assert(x.recoveryFaults==(failure==0?1u:0u));
+        if(failure==0) assert(x.lastFaultFrame==57 && x.lastFaultStage=="disable" && x.lastFaultResult==-1);
         x.disableOk=x.discardOk=x.destroyOk=true; assert(x.Shutdown());
+        assert(x.recoveryFaults==(failure==0?1u:0u));
     }
     {
         XeFG_Dx12 x; State::Instance().isShuttingDown=true; order.clear();
@@ -260,6 +285,8 @@ int main() {
         assert(x._fgContext!=nullptr && x._isActive && x._aliasResetPending && !x._lifecycleFailed);
         assert(!x._workGate.IsClosed() && !x._providerPresentGate.IsClosed() && !x._submissionGate.IsClosed());
         for(char c:order) assert(c!='U' && c!='R');
+        assert(x.recoveryFaults==(disableFails?1u:0u));
+        if(disableFails) assert(x.lastFaultFrame==57 && x.lastFaultStage=="disable" && x.lastFaultResult==-1);
     }
     for(int failAt=1;failAt<=20;++failAt) {
         // Exercise every allocator/list/fence/event allocation, including slot0

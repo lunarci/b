@@ -604,7 +604,7 @@ index 3cb12cff..0685c611 100644
  {
      if (index < 0)
 diff --git a/OptiScaler/framegen/IFGFeature.h b/OptiScaler/framegen/IFGFeature.h
-index 1a64bab2..a79dd09e 100644
+index 1a64bab2..a90041c3 100644
 --- a/OptiScaler/framegen/IFGFeature.h
 +++ b/OptiScaler/framegen/IFGFeature.h
 @@ -3,6 +3,7 @@
@@ -623,7 +623,20 @@ index 1a64bab2..a79dd09e 100644
  
      UINT64 _frameCount = 0;
      UINT64 _lastDispatchedFrame = 0;
-@@ -110,7 +112,7 @@ class IFGFeature
+@@ -100,6 +102,12 @@ class IFGFeature
+     virtual const char* Name() = 0;
+ 
+     virtual bool Present() = 0;
++    // Recovery is serviced even while FG is inactive; native presentation keeps flowing.
++    virtual void PreparePresent() {}
++    virtual void MarkFrameConstantsReady(UINT64 internalFrame) {}
++    virtual UINT64 PresentRecoveryToken() { return 0; }
++    virtual void ObservePresentStatus(UINT64 token, HRESULT nativeResult, int32_t queryResult,
++                                      uint32_t framesPresented, int32_t frameGenResult, bool enabled) {}
+     virtual void Activate() = 0;
+     virtual void Deactivate() = 0;
+     virtual void DestroyFGContext() = 0;
+@@ -110,7 +118,7 @@ class IFGFeature
  
      int GetIndex();
      int GetIndexWillBeDispatched();
@@ -632,7 +645,7 @@ index 1a64bab2..a79dd09e 100644
  
      bool IsResourceReady(FG_ResourceType type, int index = -1);
  
-@@ -133,7 +135,7 @@ class IFGFeature
+@@ -133,7 +141,7 @@ class IFGFeature
      bool IsInvertedDepth();
      bool IsInfiniteDepth();
  
@@ -641,7 +654,7 @@ index 1a64bab2..a79dd09e 100644
      void SetJitter(float x, float y, int index = -1);
      void SetMVScale(float x, float y, int index = -1);
      void SetCameraValues(float nearValue, float farValue, float vFov, float aspectRatio, float meterFactor = 0.0f,
-@@ -142,6 +144,9 @@ class IFGFeature
+@@ -142,6 +150,9 @@ class IFGFeature
                         int index = -1);
      void SetFrameTimeDelta(double delta, int index = -1);
      void SetReset(UINT reset, int index = -1);
@@ -1203,8 +1216,260 @@ index 00000000..8bee2d98
 +            _pending.store(false, std::memory_order_release);
 +    }
 +};
+diff --git a/OptiScaler/framegen/xefg/XeFGRecovery.h b/OptiScaler/framegen/xefg/XeFGRecovery.h
+new file mode 100644
+index 00000000..d416cd50
+--- /dev/null
++++ b/OptiScaler/framegen/xefg/XeFGRecovery.h
+@@ -0,0 +1,246 @@
++#pragma once
++
++#include <algorithm>
++#include <array>
++#include <limits>
++#include <cstdint>
++#include <mutex>
++
++// Recovery never owns graphics resources. Each trial must gather new SDK tags
++// after a successful enable, and only its own native Present can confirm it.
++class XeFGRecovery
++{
++  public:
++    enum class Phase { Healthy, NeedDisable, Backoff, Enabling, Trial, Stopped };
++    static constexpr uint32_t Depth = 1u << 0;
++    static constexpr uint32_t Velocity = 1u << 1;
++    static constexpr uint32_t Hudless = 1u << 2;
++    static constexpr uint32_t Constants = 1u << 5;
++
++  private:
++    mutable std::mutex _mutex;
++    Phase _phase = Phase::Healthy;
++    uint64_t _generation = 1;
++    uint64_t _failedFrame = 0;
++    uint64_t _retryAt = 0;
++    uint64_t _trialStart = 0;
++    uint64_t _dispatchToken = 0;
++    bool _coherentToken = false;
++    uint64_t _tokenSequence = 0;
++    struct FrameEvidence
++    {
++        uint64_t frame = (std::numeric_limits<uint64_t>::max)();
++        uint32_t accepted = 0;
++        uint32_t required = Depth | Velocity | Constants;
++    };
++    std::array<FrameEvidence, 4> _frames {};
++    unsigned _failures = 0;
++    unsigned _disabledStatuses = 0;
++    bool _disableInFlight = false;
++    uint64_t _disableOwner = 0;
++    bool _terminal = false;
++
++    uint64_t RetryDelay() const { return (std::min)(uint64_t(1000), uint64_t(32) << (std::min)(_failures, 5u)); }
++    FrameEvidence* Evidence(uint64_t frame)
++    {
++        auto& evidence = _frames[frame % _frames.size()];
++        if (evidence.frame != frame)
++        {
++            if (evidence.frame != (std::numeric_limits<uint64_t>::max)() && evidence.frame > frame)
++                return nullptr; // A stale call must not overwrite a newer ring slot.
++            evidence = { frame, 0, Depth | Velocity | Constants };
++        }
++        return &evidence;
++    }
++    const FrameEvidence* Find(uint64_t frame) const
++    {
++        const auto& evidence = _frames[frame % _frames.size()];
++        return evidence.frame == frame ? &evidence : nullptr;
++    }
++    void ClearEvidence(bool keepConstants = false)
++    {
++        for (auto& evidence : _frames)
++            if (keepConstants)
++            {
++                evidence.accepted &= Constants;
++                evidence.required = Depth | Velocity | Constants;
++            }
++            else evidence = {};
++    }
++
++  public:
++    void Reset()
++    {
++        std::lock_guard lock(_mutex);
++        _phase = Phase::Healthy;
++        ++_generation;
++        _failedFrame = _retryAt = _trialStart = _dispatchToken = 0;
++        ClearEvidence();
++        _failures = _disabledStatuses = 0;
++        _disableInFlight = false;
++        _disableOwner = 0;
++        _terminal = false;
++    }
++    void Rebase(uint64_t frame, uint64_t now)
++    {
++        std::lock_guard lock(_mutex);
++        ++_generation;
++        _failedFrame = frame;
++        _trialStart = _dispatchToken = 0;
++        ClearEvidence();
++        _disabledStatuses = 0;
++        if (_phase != Phase::Healthy && _phase != Phase::Stopped)
++        {
++            _phase = Phase::NeedDisable;
++            _retryAt = now;
++        }
++    }
++    void PreparePresent() { std::lock_guard lock(_mutex); _dispatchToken = 0; }
++    bool Recovering() const { std::lock_guard lock(_mutex); return _phase != Phase::Healthy; }
++    bool RequiresNewContext() const { std::lock_guard lock(_mutex); return _terminal; }
++    Phase State() const { std::lock_guard lock(_mutex); return _phase; }
++    bool Fault(uint64_t frame, uint64_t now, bool terminal = false)
++    {
++        std::lock_guard lock(_mutex);
++        if (_phase == Phase::NeedDisable || _phase == Phase::Backoff || _phase == Phase::Stopped)
++            return false;
++        _terminal = terminal;
++        _phase = Phase::NeedDisable;
++        ++_generation;
++        _failedFrame = frame;
++        ++_failures;
++        _retryAt = now;
++        _dispatchToken = 0;
++        ClearEvidence(true);
++        _disabledStatuses = 0;
++        return true;
++    }
++    uint64_t DisableTicket(uint64_t now)
++    {
++        std::lock_guard lock(_mutex);
++        if (_phase != Phase::NeedDisable || _disableInFlight || now < _retryAt) return 0;
++        _disableInFlight = true;
++        _disableOwner = _generation;
++        return _generation;
++    }
++    void Disabled(uint64_t ticket, bool success, uint64_t now, bool terminal = false)
++    {
++        std::lock_guard lock(_mutex);
++        if (ticket == _disableOwner) { _disableInFlight = false; _disableOwner = 0; }
++        if (ticket != _generation || _phase != Phase::NeedDisable) return;
++        _retryAt = now + RetryDelay();
++        _terminal = _terminal || terminal;
++        if (_terminal) _phase = Phase::Stopped;
++        else if (success) _phase = Phase::Backoff;
++    }
++    uint64_t BeginTrial(uint64_t frame, uint64_t now)
++    {
++        std::lock_guard lock(_mutex);
++        if (_phase != Phase::Backoff || now < _retryAt || frame <= _failedFrame) return 0;
++        _phase = Phase::Enabling;
++        _trialStart = frame;
++        ClearEvidence(true); // Metadata stays local; SDK resource tags must be new.
++        _dispatchToken = 0;
++        return ++_generation;
++    }
++    void Enabled(uint64_t ticket, bool success, uint64_t now, bool terminal = false)
++    {
++        std::lock_guard lock(_mutex);
++        if (ticket != _generation || _phase != Phase::Enabling) return;
++        _terminal = _terminal || terminal;
++        _phase = _terminal ? Phase::Stopped : (success ? Phase::Trial : Phase::Backoff);
++        if (!success)
++        {
++            ++_failures;
++            _retryAt = now + RetryDelay();
++        }
++    }
++    bool AllowsInput(uint64_t frame) const
++    {
++        std::lock_guard lock(_mutex);
++        return _phase == Phase::Healthy || (_phase == Phase::Trial && frame >= _trialStart && frame > _failedFrame);
++    }
++    void ConstantsReady(uint64_t frame)
++    {
++        std::lock_guard lock(_mutex);
++        if (auto evidence = Evidence(frame)) evidence->accepted |= Constants;
++    }
++    void Observe(uint64_t frame, uint32_t bit)
++    {
++        std::lock_guard lock(_mutex);
++        if (_phase != Phase::Trial || frame < _trialStart || frame <= _failedFrame) return;
++        if (auto evidence = Evidence(frame); evidence != nullptr && bit == Hudless)
++            evidence->required |= Hudless;
++    }
++    void Accepted(uint64_t frame, uint32_t bit)
++    {
++        std::lock_guard lock(_mutex);
++        if (_phase != Phase::Trial || frame < _trialStart || frame <= _failedFrame) return;
++        if (auto evidence = Evidence(frame)) evidence->accepted |= bit;
++    }
++    void Incomplete(uint64_t frame, uint32_t bit)
++    {
++        std::lock_guard lock(_mutex);
++        if (_phase == Phase::Trial)
++            if (auto evidence = Evidence(frame))
++            {
++                evidence->accepted &= ~bit;
++                _dispatchToken = 0;
++            }
++    }
++    bool Ready(uint64_t frame, bool includeHudless) const
++    {
++        std::lock_guard lock(_mutex);
++        if (_phase == Phase::Healthy) return true;
++        const auto evidence = Find(frame);
++        if (_phase != Phase::Trial || evidence == nullptr || frame < _trialStart || frame <= _failedFrame)
++            return false;
++        const auto required = includeHudless ? evidence->required : (Depth | Velocity | Constants);
++        return (evidence->accepted & required) == required;
++    }
++    void Dispatched(uint64_t frame)
++    {
++        std::lock_guard lock(_mutex);
++        const auto evidence = Find(frame);
++        if (_phase == Phase::Healthy ||
++            (_phase == Phase::Trial && evidence != nullptr && frame >= _trialStart && frame > _failedFrame &&
++             (evidence->accepted & evidence->required) == evidence->required))
++        {
++            _dispatchToken = ++_tokenSequence;
++            _coherentToken = true;
++        }
++    }
++    uint64_t PresentToken(bool expectedEnabled = false)
++    {
++        std::lock_guard lock(_mutex);
++        if (_dispatchToken == 0 && expectedEnabled && (_phase == Phase::Healthy || _phase == Phase::Trial))
++        {
++            _dispatchToken = ++_tokenSequence;
++            _coherentToken = false; // May detect a fault, never prove a recovered frame.
++        }
++        return _dispatchToken;
++    }
++    // 1 = coherent trial confirmed; -1 = confirmed provider divergence/error.
++    // Warnings, missing status and zero generated frames never cause toggles.
++    int Presented(uint64_t token, bool nativeOk, int32_t queryResult, uint32_t frames, int32_t result, bool enabled)
++    {
++        std::lock_guard lock(_mutex);
++        if (token == 0 || token != _dispatchToken ||
++            (_phase != Phase::Trial && _phase != Phase::Healthy)) return 0;
++        const bool coherent = _coherentToken;
++        _dispatchToken = 0;
++        _coherentToken = false;
++        if (!nativeOk || queryResult != 0) return 0;
++        if (result < 0 && coherent) return -1;
++        if (!enabled)
++            return ++_disabledStatuses >= 2 ? -1 : 0;
++        _disabledStatuses = 0;
++        // A skipped/incomplete dispatch can legitimately report missing input
++        // or call-order errors. Observation-only tokens cannot fault on those.
++        if (!coherent || result != 0 || frames <= 1) return 0;
++        const bool wasTrial = _phase == Phase::Trial;
++        _phase = Phase::Healthy;
++        _failures = 0;
++        return wasTrial ? 1 : 0;
++    }
++};
 diff --git a/OptiScaler/framegen/xefg/XeFG_Dx12.cpp b/OptiScaler/framegen/xefg/XeFG_Dx12.cpp
-index 1dbb3831..5fa03230 100644
+index 1dbb3831..f01d2bb1 100644
 --- a/OptiScaler/framegen/xefg/XeFG_Dx12.cpp
 +++ b/OptiScaler/framegen/xefg/XeFG_Dx12.cpp
 @@ -1,5 +1,6 @@
@@ -1214,10 +1479,13 @@ index 1dbb3831..5fa03230 100644
  #include <hudfix/Hudfix_Dx12.h>
  #include <menu/menu_overlay_dx.h>
  #include <resource_tracking/ResTrack_dx12.h>
-@@ -73,6 +74,10 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
+@@ -73,6 +74,13 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
          }
  
          LOG_INFO("XeFG context created");
++        _recovery.Reset();
++        std::fill(std::begin(_hudlessObservedFormat), std::end(_hudlessObservedFormat), DXGI_FORMAT_UNKNOWN);
++        std::fill(std::begin(_hudlessAcceptedFormat), std::end(_hudlessAcceptedFormat), DXGI_FORMAT_UNKNOWN);
 +        _resourceDiagnostics.BeginContext();
 +        _workDiagnostics.BeginContext(_resourceDiagnostics.Read().contextId);
 +        XeFGPacing::RequestReset();
@@ -1225,7 +1493,15 @@ index 1dbb3831..5fa03230 100644
          result = XeFGProxy::SetLoggingCallback()(_swapChainContext, XEFG_SWAPCHAIN_LOGGING_LEVEL_DEBUG, xefgLogCallback,
                                                   nullptr);
  
-@@ -180,8 +185,13 @@ bool XeFG_Dx12::DestroySwapchainContext()
+@@ -168,6 +176,7 @@ feature_version XeFG_Dx12::Version()
+     if (XeFGProxy::InitXeFG())
+     {
+         auto ver = XeFGProxy::Version();
++        XeFGDiagnostics::RecordProviderVersion(ver.major, ver.minor, ver.patch);
+         return feature_version(ver.major, ver.minor, ver.patch);
+     }
+ 
+@@ -180,8 +189,13 @@ bool XeFG_Dx12::DestroySwapchainContext()
  {
      LOG_DEBUG("");
  
@@ -1240,7 +1516,7 @@ index 1dbb3831..5fa03230 100644
          auto context = _swapChainContext;
          _swapChainContext = nullptr;
  
-@@ -193,6 +203,7 @@ bool XeFG_Dx12::DestroySwapchainContext()
+@@ -193,6 +207,7 @@ bool XeFG_Dx12::DestroySwapchainContext()
          if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
          {
              _swapChainContext = context;
@@ -1248,7 +1524,7 @@ index 1dbb3831..5fa03230 100644
          }
          else
          {
-@@ -275,19 +286,9 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
+@@ -275,19 +290,9 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
          else if (readyToRelease)
          {
              LOG_INFO("Releasing old swapchain");
@@ -1270,7 +1546,7 @@ index 1dbb3831..5fa03230 100644
          }
          else
          {
-@@ -296,6 +297,8 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
+@@ -296,6 +301,8 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
          }
      }
  
@@ -1279,7 +1555,16 @@ index 1dbb3831..5fa03230 100644
      if (_swapChainContext == nullptr)
      {
          LOG_DEBUG("Creating swapchain context for the first time");
-@@ -429,6 +432,8 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
+@@ -316,6 +323,8 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
+         if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
+         {
+             _maxInterpolationCount = props.maxSupportedInterpolations;
++            XeFGDiagnostics::RecordHeapRequirements(props.tempBufferHeapSize, props.tempTextureHeapSize,
++                                                    props.constantBufferSize);
+             LOG_INFO("Max supported interpolations: {}", props.maxSupportedInterpolations);
+         }
+         else
+@@ -429,6 +438,8 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
      ScopedSkipSpoofingGlobal skipSpoofingGlobal {};
  #endif // !DONT_USE_XMX
  
@@ -1288,7 +1573,29 @@ index 1dbb3831..5fa03230 100644
      xefg_swapchain_result_t result;
      result = XeFGProxy::D3D12InitFromSwapChainDesc()(_swapChainContext, hwnd, &scDesc, &fsDesc, realQueue, factory12,
                                                       &params);
-@@ -457,6 +462,13 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
+@@ -439,6 +450,11 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
+         return false;
+     }
+ 
++    XeFGDiagnostics::RecordInterpolationCapacity(params.maxInterpolatedFrames,
++        Config::Instance()->FGXeFGInterpolationCount.value_or_default(),
++        Config::Instance()->FGXeFGInterpolationCount.has_value());
++    if (XeFGProxy::SetNumInterpolatedFrames() == nullptr)
++        XeFGDiagnostics::RecordInterpolationActive(params.maxInterpolatedFrames);
+     LOG_INFO("XeFG swapchain created");
+     result = XeFGProxy::D3D12GetSwapChainPtr()(_swapChainContext, IID_PPV_ARGS(swapChain));
+     if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+@@ -450,13 +466,22 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
+     // When forcing XeLL, always tell XeFG that FG is active, even tho we don't send anything
+     if (State::Instance().activeFgInput == FGInput::ForceXeLL)
+     {
+-        XeFGProxy::SetEnabled()(_swapChainContext, true);
++        const auto enabledResult = XeFGProxy::SetEnabled()(_swapChainContext, true);
++        XeFGDiagnostics::RecordActivation(true, static_cast<int32_t>(enabledResult),
++                                           XeFGDiagnostics::ActivationReason::ForceXeLL);
+     }
+ 
+     _gameCommandQueue = realQueue;
      _swapChain = *swapChain;
      _hwnd = hwnd;
  
@@ -1302,7 +1609,7 @@ index 1dbb3831..5fa03230 100644
      return true;
  }
  
-@@ -480,19 +492,9 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
+@@ -480,19 +505,9 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
          else if (readyToRelease)
          {
              LOG_INFO("Releasing old swapchain");
@@ -1324,7 +1631,7 @@ index 1dbb3831..5fa03230 100644
          }
          else
          {
-@@ -501,6 +503,8 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
+@@ -501,6 +516,8 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
          }
      }
  
@@ -1333,7 +1640,16 @@ index 1dbb3831..5fa03230 100644
      if (_swapChainContext == nullptr)
      {
          if (State::Instance().currentD3D12Device == nullptr)
-@@ -592,6 +596,8 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
+@@ -519,6 +536,8 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
+         if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
+         {
+             _maxInterpolationCount = props.maxSupportedInterpolations;
++            XeFGDiagnostics::RecordHeapRequirements(props.tempBufferHeapSize, props.tempTextureHeapSize,
++                                                    props.constantBufferSize);
+             LOG_INFO("Max supported interpolations: {}", props.maxSupportedInterpolations);
+         }
+         else
+@@ -592,6 +611,8 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
      if (Config::Instance()->FGXeFGHighResMV.value_or_default())
          _constants.flags |= FG_Flags::DisplayResolutionMVs;
  
@@ -1342,7 +1658,29 @@ index 1dbb3831..5fa03230 100644
      xefg_swapchain_result_t result;
  
      {
-@@ -626,35 +632,68 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
+@@ -608,6 +629,11 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
+         return false;
+     }
+ 
++    XeFGDiagnostics::RecordInterpolationCapacity(params.maxInterpolatedFrames,
++        Config::Instance()->FGXeFGInterpolationCount.value_or_default(),
++        Config::Instance()->FGXeFGInterpolationCount.has_value());
++    if (XeFGProxy::SetNumInterpolatedFrames() == nullptr)
++        XeFGDiagnostics::RecordInterpolationActive(params.maxInterpolatedFrames);
+     LOG_INFO("XeFG swapchain created");
+     result = XeFGProxy::D3D12GetSwapChainPtr()(_swapChainContext, IID_PPV_ARGS(swapChain));
+     if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+@@ -619,42 +645,234 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
+     // When forcing XeLL, always tell XeFG that FG is active, even tho we don't send anything
+     if (State::Instance().activeFgInput == FGInput::ForceXeLL)
+     {
+-        XeFGProxy::SetEnabled()(_swapChainContext, true);
++        const auto enabledResult = XeFGProxy::SetEnabled()(_swapChainContext, true);
++        XeFGDiagnostics::RecordActivation(true, static_cast<int32_t>(enabledResult),
++                                           XeFGDiagnostics::ActivationReason::ForceXeLL);
+     }
+ 
+     _gameCommandQueue = realQueue;
      _swapChain = *swapChain;
      _hwnd = hwnd;
  
@@ -1360,36 +1698,25 @@ index 1dbb3831..5fa03230 100644
  {
 -    LOG_DEBUG("");
 -
--    _device = device;
--    CreateObjects(device);
--
--    if (_fgContext == nullptr && _swapChainContext != nullptr)
 +    std::lock_guard lifecycle(_lifecycleMutex);
 +    LongSession::WaitScope lifecycleScope(LongSession::WaitStage::Lifecycle);
 +    if (_lifecycleFailed || _swapChainContext == nullptr)
 +        return;
 +    if (!ResTrack_Dx12::HookLifetimeObservers(device, _gameCommandQueue))
-     {
--        _fgContext = _swapChainContext;
--        _lastDispatchedFrame = 0;
++    {
 +        _workDiagnostics.OnCleanupDeferred(XeFGDiagnostics::CleanupReason::ObserverUnavailable);
 +        return;
-     }
--
--    if (_isActive)
++    }
 +    if (!TryCloseCpuAdmission())
 +        return;
-+    _device = device;
+     _device = device;
+-    CreateObjects(device);
 +    CreateObjects(device); // Reuse retained helpers; do not reset in-flight allocators.
 +    if (!CommandObjectsReady())
-     {
--        LOG_INFO("FG context recreated while active, pausing");
--        State::Instance().fgChanged = true;
--        UpdateTarget();
--        Deactivate();
++    {
 +        RestoreCpuAdmission();
 +        return;
-     }
++    }
 +    _fgContext = _swapChainContext;
 +    _lastDispatchedFrame = 0;
 +    // Observer admission was never closed by this soft initialization.
@@ -1404,12 +1731,171 @@ index 1dbb3831..5fa03230 100644
 +    auto work = AcquireWork();
 +    return work ? IFGFeature::StartNewFrame() : 0;
 +}
-+
+ 
+-    if (_fgContext == nullptr && _swapChainContext != nullptr)
 +void XeFG_Dx12::SetFrameCount(UINT64 frameId)
 +{
 +    auto work = AcquireWork();
 +    if (work)
+     {
+-        _fgContext = _swapChainContext;
+-        _lastDispatchedFrame = 0;
++        if (frameId < _frameCount)
++        {
++            if (_frameCount - frameId > 1)
++                _recovery.Rebase(frameId, XeFGDiagnostics::WorkNowMs());
++            else
++                _recovery.PreparePresent(); // Ordinary one-frame SL boundary correction.
++        }
 +        IFGFeature::SetFrameCount(frameId);
++    }
++}
++
++static bool IsTerminalXeFGResult(int32_t result)
++{
++    // These official errors require a usable/new context or a supported runtime.
++    // Generic DEVICE, OOM, configuration and per-frame input errors can change;
++    // they remain eligible for bounded trials rather than being called removed.
++
++    switch (static_cast<xefg_swapchain_result_t>(result))
++    {
++    case XEFG_SWAPCHAIN_RESULT_ERROR_UNSUPPORTED_DEVICE:
++    case XEFG_SWAPCHAIN_RESULT_ERROR_UNSUPPORTED_DRIVER:
++    case XEFG_SWAPCHAIN_RESULT_ERROR_UNINITIALIZED:
++    case XEFG_SWAPCHAIN_RESULT_ERROR_NOT_IMPLEMENTED:
++    case XEFG_SWAPCHAIN_RESULT_ERROR_INVALID_CONTEXT:
++    case XEFG_SWAPCHAIN_RESULT_ERROR_CANT_LOAD_LIBRARY:
++    case XEFG_SWAPCHAIN_RESULT_ERROR_LATENCY_REDUCTION_FUNCTION_MISSING:
++        return true;
++    default:
++        return false;
+     }
++}
+ 
+-    if (_isActive)
++bool XeFG_Dx12::TryBeginRecoveryTrial(UINT64 frame)
++{
++    if (!_recovery.Recovering()) return true;
++    std::unique_lock action(_recoveryActionMutex, std::try_to_lock);
++    if (!action.owns_lock()) return false;
++    if (_swapChainContext == nullptr || _fgContext == nullptr || _lifecycleFailed ||
++        !Config::Instance()->FGEnabled.value_or_default() || IsPaused())
++        return false;
++    const auto now = XeFGDiagnostics::WorkNowMs();
++    if (_recovery.State() == XeFGRecovery::Phase::Trial && !_isActive)
+     {
+-        LOG_INFO("FG context recreated while active, pausing");
+-        State::Instance().fgChanged = true;
+-        UpdateTarget();
+-        Deactivate();
++        NoteRecoveryFault(frame, "trial_deactivated", 0);
++        return false;
++    }
++    const auto ticket = _recovery.BeginTrial(frame, now);
++    if (ticket != 0)
++    {
++        const auto result = XeFGProxy::SetEnabled()(_swapChainContext, true);
++        XeFGDiagnostics::RecordActivation(true, static_cast<int32_t>(result),
++                                           XeFGDiagnostics::ActivationReason::RecoveryEnable);
++        const bool success = result == XEFG_SWAPCHAIN_RESULT_SUCCESS;
++        const bool terminal = IsTerminalXeFGResult(static_cast<int32_t>(result));
++        _recovery.Enabled(ticket, success, now, terminal);
++        if (terminal)
++            LOG_WARN("XeFG recovery stopped: stage=enable result={} needs_new_context=true", static_cast<int32_t>(result));
++        if (success)
++        {
++            _isActive = true;
++            _waitingNewFrameData = false;
++            _lastDispatchedFrame = 0;
++            XeFGPacing::RequestReset();
++            RequestHistoryReset();
++        }
++    }
++    return _recovery.AllowsInput(frame);
++}
++
++void XeFG_Dx12::ReportFormatTransition(bool accepted, DXGI_FORMAT oldFormat, DXGI_FORMAT newFormat, UINT64 frame,
++                                      int slot, UINT64 width, UINT height)
++{
++    const unsigned index = accepted ? 1 : 0;
++    const auto count = _formatTransitions[index].fetch_add(1, std::memory_order_relaxed) + 1;
++    const auto now = XeFGDiagnostics::WorkNowMs();
++    auto last = _lastFormatLogMs[index].load(std::memory_order_relaxed);
++    if ((count == 1 || now - last >= 5000) &&
++        _lastFormatLogMs[index].compare_exchange_strong(last, now, std::memory_order_relaxed))
++        LOG_WARN("XeFG hudless format {}: old={} new={} slot={} internal_frame={} size={}x{} transitions={}",
++                 accepted ? "accepted" : "observed", static_cast<unsigned>(oldFormat),
++                 static_cast<unsigned>(newFormat), slot, frame, width, height, count);
++}
++
++void XeFG_Dx12::NoteRecoveryFault(UINT64 frame, const char* stage, int32_t result)
++{
++    const bool terminal = IsTerminalXeFGResult(result);
++    if (!_recovery.Fault(frame, XeFGDiagnostics::WorkNowMs(), terminal)) return;
++    RequestHistoryReset();
++    const auto now = XeFGDiagnostics::WorkNowMs();
++    auto last = _lastRecoveryLogMs.load(std::memory_order_relaxed);
++    if ((terminal || last == 0 || now - last >= 5000) &&
++        _lastRecoveryLogMs.compare_exchange_strong(last, now, std::memory_order_relaxed))
++        LOG_WARN("XeFG recovery requested: stage={}, result={}, internal_frame={}, needs_new_context={}; "
++                 "no resource release or multiplier change", stage, result, frame, terminal);
++}
++
++void XeFG_Dx12::PreparePresent()
++{
++    auto work = AcquireWork();
++    if (!work || _swapChainContext == nullptr || _lifecycleFailed) return;
++    _recovery.PreparePresent();
++    std::unique_lock action(_recoveryActionMutex, std::try_to_lock);
++    if (!action.owns_lock()) return;
++    const auto now = XeFGDiagnostics::WorkNowMs();
++    const auto ticket = _recovery.DisableTicket(now);
++    if (ticket == 0) return;
++    // No resource-map lock is held across this provider lifecycle call.
++    const auto result = XeFGProxy::SetEnabled()(_swapChainContext, false);
++    XeFGDiagnostics::RecordActivation(false, static_cast<int32_t>(result),
++                                       XeFGDiagnostics::ActivationReason::RecoveryDisable);
++    const bool success = result == XEFG_SWAPCHAIN_RESULT_SUCCESS;
++    if (success)
++    {
++        _isActive = false;
++        _waitingNewFrameData = false;
+     }
++    const bool terminal = IsTerminalXeFGResult(static_cast<int32_t>(result));
++    _recovery.Disabled(ticket, success, now, terminal);
++    if (terminal)
++        LOG_WARN("XeFG recovery stopped: stage=disable result={} needs_new_context=true", static_cast<int32_t>(result));
++}
++
++void XeFG_Dx12::MarkFrameConstantsReady(UINT64 internalFrame)
++{
++    auto work = AcquireWork();
++    if (work && internalFrame == _frameCount)
++        _recovery.ConstantsReady(internalFrame);
++}
++
++UINT64 XeFG_Dx12::PresentRecoveryToken()
++{
++    auto work = AcquireWork();
++    if (!work) return 0;
++    const bool expectedEnabled = _isActive && !IsPaused() && !_lifecycleFailed &&
++                                 _fgContext != nullptr && _swapChainContext != nullptr &&
++                                 Config::Instance()->FGEnabled.value_or_default();
++    return _recovery.PresentToken(expectedEnabled);
++}
++
++void XeFG_Dx12::ObservePresentStatus(UINT64 token, HRESULT nativeResult, int32_t queryResult,
++                                    uint32_t framesPresented, int32_t frameGenResult, bool enabled)
++{
++    auto work = AcquireWork();
++    if (!work) return;
++    const auto outcome = _recovery.Presented(token, nativeResult == S_OK, queryResult, framesPresented,
++                                            frameGenResult, enabled);
++    if (outcome > 0)
++        LOG_WARN("XeFG recovery confirmed by native Present: frames_presented={}, internal_frame={}",
++                 framesPresented, _frameCount);
++    else if (outcome < 0)
++        NoteRecoveryFault(_frameCount, enabled ? "provider_present" : "provider_disabled", frameGenResult);
  }
  
  void XeFG_Dx12::Activate()
@@ -1422,19 +1908,35 @@ index 1dbb3831..5fa03230 100644
 +    if (_lifecycleFailed)
 +        return;
 +
++    if (_recovery.Recovering())
++    {
++        TryBeginRecoveryTrial(_frameCount);
++        return;
++    }
++
      auto currentFeature = State::Instance().currentFeature;
      bool nativeAA = false;
      if (State::Instance().activeFgInput == FGInput::Upscaler && currentFeature != nullptr)
-@@ -664,6 +703,8 @@ void XeFG_Dx12::Activate()
+@@ -664,7 +882,10 @@ void XeFG_Dx12::Activate()
          (IsLowResMV() || nativeAA || (State::Instance().gameQuirks & GameQuirk::ForceFGRenderSizeMVs) ||
           Config::Instance()->FGXeFGIgnoreInitChecks.value_or_default()))
      {
 +        XeFGPacing::RequestReset();
 +        RequestHistoryReset();
          auto result = XeFGProxy::SetEnabled()(_swapChainContext, true);
++        XeFGDiagnostics::RecordActivation(true, static_cast<int32_t>(result), XeFGDiagnostics::ActivationReason::Normal);
  
          if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
-@@ -677,26 +718,23 @@ void XeFG_Dx12::Activate()
+         {
+@@ -672,37 +893,39 @@ void XeFG_Dx12::Activate()
+             _lastDispatchedFrame = 0;
+         }
+ 
++        if (static_cast<int32_t>(result) < 0)
++            NoteRecoveryFault(_frameCount, "enable", static_cast<int32_t>(result));
++
+         LOG_INFO("SetEnabled: true, result: {} ({})", magic_enum::enum_name(result), (UINT) result);
+     }
  }
  
  void XeFG_Dx12::Deactivate()
@@ -1472,7 +1974,15 @@ index 1dbb3831..5fa03230 100644
  
          xefg_swapchain_result_t result = XEFG_SWAPCHAIN_RESULT_SUCCESS;
  
-@@ -712,39 +750,106 @@ void XeFG_Dx12::Deactivate()
+         if (_swapChainContext != nullptr)
+         {
+             result = XeFGProxy::SetEnabled()(_swapChainContext, false);
++            XeFGDiagnostics::RecordActivation(false, static_cast<int32_t>(result),
++                                               XeFGDiagnostics::ActivationReason::LifecycleDisable);
+             if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
+                 _isActive = false;
+         }
+@@ -712,39 +935,112 @@ void XeFG_Dx12::Deactivate()
          }
  
          //_lastDispatchedFrame = 0;
@@ -1480,6 +1990,8 @@ index 1dbb3831..5fa03230 100644
 +        if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
 +            _waitingNewFrameData = false;
  
++        if (static_cast<int32_t>(result) < 0)
++            NoteRecoveryFault(_frameCount, "disable", static_cast<int32_t>(result));
          LOG_INFO("SetEnabled: false, result: {} ({})", magic_enum::enum_name(result), (UINT) result);
 +        return result == XEFG_SWAPCHAIN_RESULT_SUCCESS;
      }
@@ -1529,6 +2041,10 @@ index 1dbb3831..5fa03230 100644
 +    _waitingNewFrameData = false;
 +    RequestHistoryReset();
 +    UpdateTarget();
++    if (!_recovery.RequiresNewContext())
++        _recovery.Reset();
++    std::fill(std::begin(_hudlessObservedFormat), std::end(_hudlessObservedFormat), DXGI_FORMAT_UNKNOWN);
++    std::fill(std::begin(_hudlessAcceptedFormat), std::end(_hudlessAcceptedFormat), DXGI_FORMAT_UNKNOWN);
 +    _aliasResetPending = false;
 +    RestoreCpuAdmission();
 +    _workDiagnostics.OnCleanupRecovered();
@@ -1594,7 +2110,7 @@ index 1dbb3831..5fa03230 100644
      LOG_FUNC();
  
      UINT64 willDispatchFrame = 0;
-@@ -757,14 +862,18 @@ bool XeFG_Dx12::Dispatch()
+@@ -757,14 +1053,20 @@ bool XeFG_Dx12::Dispatch()
  
      LOG_DEBUG("_frameCount: {}, willDispatchFrame: {}, fIndex: {}", _frameCount, willDispatchFrame, fIndex);
  
@@ -1613,12 +2129,14 @@ index 1dbb3831..5fa03230 100644
 +        ReportResourceDiagnostics();
          return false;
      }
++    if (!_recovery.Ready(willDispatchFrame, false))
++        return false;
 +    _resourceDiagnostics.OnInputsReady();
 +    ReportResourceDiagnostics();
  
      auto& state = State::Instance();
  
-@@ -819,21 +928,24 @@ bool XeFG_Dx12::Dispatch()
+@@ -819,21 +1121,25 @@ bool XeFG_Dx12::Dispatch()
          {
              LOG_INFO("Interpolation count changed {} -> {}", _framesToInterpolate, targetCount);
  
@@ -1640,6 +2158,7 @@ index 1dbb3831..5fa03230 100644
 +            else
 +            {
 +                _framesToInterpolate = targetCount;
++                XeFGDiagnostics::RecordInterpolationActive(static_cast<uint32_t>(targetCount));
 +                state.WAR_xefgRequestFGToggle = true;
 +                XeFGPacing::RequestReset();
 +                RequestHistoryReset();
@@ -1647,7 +2166,33 @@ index 1dbb3831..5fa03230 100644
          }
      }
  
-@@ -956,37 +1068,19 @@ bool XeFG_Dx12::Dispatch()
+@@ -879,7 +1185,8 @@ bool XeFG_Dx12::Dispatch()
+         {
+             res->validity = FG_ResourceValidity::UntilPresentFromDispatch;
+             res->frameIndex = fIndex;
+-            SetResource(res);
++            if (!SetResource(res))
++                return false;
+         }
+     }
+ 
+@@ -890,10 +1197,14 @@ bool XeFG_Dx12::Dispatch()
+         {
+             res->validity = FG_ResourceValidity::UntilPresentFromDispatch;
+             res->frameIndex = fIndex;
+-            SetResource(res);
++            if (!SetResource(res))
++                return false;
+         }
+     }
+ 
++    if (!_recovery.Ready(willDispatchFrame, true))
++        return false;
++
+     XeFGProxy::EnableDebugFeature()(_swapChainContext, XEFG_SWAPCHAIN_DEBUG_FEATURE_TAG_INTERPOLATED_FRAMES,
+                                     Config::Instance()->FGXeFGDebugView.value_or_default(), nullptr);
+     static bool lastOnlyFG = false;
+@@ -956,37 +1267,19 @@ bool XeFG_Dx12::Dispatch()
      constData.motionVectorScaleX = _mvScaleX[fIndex];
      constData.motionVectorScaleY = _mvScaleY[fIndex];
  
@@ -1692,10 +2237,39 @@ index 1dbb3831..5fa03230 100644
  
      if (!(frameRenderTime > 0.0))
          frameRenderTime = state.lastFGFrameTime;
-@@ -1087,9 +1181,13 @@ bool XeFG_Dx12::Dispatch()
-             state.fgChanged = true;
-             UpdateTarget();
-             Deactivate();
+@@ -1021,9 +1314,8 @@ bool XeFG_Dx12::Dispatch()
+     {
+         LOG_ERROR("TagFrameConstants error: {} ({})", magic_enum::enum_name(result), (UINT) result);
+ 
+-        state.fgChanged = true;
+-        UpdateTarget();
+-        Deactivate();
++        if (static_cast<int32_t>(result) < 0)
++            NoteRecoveryFault(willDispatchFrame, "constants", static_cast<int32_t>(result));
+ 
+         return false;
+     }
+@@ -1033,9 +1325,8 @@ bool XeFG_Dx12::Dispatch()
+     {
+         LOG_ERROR("SetPresentId error: {} ({})", magic_enum::enum_name(result), (UINT) result);
+ 
+-        state.fgChanged = true;
+-        UpdateTarget();
+-        Deactivate();
++        if (static_cast<int32_t>(result) < 0)
++            NoteRecoveryFault(willDispatchFrame, "present_id", static_cast<int32_t>(result));
+ 
+         return false;
+     }
+@@ -1084,12 +1375,16 @@ bool XeFG_Dx12::Dispatch()
+         {
+             LOG_ERROR("D3D12TagFrameResource Backbuffer error: {} ({})", magic_enum::enum_name(result), (UINT) result);
+ 
+-            state.fgChanged = true;
+-            UpdateTarget();
+-            Deactivate();
++            if (static_cast<int32_t>(result) < 0)
++                NoteRecoveryFault(willDispatchFrame, "backbuffer", static_cast<int32_t>(result));
 +            return false;
          }
      }
@@ -1703,10 +2277,11 @@ index 1dbb3831..5fa03230 100644
 +    if (constData.resetHistory)
 +        AcknowledgeHistoryReset(historyResetToken);
 +
++    _recovery.Dispatched(willDispatchFrame);
      LOG_DEBUG("Result: Ok");
  
      return true;
-@@ -1099,7 +1197,19 @@ void* XeFG_Dx12::FrameGenerationContext() { return _fgContext; }
+@@ -1099,7 +1394,19 @@ void* XeFG_Dx12::FrameGenerationContext() { return _fgContext; }
  
  void* XeFG_Dx12::SwapchainContext() { return _swapChainContext; }
  
@@ -1727,7 +2302,7 @@ index 1dbb3831..5fa03230 100644
  
  bool XeFG_Dx12::SetInterpolatedFrameCount(UINT interpolatedFrameCount) { return true; }
  
-@@ -1123,6 +1233,13 @@ void XeFG_Dx12::EvaluateState(ID3D12Device* device, FG_Constants& fgConstants)
+@@ -1123,6 +1430,13 @@ void XeFG_Dx12::EvaluateState(ID3D12Device* device, FG_Constants& fgConstants)
  
      _infiniteDepth = static_cast<bool>(fgConstants.flags & FG_Flags::InfiniteDepth);
  
@@ -1741,7 +2316,7 @@ index 1dbb3831..5fa03230 100644
      // If FG Enabled from menu
      if (Config::Instance()->FGEnabled.value_or_default())
      {
-@@ -1180,7 +1297,7 @@ void XeFG_Dx12::EvaluateState(ID3D12Device* device, FG_Constants& fgConstants)
+@@ -1180,7 +1494,7 @@ void XeFG_Dx12::EvaluateState(ID3D12Device* device, FG_Constants& fgConstants)
      state.scChanged = false;
  }
  
@@ -1750,7 +2325,7 @@ index 1dbb3831..5fa03230 100644
  {
      for (size_t i = 0; i < BUFFER_COUNT; i++)
      {
-@@ -1188,6 +1305,9 @@ void XeFG_Dx12::ReleaseObjects()
+@@ -1188,6 +1502,9 @@ void XeFG_Dx12::ReleaseObjects()
          SAFE_RELEASE(_uiCommandList[i]);
          SAFE_RELEASE(_scCommandAllocator[i]);
          SAFE_RELEASE(_scCommandList[i]);
@@ -1760,7 +2335,7 @@ index 1dbb3831..5fa03230 100644
  
          // Reset command list state
          _scCommandListResetted[i] = false;
-@@ -1197,6 +1317,65 @@ void XeFG_Dx12::ReleaseObjects()
+@@ -1197,6 +1514,65 @@ void XeFG_Dx12::ReleaseObjects()
          _uiAllocatorFenceValues[i] = 0;
      }
  
@@ -1826,7 +2401,7 @@ index 1dbb3831..5fa03230 100644
      _renderUI.reset();
      _hudlessCompare.reset();
      _mvFlip.reset();
-@@ -1204,138 +1383,111 @@ void XeFG_Dx12::ReleaseObjects()
+@@ -1204,138 +1580,111 @@ void XeFG_Dx12::ReleaseObjects()
      _depthInvert.reset();
  }
  
@@ -1990,11 +2565,7 @@ index 1dbb3831..5fa03230 100644
 -
 -            result = _scCommandList[i]->Close();
 -            if (result != S_OK)
-+            ID3D12GraphicsCommandList* realList = nullptr;
-+            if (CheckForRealObject(__FUNCTION__, _scCommandList[i], (IUnknown**) &realList))
-+                _scCommandList[i] = realList;
-+            if (FAILED(_scCommandList[i]->Close()))
-             {
+-            {
 -                LOG_ERROR("_scCommandList[{}]->Close: {:X}", i, (unsigned long) result);
 -                break;
 -            }
@@ -2010,7 +2581,11 @@ index 1dbb3831..5fa03230 100644
 -            }
 -
 -            if (_scFenceEvent == nullptr)
--            {
++            ID3D12GraphicsCommandList* realList = nullptr;
++            if (CheckForRealObject(__FUNCTION__, _scCommandList[i], (IUnknown**) &realList))
++                _scCommandList[i] = realList;
++            if (FAILED(_scCommandList[i]->Close()))
+             {
 -                _scFenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 -                if (_scFenceEvent == nullptr)
 -                {
@@ -2042,7 +2617,7 @@ index 1dbb3831..5fa03230 100644
      auto fIndex = GetIndexWillBeDispatched();
      LOG_DEBUG("fIndex: {}", fIndex);
  
-@@ -1363,7 +1515,8 @@ bool XeFG_Dx12::Present()
+@@ -1363,7 +1712,8 @@ bool XeFG_Dx12::Present()
                  else if (_renderUI->IsInit())
                  {
                      auto commandList = GetSCCommandList(fIndex);
@@ -2052,7 +2627,7 @@ index 1dbb3831..5fa03230 100644
                  }
              }
          }
-@@ -1393,8 +1546,9 @@ bool XeFG_Dx12::Present()
+@@ -1393,8 +1743,9 @@ bool XeFG_Dx12::Present()
                      if (_hudlessCompare->IsInit())
                      {
                          auto commandList = GetSCCommandList(fIndex);
@@ -2064,7 +2639,7 @@ index 1dbb3831..5fa03230 100644
                      }
                  }
              }
-@@ -1409,33 +1563,8 @@ bool XeFG_Dx12::Present()
+@@ -1409,33 +1760,8 @@ bool XeFG_Dx12::Present()
  
      // if (IsActive() && !IsPaused())
      {
@@ -2100,31 +2675,125 @@ index 1dbb3831..5fa03230 100644
      }
  
      if ((_fgFramePresentId - _lastFGFramePresentId) > 3 && IsActive() && !_waitingNewFrameData)
-@@ -1453,6 +1582,12 @@ bool XeFG_Dx12::Present()
+@@ -1453,11 +1779,22 @@ bool XeFG_Dx12::Present()
  
  bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
  {
++    const auto kind = inputResource != nullptr && inputResource->type < FG_ResourceType::ResourceTypeCOUNT
++                          ? static_cast<XeFGDiagnostics::InputKind>(inputResource->type)
++                          : XeFGDiagnostics::InputKind::Other;
++    XeFGDiagnostics::InputObservation observation(kind);
++    auto reject = [&](XeFGDiagnostics::InputReason reason) { observation.Reject(reason); return false; };
 +    auto work = AcquireWork();
-+    if (!work || _swapChainContext == nullptr)
-+        return false;
++    if (!work)
++        return reject(XeFGDiagnostics::InputReason::AdmissionClosed);
++    if (_swapChainContext == nullptr)
++        return reject(XeFGDiagnostics::InputReason::ContextUnavailable);
 +    if (_lifecycleFailed)
-+        return false;
++        return reject(XeFGDiagnostics::InputReason::ContextUnavailable);
 +
      if (inputResource == nullptr || inputResource->resource == nullptr ||
-         (inputResource->type != FG_ResourceType::UIColor && (!IsActive() || IsPaused())))
-     {
-@@ -1465,6 +1600,8 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+-        (inputResource->type != FG_ResourceType::UIColor && (!IsActive() || IsPaused())))
+-    {
+-        return false;
+-    }
++        inputResource->type >= FG_ResourceType::ResourceTypeCOUNT)
++        return reject(XeFGDiagnostics::InputReason::InvalidInput);
+ 
+     // For late sent SL resources
+     // we use provided frame index
+@@ -1465,7 +1802,18 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
      if (fIndex < 0)
          fIndex = GetIndex();
  
+-    auto& type = inputResource->type;
 +    if (fIndex >= BUFFER_COUNT)
-+        return false;
-     auto& type = inputResource->type;
++        return reject(XeFGDiagnostics::InputReason::InvalidIndex);
++    const auto type = inputResource->type; // Alias redispatch may erase its input map entry on failure.
++    int frameDistance = GetIndex() - fIndex;
++    if (frameDistance < 0) frameDistance += BUFFER_COUNT;
++    if (_frameCount < static_cast<UINT64>(frameDistance))
++        return reject(XeFGDiagnostics::InputReason::StaleFrame);
++    const UINT64 resourceFrame = _frameCount - frameDistance;
++    if (_recovery.Recovering() && !TryBeginRecoveryTrial(resourceFrame))
++        return reject(XeFGDiagnostics::InputReason::RecoveryBackoff);
++    if (type != FG_ResourceType::UIColor && (!IsActive() || IsPaused()))
++        return reject(XeFGDiagnostics::InputReason::Inactive);
  
      std::unique_lock<std::shared_mutex> lock(_resourceMutex[fIndex]);
-@@ -1542,6 +1679,13 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+ 
+@@ -1480,7 +1828,7 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+     if (type == FG_ResourceType::HudlessColor)
+     {
+         if (Config::Instance()->FGDisableHudless.value_or_default())
+-            return false;
++            return reject(XeFGDiagnostics::InputReason::DuplicateOrPolicy);
+ 
+         // Making a copy if it's just valid now to be able to use it later
+         if (State::Instance().fgHudlessCompare && inputResource->validity == FG_ResourceValidity::ValidNow)
+@@ -1488,20 +1836,20 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+ 
+         if (!_noHudless[fIndex] && (_frameResources[fIndex][type].validity == FG_ResourceValidity::ValidNow))
+         {
+-            return false;
++            return reject(XeFGDiagnostics::InputReason::DuplicateOrPolicy);
+         }
+ 
+         if (!_noHudless[fIndex] && Config::Instance()->FGOnlyAcceptFirstHudless.value_or_default() &&
+             inputResource->validity != FG_ResourceValidity::UntilPresentFromDispatch)
+         {
+-            return false;
++            return reject(XeFGDiagnostics::InputReason::DuplicateOrPolicy);
+         }
      }
  
+     if (type == FG_ResourceType::UIColor)
+     {
+         if (Config::Instance()->FGDisableUI.value_or_default())
+-            return false;
++            return reject(XeFGDiagnostics::InputReason::DuplicateOrPolicy);
+ 
+         // Making a copy if it's just valid now
+         if (Config::Instance()->FGDrawUIOverFG.value_or_default() &&
+@@ -1512,7 +1860,7 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+ 
+         if (!_noUi[fIndex] && (_frameResources[fIndex][type].validity == FG_ResourceValidity::ValidNow))
+         {
+-            return false;
++            return reject(XeFGDiagnostics::InputReason::DuplicateOrPolicy);
+         }
+     }
+ 
+@@ -1520,28 +1868,36 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+     {
+         if (!_noDistortionField[fIndex] && (_frameResources[fIndex][type].validity == FG_ResourceValidity::ValidNow))
+         {
+-            return false;
++            return reject(XeFGDiagnostics::InputReason::DuplicateOrPolicy);
+         }
+     }
+ 
+     if ((type == FG_ResourceType::Depth || type == FG_ResourceType::Velocity) && _frameResources[fIndex].contains(type))
+     {
+-        return false;
++        return reject(XeFGDiagnostics::InputReason::DuplicateOrPolicy);
+     }
+ 
+     if (inputResource->cmdList == nullptr && inputResource->validity == FG_ResourceValidity::ValidNow)
+     {
+         LOG_ERROR("{}, validity == ValidNow but cmdList is nullptr!", magic_enum::enum_name(type));
+-        return false;
++        return reject(XeFGDiagnostics::InputReason::MissingCommandList);
+     }
+ 
+     if (type == FG_ResourceType::Distortion)
+     {
+         LOG_TRACE("Distortion field is not supported by XeFG");
+-        return false;
++        return reject(XeFGDiagnostics::InputReason::Unsupported);
+     }
+ 
++    _recovery.Observe(resourceFrame, 1u << static_cast<unsigned>(type));
      auto fResource = &_frameResources[fIndex][type];
 +    // Dispatch passes this very map entry back for UNTIL_NEXT_PRESENT tagging.
 +    // Its copy and state describe the owned texture; fresh input must not inherit
@@ -2136,7 +2805,7 @@ index 1dbb3831..5fa03230 100644
      fResource->type = type;
      fResource->state = inputResource->state;
      fResource->validity = inputResource->validity;
-@@ -1556,6 +1700,18 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1556,6 +1912,18 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
                      Config::Instance()->FGResourceFlip.value_or_default() &&
                      (type == FG_ResourceType::Velocity || type == FG_ResourceType::Depth);
  
@@ -2149,13 +2818,13 @@ index 1dbb3831..5fa03230 100644
 +            _resourceReady[fIndex].erase(type);
 +            if (type == FG_ResourceType::UIColor) _noUi[fIndex] = true;
 +            if (type == FG_ResourceType::HudlessColor) _noHudless[fIndex] = true;
-+            return false;
++            return reject(XeFGDiagnostics::InputReason::ObserverUnavailable);
 +        }
 +
      // Resource flipping
      if (willFlip && _device != nullptr)
          FlipResource(fResource);
-@@ -1574,12 +1730,20 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1574,12 +1942,20 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
          }
          else if (_depthInvert->IsInit())
          {
@@ -2163,7 +2832,7 @@ index 1dbb3831..5fa03230 100644
 +            {
 +                _frameResources[fIndex].erase(type);
 +                _resourceReady[fIndex].erase(type);
-+                return false;
++                return reject(XeFGDiagnostics::InputReason::Other);
 +            }
              if (_depthInvert->CreateBufferResource(_device, fResource->GetResource(), fResource->width,
                                                     fResource->height, fResource->state) &&
@@ -2172,11 +2841,11 @@ index 1dbb3831..5fa03230 100644
                  auto cmdList = (fResource->cmdList != nullptr) ? fResource->cmdList : GetUICommandList(fIndex);
  
 +                if (cmdList == nullptr)
-+                    return false;
++                    return reject(XeFGDiagnostics::InputReason::Other);
                  _depthInvert->SetBufferState(cmdList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
  
                  if (_depthInvert->Dispatch(cmdList, fResource->GetResource(), _depthInvert->Buffer()))
-@@ -1597,18 +1761,24 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1597,18 +1973,24 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
      {
          LOG_DEBUG("Making a resource copy of: {}", magic_enum::enum_name(type));
  
@@ -2191,13 +2860,14 @@ index 1dbb3831..5fa03230 100644
          {
 +            _resourceDiagnostics.OnAllocationFailure();
              LOG_ERROR("{}, CopyResource error!", magic_enum::enum_name(type));
+-            return false;
 +            _frameResources[fIndex].erase(type);
 +            if (type == FG_ResourceType::UIColor)
 +                _noUi[fIndex] = true;
 +            else if (type == FG_ResourceType::HudlessColor)
 +                _noHudless[fIndex] = true;
 +            _resourceReady[fIndex].erase(type);
-             return false;
++            return reject(XeFGDiagnostics::InputReason::CopyFailure);
          }
  
 -        _resourceCopy[fIndex][type] = copyOutput;
@@ -2206,7 +2876,29 @@ index 1dbb3831..5fa03230 100644
          _resourceCopy[fIndex][type]->SetName(std::format(L"_resourceCopy[{}][{}]", fIndex, (UINT) type).c_str());
          fResource->copy = copyOutput;
          fResource->state = D3D12_RESOURCE_STATE_COPY_DEST;
-@@ -1646,6 +1816,7 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1633,19 +2015,21 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+ 
+         if (type == FG_ResourceType::HudlessColor)
+         {
+-            static DXGI_FORMAT lastFormat[BUFFER_COUNT] = {};
+-            auto desc = fResource->GetResource()->GetDesc();
+-
+-            if (lastFormat[fIndex] != DXGI_FORMAT_UNKNOWN && lastFormat[fIndex] != desc.Format)
++            const auto desc = fResource->GetResource()->GetDesc();
++            if (_hudlessObservedFormat[fIndex] != DXGI_FORMAT_UNKNOWN &&
++                _hudlessObservedFormat[fIndex] != desc.Format)
+             {
+-                State::Instance().fgChanged = true;
+-                return false;
++                ReportFormatTransition(false, _hudlessObservedFormat[fIndex], desc.Format, resourceFrame,
++                                       fIndex, desc.Width, desc.Height);
++                RequestHistoryReset();
+             }
+-
+-            lastFormat[fIndex] = desc.Format;
++            // Adopt the observation before validation. A rejected new format
++            // must not remain trapped behind an old function-static value.
++            _hudlessObservedFormat[fIndex] = desc.Format;
          }
  
          xefg_swapchain_d3d12_resource_data_t resourceParam = GetResourceData(type, fIndex);
@@ -2214,14 +2906,14 @@ index 1dbb3831..5fa03230 100644
  
          // SDK version 2.1.1 fixes those issues
          if (version < feature_version { 1, 2, 2 })
-@@ -1661,8 +1832,15 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
+@@ -1661,53 +2045,336 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
              // https://github.com/intel/xess/issues/47
              if (inputResource->state == D3D12_RESOURCE_STATE_COPY_SOURCE)
              {
 +                if (inputResource->cmdList == nullptr)
 +                {
 +                    LOG_ERROR("Legacy XeFG COPY_SOURCE workaround requires a command list");
-+                    return false;
++                    return reject(XeFGDiagnostics::InputReason::Other);
 +                }
 +
                  ResourceBarrier(inputResource->cmdList, inputResource->resource, inputResource->state,
@@ -2230,20 +2922,23 @@ index 1dbb3831..5fa03230 100644
  
                  resourceParam.incomingState = D3D12_RESOURCE_STATE_COPY_DEST;
              }
-@@ -1672,33 +1850,35 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
-         if (indexDiff < 0)
-             indexDiff += BUFFER_COUNT;
+         }
  
+-        int indexDiff = GetIndex() - fIndex;
+-        if (indexDiff < 0)
+-            indexDiff += BUFFER_COUNT;
 +        auto tagResult = XEFG_SWAPCHAIN_RESULT_SUCCESS;
-+
+ 
          // We will us UI color later with Render UI
          if (type != FG_ResourceType::UIColor ||
              (XeFGProxy::SetUiCompositionState() != nullptr || Config::Instance()->FGDrawUIOverFG.value_or_default()))
          {
-             auto frameId = static_cast<uint32_t>(_frameCount - indexDiff);
+-            auto frameId = static_cast<uint32_t>(_frameCount - indexDiff);
 -            auto result =
++            auto frameId = static_cast<uint32_t>(resourceFrame);
 +            tagResult =
                  XeFGProxy::D3D12TagFrameResource()(_swapChainContext, fResource->cmdList, frameId, &resourceParam);
++            XeFGDiagnostics::RecordTagResult(kind, static_cast<int32_t>(tagResult));
              LOG_DEBUG("D3D12TagFrameResource, frameId: {}, type: {} result: {} ({})", frameId,
 -                      magic_enum::enum_name(type), magic_enum::enum_name(result), (int32_t) result);
 -
@@ -2269,21 +2964,39 @@ index 1dbb3831..5fa03230 100644
  
 +        if (tagResult != XEFG_SWAPCHAIN_RESULT_SUCCESS)
 +        {
-+            State::Instance().fgChanged = true;
-+            UpdateTarget();
-+            Deactivate();
-+
-+            return false;
++            const auto code = static_cast<int32_t>(tagResult);
++            _recovery.Incomplete(resourceFrame, 1u << static_cast<unsigned>(type));
++            _frameResources[fIndex].erase(type);
++            _resourceReady[fIndex].erase(type);
++            if (type == FG_ResourceType::UIColor) _noUi[fIndex] = true;
++            if (type == FG_ResourceType::HudlessColor) _noHudless[fIndex] = true;
++            // Positive SDK warnings describe an incomplete/skipped frame. Only
++            // a real negative failure schedules a bounded provider trial.
++            if (code < 0) NoteRecoveryFault(resourceFrame, "resource_tag", code);
++            return reject(XeFGDiagnostics::InputReason::ProviderRejected);
 +        }
 +
          SetResourceReady(type, fIndex);
++        _recovery.Accepted(resourceFrame, 1u << static_cast<unsigned>(type));
++        if (type == FG_ResourceType::HudlessColor)
++        {
++            if (_hudlessAcceptedFormat[fIndex] != DXGI_FORMAT_UNKNOWN &&
++                _hudlessAcceptedFormat[fIndex] != _hudlessObservedFormat[fIndex])
++            {
++                const auto desc = fResource->GetResource()->GetDesc();
++                ReportFormatTransition(true, _hudlessAcceptedFormat[fIndex], _hudlessObservedFormat[fIndex],
++                                       resourceFrame, fIndex, desc.Width, desc.Height);
++            }
++            _hudlessAcceptedFormat[fIndex] = _hudlessObservedFormat[fIndex];
++        }
      }
  
-@@ -1707,7 +1887,263 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
-     return true;
- }
+     LOG_TRACE("_frameResources[{}][{}]: {:X}", fIndex, magic_enum::enum_name(type), (size_t) fResource->GetResource());
  
--void XeFG_Dx12::SetCommandQueue(FG_ResourceType type, ID3D12CommandQueue* queue) { _gameCommandQueue = queue; }
++    observation.Accept();
++    return true;
++}
++
 +void XeFG_Dx12::SetCommandQueue(FG_ResourceType type, ID3D12CommandQueue* queue)
 +{
 +    auto work = AcquireWork();
@@ -2485,9 +3198,10 @@ index 1dbb3831..5fa03230 100644
 +    }
 +    // Execute/Reset/final Release observation must stay alive even while the
 +    // provider is paused: native game API calls always continue to execute.
-+    return true;
-+}
-+
+     return true;
+ }
+ 
+-void XeFG_Dx12::SetCommandQueue(FG_ResourceType type, ID3D12CommandQueue* queue) { _gameCommandQueue = queue; }
 +void XeFG_Dx12::RestoreCpuAdmission()
 +{
 +    if (_submissionClosedByLifecycle && !_submissionWasClosed) _submissionGate.Open();
@@ -2499,7 +3213,10 @@ index 1dbb3831..5fa03230 100644
 +void XeFG_Dx12::RestoreProviderState(bool wasActive)
 +{
 +    if (!wasActive || _isActive || _swapChainContext == nullptr) return;
-+    if (XeFGProxy::SetEnabled()(_swapChainContext, true) == XEFG_SWAPCHAIN_RESULT_SUCCESS)
++    const auto result = XeFGProxy::SetEnabled()(_swapChainContext, true);
++    XeFGDiagnostics::RecordActivation(true, static_cast<int32_t>(result),
++                                       XeFGDiagnostics::ActivationReason::LifecycleRestore);
++    if (result == XEFG_SWAPCHAIN_RESULT_SUCCESS)
 +        _isActive = true;
 +    else
 +        _workDiagnostics.OnCleanupDeferred(XeFGDiagnostics::CleanupReason::ProviderDisableFailed);
@@ -2544,7 +3261,7 @@ index 1dbb3831..5fa03230 100644
  
  bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
  {
-@@ -1729,27 +2165,127 @@ bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
+@@ -1729,27 +2396,127 @@ bool XeFG_Dx12::ReleaseSwapchain(HWND hwnd)
          LOG_TRACE("Accuired Mutex: {}", Mutex.getOwner());
      }
  
@@ -2686,21 +3403,36 @@ index 1dbb3831..5fa03230 100644
 +    _depthInvert.release();
 +}
 diff --git a/OptiScaler/framegen/xefg/XeFG_Dx12.h b/OptiScaler/framegen/xefg/XeFG_Dx12.h
-index f54de2b3..0c7cd060 100644
+index f54de2b3..036aa6ec 100644
 --- a/OptiScaler/framegen/xefg/XeFG_Dx12.h
 +++ b/OptiScaler/framegen/xefg/XeFG_Dx12.h
-@@ -12,6 +12,9 @@
+@@ -12,6 +12,11 @@
  #include <xefg_swapchain.h>
  #include <xefg_swapchain_d3d12.h>
  #include <xefg_swapchain_debug.h>
 +#include <atomic>
 +#include <misc/XeFGResourceDiagnostics.h>
 +#include <misc/XeFGWorkDiagnostics.h>
++#include <misc/XeFGPresentDiagnostics.h>
++#include "XeFGRecovery.h"
  
  class XeFG_Dx12 : public virtual IFGFeature_Dx12
  {
-@@ -26,6 +29,71 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
+@@ -24,8 +29,84 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
+     bool _infiniteDepth = false;
+     std::optional<bool> _haveHudless = std::nullopt;
      bool _uiComposition = false;
++    XeFGRecovery _recovery;
++    std::mutex _recoveryActionMutex;
++    DXGI_FORMAT _hudlessObservedFormat[BUFFER_COUNT] {};
++    DXGI_FORMAT _hudlessAcceptedFormat[BUFFER_COUNT] {};
++    std::atomic<uint64_t> _lastRecoveryLogMs { 0 };
++    std::atomic<uint64_t> _lastFormatLogMs[2] {};
++    std::atomic<uint64_t> _formatTransitions[2] {};
++    void ReportFormatTransition(bool accepted, DXGI_FORMAT oldFormat, DXGI_FORMAT newFormat, UINT64 frame,
++                                int slot, UINT64 width, UINT height);
++    bool TryBeginRecoveryTrial(UINT64 frame);
++    void NoteRecoveryFault(UINT64 frame, const char* stage, int32_t result);
  
      std::unique_ptr<DI_Dx12> _depthInvert;
 +    XeFGDiagnostics::Context _resourceDiagnostics;
@@ -2771,7 +3503,7 @@ index f54de2b3..0c7cd060 100644
  
      static void xefgLogCallback(const char* message, xefg_swapchain_logging_level_t level, void* userData);
  
-@@ -55,6 +123,8 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
+@@ -55,6 +136,8 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
      bool ReleaseSwapchain(HWND hwnd) override final;
  
      void CreateContext(ID3D12Device* device, FG_Constants& fgConstants) override final;
@@ -2780,7 +3512,15 @@ index f54de2b3..0c7cd060 100644
      void Activate() override final;
      void Deactivate() override final;
      void DestroyFGContext() override final;
-@@ -66,12 +136,23 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
+@@ -63,15 +146,31 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
+     void EvaluateState(ID3D12Device* device, FG_Constants& fgConstants) override final;
+ 
+     bool Present() override final;
++    void PreparePresent() override final;
++    void MarkFrameConstantsReady(UINT64 internalFrame) override final;
++    UINT64 PresentRecoveryToken() override final;
++    void ObservePresentStatus(UINT64 token, HRESULT nativeResult, int32_t queryResult, uint32_t framesPresented,
++                              int32_t frameGenResult, bool enabled) override final;
  
      bool SetResource(Dx12Resource* inputResource) override final;
      void SetCommandQueue(FG_ResourceType type, ID3D12CommandQueue* queue) override final;
@@ -2805,11 +3545,244 @@ index f54de2b3..0c7cd060 100644
              XeFGProxy::InitXeFG();
      }
 diff --git a/OptiScaler/hooks/D3D12_Hooks.cpp b/OptiScaler/hooks/D3D12_Hooks.cpp
-index ee505fe5..e4a0cc80 100644
+index ee505fe5..87394b1b 100644
 --- a/OptiScaler/hooks/D3D12_Hooks.cpp
 +++ b/OptiScaler/hooks/D3D12_Hooks.cpp
-@@ -2210,6 +2210,11 @@ static void HookToDevice(ID3D12Device* InDevice)
+@@ -19,8 +19,10 @@
  
+ #include <dxgi1_6.h>
+ #include <misc/IdentifyGpu.h>
++#include <misc/ResidencyDiagnostics.h>
+ 
+ #include "Hook_Utils.h"
++#include "GpuAllocationHooks.h"
+ 
+ #pragma intrinsic(_ReturnAddress)
+ 
+@@ -58,10 +60,17 @@ static D3d12Proxy::PFN_D3D12CreateDevice o_D3D12CreateDevice = nullptr;
+ static D3d12Proxy::PFN_D3D12SerializeRootSignature o_D3D12SerializeRootSignature = nullptr;
+ static D3d12Proxy::PFN_D3D12SerializeVersionedRootSignature o_D3D12SerializeVersionedRootSignature = nullptr;
+ static PFN_Release o_D3D12DeviceRelease = nullptr;
++static bool coreUeHooksInstalled = false;
+ 
+ static bool _creatingD3D12Device = false;
+ static bool _d3d12Captured = false;
+ static LUID _lastAdapterLuid = {};
++static std::atomic<uint64_t> residencyAmdLuid { 0 };
++static std::atomic<bool> residencyAmdKnown { false };
++static uint64_t ResidencyLuidKey(LUID luid)
++{
++    return (static_cast<uint64_t>(static_cast<uint32_t>(luid.HighPart)) << 32) | luid.LowPart;
++}
+ 
+ // Common
+ using PFN_SetDescriptorHeaps = rewrite_signature<decltype(&ID3D12GraphicsCommandList::SetDescriptorHeaps)>::type;
+@@ -1759,7 +1768,8 @@ static HRESULT hkCreateCommittedResource(ID3D12Device* device, const D3D12_HEAP_
+                                          const D3D12_CLEAR_VALUE* pOptimizedClearValue, REFIID riidResource,
+                                          void** ppvResource)
+ {
+-    if (!_skipCommitedResource)
++    GpuAllocationHooks::CreationScope allocationScope;
++    if (!_skipCommitedResource && Config::Instance()->UESpoofIntelAtomics64.value_or_default() && pDesc != nullptr)
+     {
+         D3D12_RESOURCE_DESC localDesc = {};
+         memcpy(&localDesc, pDesc, sizeof(D3D12_RESOURCE_DESC));
+@@ -1776,12 +1786,17 @@ static HRESULT hkCreateCommittedResource(ID3D12Device* device, const D3D12_HEAP_
+             LOG_DEBUG("IGDExtProxy::hkCreateCommittedResource result: {:X}", (UINT) result);
+             _skipCommitedResource = false;
+ 
++            if (allocationScope.outermost)
++                GpuAllocationHooks::ObserveCommitted0(result, device, pHeapProperties, pDesc, ppvResource, _ReturnAddress());
+             return result;
+         }
+     }
+ 
+-    return o_CreateCommittedResource(device, pHeapProperties, HeapFlags, pDesc, InitialResourceState,
+-                                     pOptimizedClearValue, riidResource, ppvResource);
++    const auto result = o_CreateCommittedResource(device, pHeapProperties, HeapFlags, pDesc, InitialResourceState,
++                                                  pOptimizedClearValue, riidResource, ppvResource);
++    if (allocationScope.outermost)
++        GpuAllocationHooks::ObserveCommitted0(result, device, pHeapProperties, pDesc, ppvResource, _ReturnAddress());
++    return result;
+ }
+ 
+ static bool skipPlacedResource = false;
+@@ -1818,24 +1833,32 @@ VALIDATE_HOOK(hkSetResidencyPriority, PFN_SetResidencyPriority)
+ static HRESULT hkSetResidencyPriority(ID3D12Device1* This, UINT NumObjects, ID3D12Pageable* const* ppObjects,
+                                       const D3D12_RESIDENCY_PRIORITY* pPriorities)
+ {
+-    auto result = o_SetResidencyPriority(This, NumObjects, ppObjects, pPriorities);
+-
+-    // HACK: AMD Windows 25.20 drivers fail in xess/xefg with E_INVALIDARG
+-    // This hack allows them to work without the priority being actually set
+-    if (FAILED(result))
+-    {
+-        auto callerModule = Util::GetCallerModule(_ReturnAddress());
+-        auto xefgModule = XeFGProxy::Module();
+-        auto xessModule = XeSSProxy::Module();
+-
+-        if (callerModule == xefgModule || callerModule == xessModule)
+-        {
+-            LOG_WARN("SetResidencyPriority failed, faking success for xess/xefg");
+-            result = S_OK;
+-        }
+-    }
+-
+-    return result;
++    const auto originalResult = o_SetResidencyPriority(This, NumObjects, ppObjects, pPriorities);
++    auto caller = ResidencyDiagnostics::Caller::Unknown;
++    HMODULE callerModule = nullptr;
++    bool masked = false;
++    if (FAILED(originalResult))
++    {
++        callerModule = Util::GetCallerModule(_ReturnAddress());
++        const auto xefgModule = XeFGProxy::Module();
++        const auto xessModule = XeSSProxy::Module();
++        if (callerModule != nullptr && xefgModule != nullptr && callerModule == xefgModule)
++            caller = ResidencyDiagnostics::Caller::XeFG;
++        else if (callerModule != nullptr && xessModule != nullptr && callerModule == xessModule)
++            caller = ResidencyDiagnostics::Caller::XeSS;
++        else if (callerModule != nullptr)
++            caller = ResidencyDiagnostics::Caller::Other;
++        const bool knownAmd = residencyAmdKnown.load(std::memory_order_acquire) &&
++                              ResidencyLuidKey(This->GetAdapterLuid()) == residencyAmdLuid.load(std::memory_order_relaxed);
++        // AMD's known XeSS/XeFG invalid-priority workaround only. Never turn
++        // OOM, removal, reset, or unrelated module failures into false success.
++        masked = ResidencyDiagnostics::ShouldApplyCompatibility(static_cast<int32_t>(originalResult), caller, knownAmd);
++    }
++    if (ResidencyDiagnostics::Record(static_cast<int32_t>(originalResult), caller, NumObjects, masked))
++        LOG_WARN("SetResidencyPriority originalHRESULT=0x{:08X}, caller={}, module=0x{:X}, objects={}, compatibilityMasked={}; per-error log limit=4",
++                 static_cast<uint32_t>(originalResult), ResidencyDiagnostics::CallerName(caller),
++                 reinterpret_cast<uintptr_t>(callerModule), NumObjects, masked);
++    return masked ? S_OK : originalResult;
+ }
+ 
+ /*
+@@ -2123,8 +2146,15 @@ static HRESULT hkD3D12GetInterface(REFCLSID rclsid, REFIID riid, void** ppvDebug
+ 
+ static void HookToDevice(ID3D12Device* InDevice)
+ {
+-    if (o_CreateSampler != nullptr || InDevice == nullptr)
++    if (InDevice == nullptr)
++        return;
++    if (o_CreateSampler != nullptr)
++    {
++        ID3D12Device* native = nullptr;
++        if (!Util::CheckForRealObject(__FUNCTION__, InDevice, (IUnknown**) &native)) native = InDevice;
++        GpuAllocationHooks::Install(native, &o_CreateCommittedResource, hkCreateCommittedResource, coreUeHooksInstalled);
+         return;
++    }
+ 
+     LOG_DEBUG("Dx12");
+ 
+@@ -2135,6 +2165,18 @@ static void HookToDevice(ID3D12Device* InDevice)
+     if (Util::CheckForRealObject(__FUNCTION__, InDevice, (IUnknown**) &realDevice))
+         pVTable = *(PVOID**) realDevice;
+ 
++    // Cache the actual adapter identity once; unknown/non-AMD devices do not
++    // receive the narrowly scoped XeFG/XeSS priority compatibility exception.
++    const auto adapterLuid = (realDevice != nullptr ? realDevice : InDevice)->GetAdapterLuid();
++    residencyAmdKnown.store(false, std::memory_order_release);
++    for (const auto& gpu : IdentifyGpu::getAllGpus())
++        if (IsEqualLUID(gpu.luid, adapterLuid) && gpu.vendorId == VendorId::AMD)
++        {
++            residencyAmdLuid.store(ResidencyLuidKey(adapterLuid), std::memory_order_relaxed);
++            residencyAmdKnown.store(true, std::memory_order_release);
++            break;
++        }
++
+     // hudless
+     o_D3D12DeviceRelease = (PFN_Release) pVTable[2];
+     o_CreateSampler = (PFN_CreateSampler) pVTable[22];
+@@ -2157,59 +2199,53 @@ static void HookToDevice(ID3D12Device* InDevice)
+         device12_1->Release();
+     }
+ 
+-    // Apply the detour
++    // Core hooks and allocation observation use separate transactions: an
++    // optional accounting hook failure must not disable the existing features.
+     if (o_CreateSampler != nullptr)
+     {
+-        DetourTransactionBegin();
+-        DetourUpdateThread(GetCurrentThread());
+-
+-        if (o_CreateSampler != nullptr)
+-            DetourAttach(&(PVOID&) o_CreateSampler, hkCreateSampler);
+-
+-        if (o_CreateRootSignature != nullptr)
+-            DetourAttach(&(PVOID&) o_CreateRootSignature, hkCreateRootSignature);
+-
+-        // Will be used for tracking current d3d12 device too
+-        if (o_D3D12DeviceRelease != nullptr)
+-            DetourAttach(&(PVOID&) o_D3D12DeviceRelease, hkD3D12DeviceRelease);
+-
+-        // HACK: see reason in hkSetResidencyPriority
+-        if (o_SetResidencyPriority != nullptr)
+-            DetourAttach(&(PVOID&) o_SetResidencyPriority, hkSetResidencyPriority);
+-
+-        if (Config::Instance()->UESpoofIntelAtomics64.value_or_default())
+-        {
+-            LOG_DEBUG("UE spoofing for Intel Atomics64 enabled, applying detours");
+-
+-            if (o_CheckFeatureSupport != nullptr)
+-                DetourAttach(&(PVOID&) o_CheckFeatureSupport, hkCheckFeatureSupport);
+-
+-            if (o_CreateCommittedResource != nullptr)
+-                DetourAttach(&(PVOID&) o_CreateCommittedResource, hkCreateCommittedResource);
+-
+-            if (o_CreatePlacedResource != nullptr)
+-                DetourAttach(&(PVOID&) o_CreatePlacedResource, hkCreatePlacedResource);
+-
+-            if (o_GetResourceAllocationInfo != nullptr)
+-                DetourAttach(&(PVOID&) o_GetResourceAllocationInfo, hkGetResourceAllocationInfo);
+-        }
+-
+-        auto detourResult = DetourTransactionCommit();
+-        if (detourResult != NO_ERROR)
++        const bool installUe = Config::Instance()->UESpoofIntelAtomics64.value_or_default();
++        struct CoreHook { PVOID* original; PVOID replacement; bool enabled; };
++        const std::array<CoreHook, 8> hooks {{
++            { reinterpret_cast<PVOID*>(&o_CreateSampler), reinterpret_cast<PVOID>(hkCreateSampler), true },
++            { reinterpret_cast<PVOID*>(&o_CreateRootSignature), reinterpret_cast<PVOID>(hkCreateRootSignature), true },
++            { reinterpret_cast<PVOID*>(&o_D3D12DeviceRelease), reinterpret_cast<PVOID>(hkD3D12DeviceRelease), true },
++            { reinterpret_cast<PVOID*>(&o_SetResidencyPriority), reinterpret_cast<PVOID>(hkSetResidencyPriority), true },
++            { reinterpret_cast<PVOID*>(&o_CheckFeatureSupport), reinterpret_cast<PVOID>(hkCheckFeatureSupport), installUe },
++            { reinterpret_cast<PVOID*>(&o_CreateCommittedResource), reinterpret_cast<PVOID>(hkCreateCommittedResource), installUe },
++            { reinterpret_cast<PVOID*>(&o_CreatePlacedResource), reinterpret_cast<PVOID>(hkCreatePlacedResource), installUe },
++            { reinterpret_cast<PVOID*>(&o_GetResourceAllocationInfo), reinterpret_cast<PVOID>(hkGetResourceAllocationInfo), installUe }
++        }};
++        auto result = DetourTransactionBegin();
++        if (result == NO_ERROR)
++        {
++            result = DetourUpdateThread(GetCurrentThread());
++            for (const auto& hook : hooks)
++                if (result == NO_ERROR && hook.enabled && *hook.original != nullptr)
++                    result = DetourAttach(hook.original, hook.replacement);
++            if (result == NO_ERROR) result = DetourTransactionCommit();
++            else DetourTransactionAbort();
++        }
++        if (result == NO_ERROR)
++            coreUeHooksInstalled = installUe;
++        else
+         {
+-            LOG_ERROR("Failed to detour ID3D12Device methods, error: {:X}", detourResult);
+-            o_CreateSampler = nullptr;
+-            o_CheckFeatureSupport = nullptr;
+-            o_CreateRootSignature = nullptr;
+-            o_CreateCommittedResource = nullptr;
+-            o_CreatePlacedResource = nullptr;
+-            o_D3D12DeviceRelease = nullptr;
+-            o_GetResourceAllocationInfo = nullptr;
++            LOG_ERROR("Failed to detour ID3D12Device methods, error: {:X}", result);
++            for (const auto& hook : hooks) *hook.original = nullptr;
++            coreUeHooksInstalled = false;
+         }
+     }
+ 
++    if (o_CreateSampler != nullptr)
++        GpuAllocationHooks::Install(realDevice != nullptr ? realDevice : InDevice, &o_CreateCommittedResource,
++                                     hkCreateCommittedResource, coreUeHooksInstalled);
++
      HookToCommandList(InDevice);
  
 +    // XeFG lifetime observation must also cover DLSSG input with HUD capture off.
@@ -2820,19 +3793,149 @@ index ee505fe5..e4a0cc80 100644
      if (State::Instance().activeFgInput == FGInput::Upscaler &&
          !Config::Instance()->FGDisableHUDFix.value_or_default() &&
          State::Instance().swapchainInteropApi == SwapchainInteropApi::None)
+@@ -2223,50 +2259,46 @@ static void HookToDevice(ID3D12Device* InDevice)
+     }
+ }
+ 
+-static void UnhookDevice()
++static bool UnhookDeviceMethods()
+ {
+-    LOG_FUNC();
+-
+-    DetourTransactionBegin();
+-    DetourUpdateThread(GetCurrentThread());
+-
+-    if (o_CreateSampler != nullptr)
+-        DetourDetach(&(PVOID&) o_CreateSampler, hkCreateSampler);
+-
+-    if (o_CreateRootSignature != nullptr)
+-        DetourDetach(&(PVOID&) o_CreateRootSignature, hkCreateRootSignature);
+-
+-    if (o_CheckFeatureSupport != nullptr)
+-        DetourDetach(&(PVOID&) o_CheckFeatureSupport, hkCheckFeatureSupport);
+-
+-    if (o_CreateCommittedResource != nullptr)
+-        DetourDetach(&(PVOID&) o_CreateCommittedResource, hkCreateCommittedResource);
+-
+-    if (o_CreatePlacedResource != nullptr)
+-        DetourDetach(&(PVOID&) o_CreatePlacedResource, hkCreatePlacedResource);
+-
+-    if (o_D3D12DeviceRelease != nullptr)
+-        DetourDetach(&(PVOID&) o_D3D12DeviceRelease, hkD3D12DeviceRelease);
+-
+-    if (o_GetResourceAllocationInfo != nullptr)
+-        DetourDetach(&(PVOID&) o_GetResourceAllocationInfo, hkGetResourceAllocationInfo);
+-
+-    auto detourResult = DetourTransactionCommit();
+-    if (detourResult != NO_ERROR)
++    std::lock_guard lock(GpuAllocationHooks::installationMutex);
++    struct Hook { PVOID* original; PVOID replacement; bool enabled; };
++    const std::array<Hook, 8> hooks {{
++        { reinterpret_cast<PVOID*>(&o_CreateSampler), reinterpret_cast<PVOID>(hkCreateSampler), true },
++        { reinterpret_cast<PVOID*>(&o_CreateRootSignature), reinterpret_cast<PVOID>(hkCreateRootSignature), true },
++        { reinterpret_cast<PVOID*>(&o_D3D12DeviceRelease), reinterpret_cast<PVOID>(hkD3D12DeviceRelease), true },
++        { reinterpret_cast<PVOID*>(&o_SetResidencyPriority), reinterpret_cast<PVOID>(hkSetResidencyPriority), true },
++        { reinterpret_cast<PVOID*>(&o_CheckFeatureSupport), reinterpret_cast<PVOID>(hkCheckFeatureSupport), coreUeHooksInstalled },
++        { reinterpret_cast<PVOID*>(&o_CreateCommittedResource), reinterpret_cast<PVOID>(hkCreateCommittedResource), GpuAllocationHooks::baseCommittedHooked || coreUeHooksInstalled },
++        { reinterpret_cast<PVOID*>(&o_CreatePlacedResource), reinterpret_cast<PVOID>(hkCreatePlacedResource), coreUeHooksInstalled },
++        { reinterpret_cast<PVOID*>(&o_GetResourceAllocationInfo), reinterpret_cast<PVOID>(hkGetResourceAllocationInfo), coreUeHooksInstalled }
++    }};
++    auto result = DetourTransactionBegin();
++    if (result == NO_ERROR)
+     {
+-        LOG_ERROR("Failed to unhook ID3D12Device methods, error: {:X}", detourResult);
++        result = DetourUpdateThread(GetCurrentThread());
++        for (const auto& hook : hooks)
++            if (result == NO_ERROR && hook.enabled && *hook.original != nullptr)
++                result = DetourDetach(hook.original, hook.replacement);
++        if (result == NO_ERROR) result = GpuAllocationHooks::AppendDetachInTransaction();
++        if (result == NO_ERROR) result = DetourTransactionCommit();
++        else DetourTransactionAbort();
+     }
+-    else
++    if (result != NO_ERROR)
+     {
+-        o_CreateSampler = nullptr;
+-        o_CheckFeatureSupport = nullptr;
+-        o_CreateCommittedResource = nullptr;
+-        o_CreatePlacedResource = nullptr;
+-        o_D3D12DeviceRelease = nullptr;
+-        o_GetResourceAllocationInfo = nullptr;
++        LOG_ERROR("Failed to unhook ID3D12Device/allocation methods, error: {:X}; preserving all trampolines", result);
++        return false;
+     }
++    for (const auto& hook : hooks) *hook.original = nullptr;
++    coreUeHooksInstalled = false;
++    GpuAllocationHooks::FinishDetachSuccess();
++    return true;
++}
+ 
+-    ResTrack_Dx12::ReleaseDeviceHooks();
++static void UnhookDevice()
++{
++    LOG_FUNC();
++    if (UnhookDeviceMethods()) ResTrack_Dx12::ReleaseDeviceHooks();
+ }
+ 
+ void D3D12Hooks::Hook()
+@@ -2315,42 +2347,7 @@ void D3D12Hooks::Unhook()
+ {
+     if (o_D3D12CreateDevice == nullptr)
+         return;
+-
+-    DetourTransactionBegin();
+-    DetourUpdateThread(GetCurrentThread());
+-
+-    if (o_CreateSampler != nullptr)
+-        DetourDetach(&(PVOID&) o_CreateSampler, hkCreateSampler);
+-
+-    if (o_CheckFeatureSupport != nullptr)
+-        DetourDetach(&(PVOID&) o_CheckFeatureSupport, hkCheckFeatureSupport);
+-
+-    if (o_CreateCommittedResource != nullptr)
+-        DetourDetach(&(PVOID&) o_CreateCommittedResource, hkCreateCommittedResource);
+-
+-    if (o_CreatePlacedResource != nullptr)
+-        DetourDetach(&(PVOID&) o_CreatePlacedResource, hkCreatePlacedResource);
+-
+-    if (o_GetResourceAllocationInfo != nullptr)
+-        DetourDetach(&(PVOID&) o_GetResourceAllocationInfo, hkGetResourceAllocationInfo);
+-
+-    if (o_D3D12DeviceRelease != nullptr)
+-        DetourDetach(&(PVOID&) o_D3D12DeviceRelease, hkD3D12DeviceRelease);
+-
+-    auto detourResult = DetourTransactionCommit();
+-    if (detourResult != NO_ERROR)
+-    {
+-        LOG_ERROR("Failed to unhook ID3D12Device methods, error: {:X}", detourResult);
+-    }
+-    else
+-    {
+-        o_CreateSampler = nullptr;
+-        o_CheckFeatureSupport = nullptr;
+-        o_CreateCommittedResource = nullptr;
+-        o_CreatePlacedResource = nullptr;
+-        o_D3D12DeviceRelease = nullptr;
+-        o_GetResourceAllocationInfo = nullptr;
+-    }
++    UnhookDeviceMethods();
+ }
+ 
+ void D3D12Hooks::SetRootSignatureTracking(bool enable) { isUpscalerActive = !enable; }
 diff --git a/OptiScaler/hooks/FG_Hooks.cpp b/OptiScaler/hooks/FG_Hooks.cpp
-index d410412b..e778cce9 100644
+index d410412b..67d545f9 100644
 --- a/OptiScaler/hooks/FG_Hooks.cpp
 +++ b/OptiScaler/hooks/FG_Hooks.cpp
-@@ -13,6 +13,7 @@
+@@ -13,6 +13,8 @@
  #include <resource_tracking/ResTrack_Dx12.h>
  
  #include <misc/FrameLimit.h>
 +#include <misc/LongSessionTiming.h>
++#include <misc/XeFGPresentDiagnostics.h>
  
  #include <misc/IdentifyGpu.h>
  #include <hooks/Reflex_Hooks.h>
-@@ -126,6 +127,7 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
+@@ -126,6 +128,7 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
      // Create FG swapchain
      auto fg = State::Instance().currentFG;
      bool scResult = false;
@@ -2840,7 +3943,7 @@ index d410412b..e778cce9 100644
  
      {
          ScopedSkipDxgiLoadChecks skipDxgiLoadChecks {};
-@@ -154,7 +156,8 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
+@@ -154,7 +157,8 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
          {
              LOG_WARN("Looks like game is creating new swapchain, without releasing old one!");
  
@@ -2850,7 +3953,7 @@ index d410412b..e778cce9 100644
                  resizeFenceEvent != nullptr)
              {
                  LOG_DEBUG("Waiting for GPU to finish before resizing buffers");
-@@ -171,7 +174,7 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
+@@ -171,7 +175,7 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
                  }
              }
  
@@ -2859,7 +3962,7 @@ index d410412b..e778cce9 100644
          }
  
          scResult = fg->CreateSwapchain(pFactory, cq, pDesc, ppSwapChain, true);
-@@ -182,6 +185,8 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
+@@ -182,6 +186,8 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
  
      if (scResult)
      {
@@ -2868,7 +3971,7 @@ index d410412b..e778cce9 100644
          if (State::Instance().currentD3D12Device != nullptr)
          {
              SAFE_RELEASE(resizeFence);
-@@ -237,6 +242,7 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
+@@ -237,6 +243,7 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
      // Create FG swapchain
      auto fg = State::Instance().currentFG;
      bool scResult = false;
@@ -2876,7 +3979,7 @@ index d410412b..e778cce9 100644
  
      {
          ScopedSkipDxgiLoadChecks skipDxgiLoadChecks {};
-@@ -266,7 +272,8 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
+@@ -266,7 +273,8 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
          {
              LOG_WARN("Looks like game is creating new swapchain, without releasing old one!");
  
@@ -2886,7 +3989,7 @@ index d410412b..e778cce9 100644
                  resizeFenceEvent != nullptr)
              {
                  LOG_DEBUG("Waiting for GPU to finish before resizing buffers");
-@@ -283,7 +290,7 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
+@@ -283,7 +291,7 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
                  }
              }
  
@@ -2895,7 +3998,7 @@ index d410412b..e778cce9 100644
          }
  
          scResult = fg->CreateSwapchain1(pFactory, cq, hWnd, pDesc, pFullscreenDesc, ppSwapChain, true);
-@@ -294,6 +301,8 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
+@@ -294,6 +302,8 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
  
      if (scResult)
      {
@@ -2904,7 +4007,7 @@ index d410412b..e778cce9 100644
          if (State::Instance().currentD3D12Device != nullptr)
          {
              SAFE_RELEASE(resizeFence);
-@@ -666,7 +675,10 @@ HRESULT FGHooks::hkResizeBuffers(IDXGISwapChain* This, UINT BufferCount, UINT Wi
+@@ -666,7 +676,10 @@ HRESULT FGHooks::hkResizeBuffers(IDXGISwapChain* This, UINT BufferCount, UINT Wi
                      {
                          LOG_INFO("Trying to change backbuffer state to COMMON");
  
@@ -2916,7 +4019,7 @@ index d410412b..e778cce9 100644
  
                          if (cmdList != nullptr)
                          {
-@@ -721,35 +733,8 @@ HRESULT FGHooks::hkResizeBuffers(IDXGISwapChain* This, UINT BufferCount, UINT Wi
+@@ -721,35 +734,8 @@ HRESULT FGHooks::hkResizeBuffers(IDXGISwapChain* This, UINT BufferCount, UINT Wi
  
      _skipResize1 = true;
  
@@ -2954,7 +4057,7 @@ index d410412b..e778cce9 100644
  
      HRESULT result;
      {
-@@ -903,7 +888,10 @@ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT
+@@ -903,7 +889,10 @@ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT
                      {
                          LOG_INFO("Trying to change backbuffer state to COMMON");
  
@@ -2966,7 +4069,7 @@ index d410412b..e778cce9 100644
                          if (cmdList != nullptr)
                          {
                              for (size_t i = 0; i < desc.BufferCount; i++)
-@@ -958,35 +946,8 @@ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT
+@@ -958,35 +947,8 @@ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT
      if (Config::Instance()->OverlayMenu.value_or_default())
          MenuOverlayDx::CleanupRenderTarget(false, NULL);
  
@@ -3004,7 +4107,7 @@ index d410412b..e778cce9 100644
  
      HRESULT result;
      {
-@@ -1137,7 +1098,8 @@ HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
+@@ -1137,7 +1099,8 @@ HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
  #endif
      }
  
@@ -3014,7 +4117,7 @@ index d410412b..e778cce9 100644
  
      if (fg != nullptr && willPresent && fg->IsActive() && !fg->IsPaused())
      {
-@@ -1189,7 +1151,12 @@ HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
+@@ -1189,7 +1152,14 @@ HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
          LOG_TRACE("Accuired FG->Mutex: {}", fg->Mutex.getOwner());
      }
  
@@ -3024,11 +4127,23 @@ index d410412b..e778cce9 100644
 +    // Present/Present1, including inactive and DXGI_PRESENT_TEST pass-through.
 +    auto presentWork = fgDx12 != nullptr ? fgDx12->AcquirePresentWork() : FGWorkGate::Scope {};
 +    const bool canCallProvider = fgDx12 == nullptr || static_cast<bool>(presentWork);
++    if (canCallProvider && willPresent && fg != nullptr)
++        fg->PreparePresent();
 +    const bool fgFeatureActive = canCallProvider && fg != nullptr && fg->IsActive() && !fg->IsPaused();
  
      sl::FrameToken* localToken = nullptr;
      sl::Result tokenResult = sl::Result::eErrorReflexAPI;
-@@ -1262,15 +1229,21 @@ HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
+@@ -1219,7 +1189,8 @@ HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
+         else if (state.activeFgInput == FGInput::FSRFG30)
+             FSR3FG::ffxPresentCallback();
+ 
+-        fg->Present();
++        if (!fg->Present())
++            fg->PreparePresent(); // Handle a newly reported SDK fault before the native output call.
+     }
+     else if (willPresent && fg != nullptr)
+     {
+@@ -1262,15 +1233,48 @@ HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
          LOG_DEBUG("Final SyncInterval: {}", SyncInterval);
      }
  
@@ -3050,16 +4165,43 @@ index d410412b..e778cce9 100644
 +        // Used at wrapped_swapchain LocalPresent to identify interpolated frames.
 +        if (willPresent)
 +            state.fgPresentIsCalled = true;
-+        LongSession::WaitScope nativePresentScope(LongSession::WaitStage::NativePresent);
-+        if (pPresentParameters == nullptr)
-+            result = o_FGSCPresent(This, SyncInterval, Flags);
-+        else
-+            result = o_FGSCPresent1((IDXGISwapChain1*) This, SyncInterval, Flags, pPresentParameters);
++        const bool observeXeFG = fgDx12 != nullptr && state.activeFgOutput == FGOutput::XeFG;
++        std::optional<XeFGDiagnostics::PresentObservation> observation;
++        if (observeXeFG)
++            observation.emplace(!willPresent);
++        const auto recoveryToken = observeXeFG && willPresent ? fg->PresentRecoveryToken() : 0;
++        {
++            LongSession::WaitScope nativePresentScope(LongSession::WaitStage::NativePresent);
++            if (pPresentParameters == nullptr)
++                result = o_FGSCPresent(This, SyncInterval, Flags);
++            else
++                result = o_FGSCPresent1((IDXGISwapChain1*) This, SyncInterval, Flags, pPresentParameters);
++        }
++        if (observation)
++        {
++            xefg_swapchain_present_status_t status {};
++            auto queryResult = XEFG_SWAPCHAIN_RESULT_SUCCESS;
++            auto query = XeFGProxy::GetLastPresentStatus();
++            auto context = static_cast<xefg_swapchain_handle_t>(fgDx12->SwapchainContext());
++            const bool canQuery = willPresent && query != nullptr && context != nullptr;
++            if (canQuery)
++            {
++                LongSession::WaitScope statusScope(LongSession::WaitStage::ProviderStatus);
++                queryResult = query(context, &status);
++            }
++            const bool trustworthy = observation->Record(static_cast<int32_t>(result), canQuery,
++                static_cast<int32_t>(queryResult), status.framesPresented,
++                static_cast<int32_t>(status.frameGenResult), status.isFrameGenEnabled != 0);
++            if (trustworthy)
++                fg->ObservePresentStatus(recoveryToken, result, static_cast<int32_t>(queryResult),
++                    status.framesPresented, static_cast<int32_t>(status.frameGenResult),
++                    status.isFrameGenEnabled != 0);
++        }
 +    }
  
      if (result == S_OK)
      {
-@@ -1344,9 +1317,15 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
+@@ -1344,9 +1348,15 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
      }
  #endif // (XEFG_RESOURCE_REF_LIMIT == 0)
  
@@ -3077,7 +4219,7 @@ index d410412b..e778cce9 100644
          return o_FGRelease(This);
  
      This->AddRef();
-@@ -1357,7 +1336,8 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
+@@ -1357,7 +1367,8 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
          {
              LOG_DEBUG("");
  
@@ -3087,7 +4229,7 @@ index d410412b..e778cce9 100644
                  resizeFenceEvent != nullptr)
              {
                  LOG_DEBUG("Waiting for GPU to finish before resizing buffers");
-@@ -1377,7 +1357,8 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
+@@ -1377,7 +1388,8 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
              DXGI_SWAP_CHAIN_DESC scDesc {};
              ((IDXGISwapChain*) This)->GetDesc(&scDesc);
  
@@ -3097,7 +4239,7 @@ index d410412b..e778cce9 100644
              {
                  for (UINT i = 0; i < scDesc.BufferCount; i++)
                  {
-@@ -1412,13 +1393,23 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
+@@ -1412,13 +1424,23 @@ ULONG FGHooks::hkFGRelease(IUnknown* This)
              if (State::Instance().currentFG != nullptr)
              {
                  LOG_DEBUG("FG Swapchain released, release FG & swapchain context");
@@ -3123,6 +4265,368 @@ index d410412b..e778cce9 100644
                  State::Instance().currentSwapchainDesc.OutputWindow == _hwnd)
              {
                  auto refCount = State::Instance().currentWrappedSwapchain->Release();
+diff --git a/OptiScaler/hooks/GpuAllocationHooks.h b/OptiScaler/hooks/GpuAllocationHooks.h
+new file mode 100644
+index 00000000..2f5b56c6
+--- /dev/null
++++ b/OptiScaler/hooks/GpuAllocationHooks.h
+@@ -0,0 +1,356 @@
++#pragma once
++
++#include <misc/GpuAllocationDiagnostics.h>
++#include <proxies/FfxApi_Proxy.h>
++#include <proxies/Streamline_Proxy.h>
++#include <proxies/XeFG_Proxy.h>
++#include <proxies/XeSS_Proxy.h>
++#include <d3dcommon.h>
++#include <intrin.h>
++#include <detours/detours.h>
++
++// Windows adapter for the bounded, platform-independent accounting ledger.
++// DirectX-Headers d3d12.idl defines slots 27/28, 53/54, 69, and 76 below.
++namespace GpuAllocationHooks
++{
++using namespace GpuAllocationDiagnostics;
++using Committed0Fn = rewrite_signature<decltype(&ID3D12Device::CreateCommittedResource)>::type;
++using Committed1Fn = rewrite_signature<decltype(&ID3D12Device4::CreateCommittedResource1)>::type;
++using Committed2Fn = rewrite_signature<decltype(&ID3D12Device8::CreateCommittedResource2)>::type;
++using Committed3Fn = rewrite_signature<decltype(&ID3D12Device10::CreateCommittedResource3)>::type;
++using Heap0Fn = rewrite_signature<decltype(&ID3D12Device::CreateHeap)>::type;
++using Heap1Fn = rewrite_signature<decltype(&ID3D12Device4::CreateHeap1)>::type;
++inline Committed1Fn committed1 = nullptr;
++inline Committed2Fn committed2 = nullptr;
++inline Committed3Fn committed3 = nullptr;
++inline Heap0Fn heap0 = nullptr;
++inline Heap1Fn heap1 = nullptr;
++inline bool baseCommittedHooked = false;
++inline std::mutex installationMutex;
++inline unsigned installationAttempts = 0;
++inline bool installed = false;
++inline uint32_t currentApiMask = 0;
++inline thread_local unsigned creationDepth = 0;
++struct CreationScope
++{
++    bool outermost;
++    CreationScope() : outermost(creationDepth++ == 0) {}
++    ~CreationScope() { --creationDepth; }
++};
++
++inline MemoryClass ClassifyMemory(const D3D12_HEAP_PROPERTIES& properties)
++{
++    if (properties.Type == D3D12_HEAP_TYPE_DEFAULT)
++        return MemoryClass::Default;
++    if (properties.Type == D3D12_HEAP_TYPE_UPLOAD || properties.Type == D3D12_HEAP_TYPE_READBACK)
++        return MemoryClass::CpuVisible;
++    return MemoryClass::Unclassified;
++}
++inline Caller ClassifyCaller(void* address)
++{
++    const auto module = Util::GetCallerModule(address);
++    if (module == nullptr) return Caller::Unknown;
++    if (module == XeFGProxy::Module()) return Caller::XeFG;
++    if (module == XeSSProxy::Module()) return Caller::XeSS;
++    if (module == FfxApiProxy::Dx12Module() || module == FfxApiProxy::Dx12Module_SR() ||
++        module == FfxApiProxy::Dx12Module_FG() || module == FfxApiProxy::Dx12Module_Denoiser() ||
++        module == FfxApiProxy::Dx12Module_Radiance()) return Caller::FFX;
++    if (module == StreamlineProxy::Module()) return Caller::Streamline;
++    if (module == GetModuleHandleW(nullptr)) return Caller::Game;
++    if (module == Util::GetCallerModule(reinterpret_cast<void*>(&ClassifyCaller))) return Caller::OptiScaler;
++    return Caller::Other;
++}
++
++inline void OnDestroyed(void* opaqueToken)
++{
++    // The context is an opaque 64-bit token on this project's x64 target, never
++    // a resource pointer. Generation matching makes duplicate/stale calls inert.
++    auto ledger = Instance();
++    if (ledger != nullptr)
++        ledger->Retire(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(opaqueToken)));
++}
++inline bool PinCallbackModule()
++{
++    static const bool pinned = []()
++    {
++        HMODULE module = nullptr;
++        return GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
++                                  reinterpret_cast<LPCWSTR>(&OnDestroyed), &module) != FALSE;
++    }();
++    return pinned;
++}
++inline void ObserveObject(void* returnedInterface, uint64_t bytes, Kind kind, MemoryClass memory, void* caller)
++{
++    if (bytes == 0 || bytes == UINT64_MAX)
++    {
++        RecordSkip(Skip::SizeUnknown);
++        return;
++    }
++    if (bytes < MinimumTrackedBytes)
++    {
++        RecordSkip(Skip::Small);
++        return;
++    }
++    ID3DDestructionNotifier* notifier = nullptr;
++    auto object = reinterpret_cast<IUnknown*>(returnedInterface);
++    if (object == nullptr || FAILED(object->QueryInterface(IID_PPV_ARGS(&notifier))) || notifier == nullptr)
++    {
++        RecordSkip(Skip::NotifierUnsupported);
++        return;
++    }
++    // Only this DLL is pinned, never a GPU object. The QI reference below is
++    // returned on every path; no object reference is retained in the ledger.
++    if (!PinCallbackModule())
++    {
++        RecordSkip(Skip::PinFailed);
++        notifier->Release();
++        return;
++    }
++    auto ledger = Instance();
++    if (ledger == nullptr)
++    {
++        RecordSkip(Skip::CounterUnavailable);
++        notifier->Release();
++        return;
++    }
++    const auto token = ledger->Track(ClassifyCaller(caller), kind, memory, bytes);
++    if (token != 0)
++    {
++        UINT callbackId = 0;
++        const auto result = notifier->RegisterDestructionCallback(
++            OnDestroyed, reinterpret_cast<void*>(static_cast<uintptr_t>(token)), &callbackId);
++        if (FAILED(result))
++        {
++            ledger->Cancel(token);
++            RecordSkip(Skip::RegistrationFailed);
++        }
++    }
++    notifier->Release();
++}
++inline bool IsCreated(HRESULT result, void** output)
++{
++    if (FAILED(result))
++    {
++        RecordSkip(Skip::AllocationFailed);
++        return false;
++    }
++    // S_FALSE capability probes and failed/null outputs do not allocate.
++    return result == S_OK && output != nullptr && *output != nullptr;
++}
++inline void ObserveCommitted0(HRESULT result, ID3D12Device* device, const D3D12_HEAP_PROPERTIES* properties,
++                              const D3D12_RESOURCE_DESC* description, void** output, void* caller)
++{
++    if (!IsCreated(result, output)) return;
++    if (properties == nullptr || description == nullptr)
++    {
++        RecordSkip(Skip::SizeUnknown);
++        return;
++    }
++    if (description->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER && description->Width < MinimumTrackedBytes)
++    {
++        RecordSkip(Skip::Small);
++        return;
++    }
++    // A normal C++ virtual call preserves the SDK's struct-return ABI.
++    const auto info = device->GetResourceAllocationInfo(0, 1, description);
++    ObserveObject(*output, info.SizeInBytes, Kind::Committed, ClassifyMemory(*properties), caller);
++}
++inline void ObserveCommitted2(HRESULT result, ID3D12Device8* device, const D3D12_HEAP_PROPERTIES* properties,
++                              const D3D12_RESOURCE_DESC1* description, void** output, void* caller)
++{
++    if (!IsCreated(result, output)) return;
++    if (properties == nullptr || description == nullptr)
++    {
++        RecordSkip(Skip::SizeUnknown);
++        return;
++    }
++    if (description->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER && description->Width < MinimumTrackedBytes)
++    {
++        RecordSkip(Skip::Small);
++        return;
++    }
++    const auto info = device->GetResourceAllocationInfo2(0, 1, description, nullptr);
++    ObserveObject(*output, info.SizeInBytes, Kind::Committed, ClassifyMemory(*properties), caller);
++}
++inline void ObserveHeap(HRESULT result, const D3D12_HEAP_DESC* description, void** output, void* caller)
++{
++    if (!IsCreated(result, output)) return;
++    if (description == nullptr)
++    {
++        RecordSkip(Skip::SizeUnknown);
++        return;
++    }
++    ObserveObject(*output, description->SizeInBytes, Kind::Heap, ClassifyMemory(description->Properties), caller);
++}
++
++static HRESULT hkCommitted1(ID3D12Device4* device, const D3D12_HEAP_PROPERTIES* properties, D3D12_HEAP_FLAGS flags,
++                            const D3D12_RESOURCE_DESC* description, D3D12_RESOURCE_STATES state,
++                            const D3D12_CLEAR_VALUE* clear, ID3D12ProtectedResourceSession* session,
++                            REFIID iid, void** output)
++{
++    CreationScope scope;
++    auto result = committed1(device, properties, flags, description, state, clear, session, iid, output);
++    if (scope.outermost) ObserveCommitted0(result, device, properties, description, output, _ReturnAddress());
++    return result;
++}
++static HRESULT hkCommitted2(ID3D12Device8* device, const D3D12_HEAP_PROPERTIES* properties, D3D12_HEAP_FLAGS flags,
++                            const D3D12_RESOURCE_DESC1* description, D3D12_RESOURCE_STATES state,
++                            const D3D12_CLEAR_VALUE* clear, ID3D12ProtectedResourceSession* session,
++                            REFIID iid, void** output)
++{
++    CreationScope scope;
++    auto result = committed2(device, properties, flags, description, state, clear, session, iid, output);
++    if (scope.outermost) ObserveCommitted2(result, device, properties, description, output, _ReturnAddress());
++    return result;
++}
++static HRESULT hkCommitted3(ID3D12Device10* device, const D3D12_HEAP_PROPERTIES* properties, D3D12_HEAP_FLAGS flags,
++                            const D3D12_RESOURCE_DESC1* description, D3D12_BARRIER_LAYOUT layout,
++                            const D3D12_CLEAR_VALUE* clear, ID3D12ProtectedResourceSession* session,
++                            UINT32 formatCount, const DXGI_FORMAT* formats, REFIID iid, void** output)
++{
++    CreationScope scope;
++    auto result = committed3(device, properties, flags, description, layout, clear, session, formatCount, formats, iid, output);
++    if (scope.outermost)
++    {
++        // Castable-format allocations need GetResourceAllocationInfo3 (Device12).
++        // Do not attribute an inaccurate older-API size when that list is used.
++        if (formatCount != 0 && IsCreated(result, output)) RecordSkip(Skip::SizeUnknown);
++        else if (formatCount == 0) ObserveCommitted2(result, device, properties, description, output, _ReturnAddress());
++    }
++    return result;
++}
++static HRESULT hkHeap0(ID3D12Device* device, const D3D12_HEAP_DESC* description, REFIID iid, void** output)
++{
++    CreationScope scope;
++    auto result = heap0(device, description, iid, output);
++    if (scope.outermost) ObserveHeap(result, description, output, _ReturnAddress());
++    return result;
++}
++static HRESULT hkHeap1(ID3D12Device4* device, const D3D12_HEAP_DESC* description,
++                       ID3D12ProtectedResourceSession* session, REFIID iid, void** output)
++{
++    CreationScope scope;
++    auto result = heap1(device, description, session, iid, output);
++    if (scope.outermost) ObserveHeap(result, description, output, _ReturnAddress());
++    return result;
++}
++
++VALIDATE_MEMBER_HOOK(hkCommitted1, Committed1Fn)
++VALIDATE_MEMBER_HOOK(hkCommitted2, Committed2Fn)
++VALIDATE_MEMBER_HOOK(hkCommitted3, Committed3Fn)
++VALIDATE_MEMBER_HOOK(hkHeap0, Heap0Fn)
++VALIDATE_MEMBER_HOOK(hkHeap1, Heap1Fn)
++
++inline void Install(ID3D12Device* device, Committed0Fn* baseOriginal, Committed0Fn baseHook, bool baseAlreadyHooked)
++{
++    std::lock_guard lock(installationMutex);
++    if (installed || installationAttempts >= 3 || device == nullptr) return;
++    ++installationAttempts;
++    // Prepare the fixed CPU ledger outside Present/periodic reporting.
++    if (Instance() == nullptr) RecordSkip(Skip::CounterUnavailable);
++    auto baseVtable = *reinterpret_cast<void***>(device);
++    struct Hook { PVOID* original; PVOID replacement; PVOID target; uint32_t bit; };
++    std::array<Hook, 6> hooks {{
++        { reinterpret_cast<PVOID*>(baseOriginal), reinterpret_cast<PVOID>(baseHook), baseVtable[27], 1 },
++        { reinterpret_cast<PVOID*>(&heap0), reinterpret_cast<PVOID>(hkHeap0), baseVtable[28], 2 },
++        { reinterpret_cast<PVOID*>(&committed1), reinterpret_cast<PVOID>(hkCommitted1), nullptr, 4 },
++        { reinterpret_cast<PVOID*>(&heap1), reinterpret_cast<PVOID>(hkHeap1), nullptr, 8 },
++        { reinterpret_cast<PVOID*>(&committed2), reinterpret_cast<PVOID>(hkCommitted2), nullptr, 16 },
++        { reinterpret_cast<PVOID*>(&committed3), reinterpret_cast<PVOID>(hkCommitted3), nullptr, 32 }
++    }};
++    ID3D12Device4* device4 = nullptr;
++    if (SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&device4))) && device4 != nullptr)
++    {
++        auto vtable = *reinterpret_cast<void***>(device4);
++        hooks[2].target = vtable[53]; hooks[3].target = vtable[54];
++        device4->Release();
++    }
++    ID3D12Device8* device8 = nullptr;
++    if (SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&device8))) && device8 != nullptr)
++    {
++        hooks[4].target = (*reinterpret_cast<void***>(device8))[69];
++        device8->Release();
++    }
++    ID3D12Device10* device10 = nullptr;
++    if (SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&device10))) && device10 != nullptr)
++    {
++        hooks[5].target = (*reinterpret_cast<void***>(device10))[76];
++        device10->Release();
++    }
++    uint32_t supported = 0, selected = 0, failed = 0;
++    for (size_t i = 0; i < hooks.size(); ++i)
++    {
++        auto& hook = hooks[i];
++        if (hook.target == nullptr) continue;
++        supported |= hook.bit;
++        bool duplicate = false;
++        for (size_t j = 0; j < hooks.size(); ++j)
++            if (j != i && hooks[j].target == hook.target) duplicate = true;
++        // Different COM signatures may share an unsupported-method thunk. Do
++        // not hook either signature in a collision group. A pre-existing UE
++        // hook remains its owner's responsibility and is never attached twice.
++        if (duplicate && (i != 0 || !baseAlreadyHooked)) { failed |= hook.bit; continue; }
++        selected |= hook.bit;
++        if (i != 0 || !baseAlreadyHooked) *hook.original = hook.target;
++    }
++    auto result = DetourTransactionBegin();
++    if (result == NO_ERROR)
++    {
++        result = DetourUpdateThread(GetCurrentThread());
++        for (size_t i = 0; result == NO_ERROR && i < hooks.size(); ++i)
++            if ((selected & hooks[i].bit) != 0 && (i != 0 || !baseAlreadyHooked))
++                result = DetourAttach(hooks[i].original, hooks[i].replacement);
++        if (result == NO_ERROR) result = DetourTransactionCommit();
++        else DetourTransactionAbort();
++    }
++    baseCommittedHooked = baseAlreadyHooked || (result == NO_ERROR && (selected & 1u) != 0);
++    if (result != NO_ERROR)
++    {
++        for (size_t i = 0; i < hooks.size(); ++i)
++            if (i != 0 || !baseAlreadyHooked) *hooks[i].original = nullptr;
++        failed |= selected;
++        selected = baseAlreadyHooked ? 1u : 0u;
++    }
++    else
++    {
++        installed = true;
++        for (size_t i = 0; i < hooks.size(); ++i)
++            if ((selected & hooks[i].bit) == 0 && (i != 0 || !baseAlreadyHooked)) *hooks[i].original = nullptr;
++    }
++    currentApiMask = selected;
++    RecordApiSupport(supported, selected, failed);
++    LOG_INFO("GPU allocation observation: supportedMask=0x{:X}, installedMask=0x{:X}, failedMask=0x{:X}, detour={}, threshold=1MiB, slots=4096; partial caller allocation estimates, not residency",
++             supported, selected, failed, result);
++}
++// The existing device hooks own the surrounding transaction and Committed0.
++// If any detach fails the caller aborts, retaining every original trampoline.
++inline LONG AppendDetachInTransaction()
++{
++    struct Hook { PVOID* original; PVOID replacement; uint32_t bit; };
++    const std::array<Hook, 5> hooks {{
++        { reinterpret_cast<PVOID*>(&heap0), reinterpret_cast<PVOID>(hkHeap0), 2 },
++        { reinterpret_cast<PVOID*>(&committed1), reinterpret_cast<PVOID>(hkCommitted1), 4 },
++        { reinterpret_cast<PVOID*>(&heap1), reinterpret_cast<PVOID>(hkHeap1), 8 },
++        { reinterpret_cast<PVOID*>(&committed2), reinterpret_cast<PVOID>(hkCommitted2), 16 },
++        { reinterpret_cast<PVOID*>(&committed3), reinterpret_cast<PVOID>(hkCommitted3), 32 }
++    }};
++    for (const auto& hook : hooks)
++        if ((currentApiMask & hook.bit) != 0 && *hook.original != nullptr)
++        {
++            const auto result = DetourDetach(hook.original, hook.replacement);
++            if (result != NO_ERROR) return result;
++        }
++    return NO_ERROR;
++}
++inline void FinishDetachSuccess()
++{
++    heap0 = nullptr; heap1 = nullptr;
++    committed1 = nullptr; committed2 = nullptr; committed3 = nullptr;
++    baseCommittedHooked = false;
++    currentApiMask = 0;
++    installed = false;
++    installationAttempts = 0;
++    installedApiMask.store(0, std::memory_order_release);
++}
++
++}
 diff --git a/OptiScaler/hooks/Streamline_Hooks.cpp b/OptiScaler/hooks/Streamline_Hooks.cpp
 index 52b98681..a35c15f6 100644
 --- a/OptiScaler/hooks/Streamline_Hooks.cpp
@@ -3137,8 +4641,84 @@ index 52b98681..a35c15f6 100644
  
      // Only on change, this is called whenever the game asks about the FG state
      static uint32_t lastReported = 0;
+diff --git a/OptiScaler/inputs/FG/FSR3_Dx12_FG.cpp b/OptiScaler/inputs/FG/FSR3_Dx12_FG.cpp
+index 06285943..3719cbdc 100644
+--- a/OptiScaler/inputs/FG/FSR3_Dx12_FG.cpp
++++ b/OptiScaler/inputs/FG/FSR3_Dx12_FG.cpp
+@@ -602,6 +602,7 @@ static Fsr3::FfxErrorCode hkffxFrameInterpolationDispatch(FfxFrameInterpolationC
+         return Fsr3::FFX_ERROR_NULL_DEVICE;
+     }
+ 
++    const auto constantsInternalFrame = fg->FrameCount();
+     float ratio = (float) params->interpolationRect.width / (float) params->interpolationRect.height;
+     fg->SetCameraValues(params->cameraNear, params->cameraFar, params->cameraFovAngleVertical, ratio,
+                         params->viewSpaceToMetersFactor);
+@@ -609,6 +610,8 @@ static Fsr3::FfxErrorCode hkffxFrameInterpolationDispatch(FfxFrameInterpolationC
+     fg->SetInterpolationRect(params->interpolationRect.width, params->interpolationRect.height);
+     fg->SetFrameTimeDelta(params->frameTimeDelta);
+     fg->SetReset(params->reset ? 1 : 0);
++    if (constantsInternalFrame == fg->FrameCount())
++        fg->MarkFrameConstantsReady(constantsInternalFrame);
+ 
+     if (params->currentBackBuffer_HUDLess.resource != nullptr && !fg->GetResource(FG_ResourceType::HudlessColor))
+     {
+@@ -1380,6 +1383,7 @@ void FSR3FG::SetUpscalerInputs(ID3D12GraphicsCommandList* InCmdList, NVSDK_NGX_P
+     InParameters->Get(NVSDK_NGX_Parameter_Jitter_Offset_X, &jitterX);
+     InParameters->Get(NVSDK_NGX_Parameter_Jitter_Offset_Y, &jitterY);
+ 
++    const auto constantsInternalFrame = fg->FrameCount();
+     auto aspectRatio = (float) feature->DisplayWidth() / (float) feature->DisplayHeight();
+     fg->SetCameraValues(cameraNear, cameraFar, cameraVFov, aspectRatio, meterFactor);
+     fg->SetFrameTimeDelta(State::Instance().lastFGFrameTime);
+@@ -1387,6 +1391,8 @@ void FSR3FG::SetUpscalerInputs(ID3D12GraphicsCommandList* InCmdList, NVSDK_NGX_P
+     fg->SetJitter(jitterX, jitterY);
+     fg->SetReset(reset);
+     fg->SetInterpolationRect(feature->DisplayWidth(), feature->DisplayHeight());
++    if (constantsInternalFrame == fg->FrameCount())
++        fg->MarkFrameConstantsReady(constantsInternalFrame);
+ 
+     // FG Prepare
+     UINT frameIndex;
+diff --git a/OptiScaler/inputs/FG/FfxApi_Dx12_FG.cpp b/OptiScaler/inputs/FG/FfxApi_Dx12_FG.cpp
+index b9cdcc0f..b12bcca4 100644
+--- a/OptiScaler/inputs/FG/FfxApi_Dx12_FG.cpp
++++ b/OptiScaler/inputs/FG/FfxApi_Dx12_FG.cpp
+@@ -1053,6 +1053,7 @@ ffxReturnCode_t ffxDispatch_Dx12FG(ffxContext* context, ffxDispatchDescHeader* d
+             return FFX_API_RETURN_OK;
+ 
+         //  Camera Data
++        const auto constantsInternalFrame = fg->FrameCount();
+         bool cameraDataFound = false;
+         ffxDispatchDescHeader* next = nullptr;
+         next = desc;
+@@ -1085,6 +1086,8 @@ ffxReturnCode_t ffxDispatch_Dx12FG(ffxContext* context, ffxDispatchDescHeader* d
+         fg->SetJitter(cdDesc->jitterOffset.x, cdDesc->jitterOffset.y, fIndex);
+         fg->SetMVScale(cdDesc->motionVectorScale.x, cdDesc->motionVectorScale.y, fIndex);
+         fg->SetReset(cdDesc->unused_reset ? 1 : 0, fIndex);
++        if (fIndex == fg->GetIndex() && constantsInternalFrame == fg->FrameCount())
++            fg->MarkFrameConstantsReady(constantsInternalFrame);
+ 
+         if (cdDesc->depth.resource != nullptr)
+         {
+@@ -1158,6 +1161,7 @@ ffxReturnCode_t ffxDispatch_Dx12FG(ffxContext* context, ffxDispatchDescHeader* d
+             return FFX_API_RETURN_OK;
+ 
+         //  Camera Data
++        const auto constantsInternalFrame = fg->FrameCount();
+         bool cameraDataFound = true;
+ 
+         fg->SetCameraData(cdDesc->cameraPosition, cdDesc->cameraUp, cdDesc->cameraRight, cdDesc->cameraForward, fIndex);
+@@ -1177,6 +1181,8 @@ ffxReturnCode_t ffxDispatch_Dx12FG(ffxContext* context, ffxDispatchDescHeader* d
+         fg->SetJitter(cdDesc->jitterOffset.x, cdDesc->jitterOffset.y, fIndex);
+         fg->SetMVScale(cdDesc->motionVectorScale.x, cdDesc->motionVectorScale.y, fIndex);
+         fg->SetReset(cdDesc->reset ? 1 : 0, fIndex);
++        if (fIndex == fg->GetIndex() && constantsInternalFrame == fg->FrameCount())
++            fg->MarkFrameConstantsReady(constantsInternalFrame);
+ 
+         if (cdDesc->depth.resource != nullptr)
+         {
 diff --git a/OptiScaler/inputs/FG/Streamline_Inputs_Dx12.cpp b/OptiScaler/inputs/FG/Streamline_Inputs_Dx12.cpp
-index 1015c6e9..d03ab022 100644
+index 1015c6e9..2af4282f 100644
 --- a/OptiScaler/inputs/FG/Streamline_Inputs_Dx12.cpp
 +++ b/OptiScaler/inputs/FG/Streamline_Inputs_Dx12.cpp
 @@ -4,6 +4,22 @@
@@ -3243,6 +4823,25 @@ index 1015c6e9..d03ab022 100644
          fgOutput->EvaluateState(State::Instance().currentD3D12Device, fgConstants);
  
          if (!config->FGEnabled.value_or_default())
+@@ -145,6 +176,8 @@ bool Sl_Inputs_Dx12::setConstants(const sl::Constants& values, uint32_t frameId)
+             }
+         }
+ 
++        const auto constantsInternalFrame = fgOutput->FrameCount();
++
+         // Frame data part
+         // Nukem's function, licensed under GPLv3
+         auto loadCameraMatrix = [&]()
+@@ -240,6 +273,9 @@ bool Sl_Inputs_Dx12::setConstants(const sl::Constants& values, uint32_t frameId)
+         fgOutput->SetReset(data.reset == sl::Boolean::eTrue);
+ 
+         fgOutput->SetFrameTimeDelta(static_cast<float>(State::Instance().lastFGFrameTime));
++        if (currentConstantsFrame && IsCurrentConstantsFrame(frameId) &&
++            constantsInternalFrame == fgOutput->FrameCount())
++            fgOutput->MarkFrameConstantsReady(constantsInternalFrame);
+     }
+     else
+     {
 diff --git a/OptiScaler/inputs/FG/Streamline_Inputs_Dx12.h b/OptiScaler/inputs/FG/Streamline_Inputs_Dx12.h
 index 2f669ea6..aa3c2626 100644
 --- a/OptiScaler/inputs/FG/Streamline_Inputs_Dx12.h
@@ -3255,6 +4854,132 @@ index 2f669ea6..aa3c2626 100644
  
    public:
      bool setConstants(const sl::Constants& constants, uint32_t frameId);
+diff --git a/OptiScaler/inputs/FG/Streamline_Inputs_Sl1_Dx12.cpp b/OptiScaler/inputs/FG/Streamline_Inputs_Sl1_Dx12.cpp
+index d33c946e..0c5e85cc 100644
+--- a/OptiScaler/inputs/FG/Streamline_Inputs_Sl1_Dx12.cpp
++++ b/OptiScaler/inputs/FG/Streamline_Inputs_Sl1_Dx12.cpp
+@@ -78,19 +78,22 @@ bool Sl1_Inputs_Dx12::setConstants(const sl1::Constants& constants, uint32_t fra
+     {
+         std::scoped_lock lock(_mutex);
+         lastConstants = constants;
++        lastConstantsFrame = frameIndex;
+         hasLastConstants = true;
+     }
+ 
+     return applyConstants(constants, frameIndex, id);
+ }
+ 
+-bool Sl1_Inputs_Dx12::applyConstants(const sl1::Constants& values, uint32_t frameIndex, uint32_t id)
++bool Sl1_Inputs_Dx12::applyConstants(const sl1::Constants& values, uint32_t frameIndex, uint32_t id, bool freshForFrame)
+ {
+     auto fgOutput = State::Instance().currentFG;
+ 
+     if (fgOutput == nullptr)
+         return false;
+ 
++    const auto constantsInternalFrame = fgOutput->FrameCount();
++
+     auto data = values;
+     auto config = Config::Instance();
+ 
+@@ -227,6 +230,9 @@ bool Sl1_Inputs_Dx12::applyConstants(const sl1::Constants& values, uint32_t fram
+ 
+     fgOutput->SetReset(IsTrue(data.reset));
+     fgOutput->SetFrameTimeDelta(static_cast<float>(State::Instance().lastFGFrameTime));
++    if (freshForFrame && (frameIndex == 0 || frameIndex == constantsInternalFrame) &&
++        constantsInternalFrame == fgOutput->FrameCount())
++        fgOutput->MarkFrameConstantsReady(constantsInternalFrame);
+ 
+     return true;
+ }
+@@ -365,6 +371,7 @@ bool Sl1_Inputs_Dx12::evaluateFeature(sl1::CommandBuffer* cmdBuffer, sl1::Featur
+ 
+     bool handled = false;
+     bool applyLastConstants = false;
++    bool cachedConstantsFresh = false;
+ 
+     if (feature == sl1::Feature::eFeatureReflex)
+     {
+@@ -380,6 +387,7 @@ bool Sl1_Inputs_Dx12::evaluateFeature(sl1::CommandBuffer* cmdBuffer, sl1::Featur
+         {
+             constants = lastConstants;
+             applyLastConstants = true;
++            cachedConstantsFresh = lastConstantsFrame != 0 && lastConstantsFrame == frameIndex;
+         }
+ 
+         LOG_TRACE("SL1 evaluateFeature feature: {}, frameIndex: {}, id: {}, cmd: {:X}, cachedTags {}",
+@@ -415,7 +423,7 @@ bool Sl1_Inputs_Dx12::evaluateFeature(sl1::CommandBuffer* cmdBuffer, sl1::Featur
+ 
+     // Re-apply constants after resources, because MV scale depends on the tagged MV resource resolution.
+     if (applyLastConstants)
+-        applyConstants(constants, frameIndex, id);
++        applyConstants(constants, frameIndex, id, cachedConstantsFresh);
+ 
+     return handled;
+ }
+diff --git a/OptiScaler/inputs/FG/Streamline_Inputs_Sl1_Dx12.h b/OptiScaler/inputs/FG/Streamline_Inputs_Sl1_Dx12.h
+index cbd34ea4..46a52840 100644
+--- a/OptiScaler/inputs/FG/Streamline_Inputs_Sl1_Dx12.h
++++ b/OptiScaler/inputs/FG/Streamline_Inputs_Sl1_Dx12.h
+@@ -24,6 +24,7 @@ class Sl1_Inputs_Dx12
+     bool infiniteDepth = false;
+     bool hasLastConstants = false;
+     sl1::Constants lastConstants {};
++    uint32_t lastConstantsFrame = 0;
+ 
+     std::mutex _mutex;
+     std::unordered_map<uint64_t, CachedTag> _tags {};
+@@ -44,7 +45,7 @@ class Sl1_Inputs_Dx12
+     void CheckForFrame(IFGFeature_Dx12* fg, uint32_t frameIndex);
+     int IndexForFrameId(uint32_t frameIndex) const;
+ 
+-    bool applyConstants(const sl1::Constants& values, uint32_t frameIndex, uint32_t id);
++    bool applyConstants(const sl1::Constants& values, uint32_t frameIndex, uint32_t id, bool freshForFrame = true);
+     bool reportCachedResource(const CachedTag& tag, ID3D12GraphicsCommandList* cmdBuffer, uint32_t frameIndex);
+ 
+   public:
+diff --git a/OptiScaler/inputs/FG/Upscaler_Inputs_Dx11wDx12.cpp b/OptiScaler/inputs/FG/Upscaler_Inputs_Dx11wDx12.cpp
+index 47cad2c8..4574b88b 100644
+--- a/OptiScaler/inputs/FG/Upscaler_Inputs_Dx11wDx12.cpp
++++ b/OptiScaler/inputs/FG/Upscaler_Inputs_Dx11wDx12.cpp
+@@ -183,6 +183,7 @@ void UpscalerInputsDx11wDx12::UpscaleStart(NVSDK_NGX_Parameter* InParameters, IF
+ 
+     fg->StartNewFrame();
+ 
++    const auto constantsInternalFrame = fg->FrameCount();
+     auto aspectRatio = (float) feature->DisplayWidth() / (float) feature->DisplayHeight();
+     fg->SetCameraValues(cameraNear, cameraFar, cameraVFov, aspectRatio, meterFactor);
+     fg->SetFrameTimeDelta(State::Instance().lastFGFrameTime);
+@@ -190,6 +191,8 @@ void UpscalerInputsDx11wDx12::UpscaleStart(NVSDK_NGX_Parameter* InParameters, IF
+     fg->SetJitter(jitterX, jitterY);
+     fg->SetReset(reset);
+     fg->SetInterpolationRect(feature->DisplayWidth(), feature->DisplayHeight());
++    if (constantsInternalFrame == fg->FrameCount())
++        fg->MarkFrameConstantsReady(constantsInternalFrame);
+ 
+     if (State::Instance().isShuttingDown || !fg->IsActive() || !Config::Instance()->FGEnabled.value_or_default() ||
+         State::Instance().currentSwapchain == nullptr)
+diff --git a/OptiScaler/inputs/FG/Upscaler_Inputs_Dx12.cpp b/OptiScaler/inputs/FG/Upscaler_Inputs_Dx12.cpp
+index 5d30fff6..def9e510 100644
+--- a/OptiScaler/inputs/FG/Upscaler_Inputs_Dx12.cpp
++++ b/OptiScaler/inputs/FG/Upscaler_Inputs_Dx12.cpp
+@@ -127,6 +127,7 @@ void UpscalerInputsDx12::UpscaleStart(ID3D12GraphicsCommandList* InCmdList, NVSD
+ 
+     fg->StartNewFrame();
+ 
++    const auto constantsInternalFrame = fg->FrameCount();
+     auto aspectRatio = (float) feature->DisplayWidth() / (float) feature->DisplayHeight();
+     fg->SetCameraValues(cameraNear, cameraFar, cameraVFov, aspectRatio, meterFactor);
+     fg->SetFrameTimeDelta(State::Instance().lastFGFrameTime);
+@@ -134,6 +135,8 @@ void UpscalerInputsDx12::UpscaleStart(ID3D12GraphicsCommandList* InCmdList, NVSD
+     fg->SetJitter(jitterX, jitterY);
+     fg->SetReset(reset);
+     fg->SetInterpolationRect(feature->DisplayWidth(), feature->DisplayHeight());
++    if (constantsInternalFrame == fg->FrameCount())
++        fg->MarkFrameConstantsReady(constantsInternalFrame);
+ 
+     Hudfix_Dx12::UpscaleStart();
+ 
 diff --git a/OptiScaler/menu/input/input_system.cpp b/OptiScaler/menu/input/input_system.cpp
 index ab0bc509..891f9fa1 100644
 --- a/OptiScaler/menu/input/input_system.cpp
@@ -3884,18 +5609,209 @@ index 44369f14..2b9778c0 100644
  
      if (result != NO_ERROR)
      {
+diff --git a/OptiScaler/misc/GpuAllocationDiagnostics.h b/OptiScaler/misc/GpuAllocationDiagnostics.h
+new file mode 100644
+index 00000000..c53a092b
+--- /dev/null
++++ b/OptiScaler/misc/GpuAllocationDiagnostics.h
+@@ -0,0 +1,182 @@
++#pragma once
++
++#include <array>
++#include <atomic>
++#include <cstdint>
++#include <cstddef>
++#include <limits>
++#include <mutex>
++#include <new>
++
++// Partial accounting of observed creation callers, not logical ownership or
++// residency. Explicit heaps and committed resources are counted; placed and
++// reserved resources are not added again. No game object pointers are retained.
++namespace GpuAllocationDiagnostics
++{
++inline constexpr uint64_t MinimumTrackedBytes = 1024 * 1024;
++inline constexpr size_t SlotCount = 4096;
++enum class Caller : uint8_t { Game, XeFG, XeSS, FFX, OptiScaler, Streamline, Other, Unknown, Count };
++inline constexpr size_t CallerCount = static_cast<size_t>(Caller::Count);
++enum class Kind : uint8_t { Committed, Heap };
++enum class MemoryClass : uint8_t { Default, CpuVisible, Unclassified };
++enum class Skip : uint8_t { Small, PoolFull, NotifierUnsupported, RegistrationFailed, AllocationFailed, SizeUnknown,
++                            PinFailed, CounterUnavailable, Count };
++enum class Api : uint32_t { Committed0 = 1u, Heap0 = 2u, Committed1 = 4u, Heap1 = 8u,
++                            Committed2 = 16u, Committed3 = 32u };
++
++inline const char* CallerName(Caller caller)
++{
++    constexpr const char* names[] = { "game", "xefg", "xess", "ffx", "optiscaler", "streamline", "other", "unknown" };
++    const auto index = static_cast<size_t>(caller);
++    return names[index < CallerCount ? index : CallerCount - 1];
++}
++
++struct CallerSnapshot
++{
++    uint64_t liveCommittedBytes = 0, liveHeapBytes = 0;
++    // These are subsets of liveCommittedBytes + liveHeapBytes, not extra heaps.
++    uint64_t liveDefaultBytes = 0, liveCpuVisibleBytes = 0, liveUnclassifiedBytes = 0;
++    // Peak includes briefly observed, successfully created allocations whose
++    // notifier registration later fails; the live and cumulative tracked totals
++    // are rolled back in that case. It is never a peak-resident-VRAM value.
++    uint64_t liveCount = 0, peakBytes = 0, allocatedBytes = 0, releasedBytes = 0, allocations = 0, releases = 0;
++};
++struct Snapshot
++{
++    std::array<CallerSnapshot, CallerCount> callers {};
++    uint64_t smallSkipped = 0, poolExhausted = 0, notifierUnsupported = 0, registrationFailed = 0;
++    uint64_t allocationFailed = 0, sizeUnknown = 0, pinFailed = 0, counterUnavailable = 0;
++    uint32_t supportedApiMask = 0, installedApiMask = 0, failedApiMask = 0;
++};
++
++inline std::array<std::atomic<uint64_t>, static_cast<size_t>(Skip::Count)> skipped {};
++inline std::atomic<uint32_t> supportedApiMask { 0 }, installedApiMask { 0 }, failedApiMask { 0 };
++inline void RecordSkip(Skip reason) { skipped[static_cast<size_t>(reason)].fetch_add(1, std::memory_order_relaxed); }
++inline void RecordApiSupport(uint32_t supported, uint32_t installed, uint32_t failed)
++{
++    supportedApiMask.fetch_or(supported, std::memory_order_relaxed);
++    installedApiMask.store(installed, std::memory_order_release);
++    failedApiMask.fetch_or(failed, std::memory_order_relaxed);
++}
++
++class Ledger
++{
++    struct Slot
++    {
++        uint64_t generation = 0, bytes = 0;
++        Caller caller = Caller::Unknown;
++        Kind kind = Kind::Committed;
++        MemoryClass memory = MemoryClass::Unclassified;
++        bool active = false;
++    };
++    std::mutex mutex;
++    std::array<Slot, SlotCount> slots {};
++    std::array<uint16_t, SlotCount> freeSlots {};
++    std::array<CallerSnapshot, CallerCount> callers {};
++    size_t available = SlotCount;
++    uint64_t generation = 0;
++
++    bool Remove(uint64_t token, bool cancelled)
++    {
++        const auto index = static_cast<size_t>(token & (SlotCount - 1));
++        const auto expectedGeneration = token >> 12;
++        if (expectedGeneration == 0)
++            return false;
++        std::lock_guard lock(mutex);
++        auto& slot = slots[index];
++        if (!slot.active || slot.generation != expectedGeneration)
++            return false;
++        auto& totals = callers[static_cast<size_t>(slot.caller)];
++        auto& typeBytes = slot.kind == Kind::Committed ? totals.liveCommittedBytes : totals.liveHeapBytes;
++        typeBytes -= slot.bytes;
++        auto& memoryBytes = slot.memory == MemoryClass::Default ? totals.liveDefaultBytes :
++                            slot.memory == MemoryClass::CpuVisible ? totals.liveCpuVisibleBytes : totals.liveUnclassifiedBytes;
++        memoryBytes -= slot.bytes;
++        --totals.liveCount;
++        if (cancelled)
++        {
++            totals.allocatedBytes -= slot.bytes;
++            --totals.allocations;
++        }
++        else
++        {
++            totals.releasedBytes += slot.bytes;
++            ++totals.releases;
++        }
++        slot.active = false;
++        freeSlots[available++] = static_cast<uint16_t>(index);
++        return true;
++    }
++
++  public:
++    Ledger()
++    {
++        for (size_t i = 0; i < SlotCount; ++i)
++            freeSlots[i] = static_cast<uint16_t>(SlotCount - i - 1);
++    }
++    uint64_t Track(Caller caller, Kind kind, MemoryClass memory, uint64_t bytes)
++    {
++        if (bytes < MinimumTrackedBytes || bytes == std::numeric_limits<uint64_t>::max())
++            return 0;
++        std::lock_guard lock(mutex);
++        // Tokens carry a generation and 12-bit slot index. Never wrap a token.
++        if (available == 0 || generation == (std::numeric_limits<uint64_t>::max() >> 12))
++        {
++            RecordSkip(Skip::PoolFull);
++            return 0;
++        }
++        const auto index = freeSlots[--available];
++        auto& slot = slots[index];
++        slot = { ++generation, bytes, caller, kind, memory, true };
++        auto& totals = callers[static_cast<size_t>(caller)];
++        (kind == Kind::Committed ? totals.liveCommittedBytes : totals.liveHeapBytes) += bytes;
++        auto& memoryBytes = memory == MemoryClass::Default ? totals.liveDefaultBytes :
++                            memory == MemoryClass::CpuVisible ? totals.liveCpuVisibleBytes : totals.liveUnclassifiedBytes;
++        memoryBytes += bytes;
++        ++totals.liveCount;
++        ++totals.allocations;
++        totals.allocatedBytes += bytes;
++        const auto live = totals.liveCommittedBytes + totals.liveHeapBytes;
++        if (live > totals.peakBytes)
++            totals.peakBytes = live;
++        // Publish the fully-accounted slot before RegisterDestructionCallback.
++        return (slot.generation << 12) | index;
++    }
++    bool Retire(uint64_t token) { return Remove(token, false); }
++    bool Cancel(uint64_t token) { return Remove(token, true); }
++    bool TryRead(std::array<CallerSnapshot, CallerCount>& destination)
++    {
++        std::unique_lock lock(mutex, std::try_to_lock);
++        if (!lock.owns_lock())
++            return false;
++        destination = callers;
++        return true;
++    }
++};
++
++// Deliberately process-lived: callbacks may arrive during static destruction.
++// This is one fixed CPU allocation; it retains no COM or GPU object references.
++inline Ledger* Instance()
++{
++    static Ledger* const ledger = new (std::nothrow) Ledger;
++    return ledger;
++}
++inline bool TryReadSnapshot(Snapshot& snapshot)
++{
++    auto ledger = Instance();
++    if (ledger == nullptr || !ledger->TryRead(snapshot.callers))
++        return false;
++    snapshot.smallSkipped = skipped[static_cast<size_t>(Skip::Small)].load(std::memory_order_relaxed);
++    snapshot.poolExhausted = skipped[static_cast<size_t>(Skip::PoolFull)].load(std::memory_order_relaxed);
++    snapshot.notifierUnsupported = skipped[static_cast<size_t>(Skip::NotifierUnsupported)].load(std::memory_order_relaxed);
++    snapshot.registrationFailed = skipped[static_cast<size_t>(Skip::RegistrationFailed)].load(std::memory_order_relaxed);
++    snapshot.allocationFailed = skipped[static_cast<size_t>(Skip::AllocationFailed)].load(std::memory_order_relaxed);
++    snapshot.sizeUnknown = skipped[static_cast<size_t>(Skip::SizeUnknown)].load(std::memory_order_relaxed);
++    snapshot.pinFailed = skipped[static_cast<size_t>(Skip::PinFailed)].load(std::memory_order_relaxed);
++    snapshot.counterUnavailable = skipped[static_cast<size_t>(Skip::CounterUnavailable)].load(std::memory_order_relaxed);
++    snapshot.supportedApiMask = supportedApiMask.load(std::memory_order_relaxed);
++    snapshot.installedApiMask = installedApiMask.load(std::memory_order_relaxed);
++    snapshot.failedApiMask = failedApiMask.load(std::memory_order_relaxed);
++    return true;
++}
++}
 diff --git a/OptiScaler/misc/LongSessionMonitor.h b/OptiScaler/misc/LongSessionMonitor.h
 new file mode 100644
-index 00000000..b1fbd5e3
+index 00000000..bee41e65
 --- /dev/null
 +++ b/OptiScaler/misc/LongSessionMonitor.h
-@@ -0,0 +1,365 @@
+@@ -0,0 +1,492 @@
 +#pragma once
 +
 +#include "LongSessionState.h"
 +#include "LongSessionTiming.h"
 +#include "XeFGResourceDiagnostics.h"
 +#include "XeFGWorkDiagnostics.h"
++#include "XeFGPresentDiagnostics.h"
++#include "GpuAllocationDiagnostics.h"
++#include "ResidencyDiagnostics.h"
 +#include "Logger.h"
 +
 +#include <array>
@@ -3918,7 +5834,10 @@ index 00000000..b1fbd5e3
 +    std::uint64_t nonlocalUsage = 0;
 +    std::uint64_t nonlocalBudget = 0;
 +    std::uint64_t processPrivateBytes = 0;
++    std::uint64_t processWorkingSetBytes = 0;
 +    std::uint64_t availablePhysicalBytes = 0;
++    std::uint64_t processCommitLimitBytes = 0;
++    std::uint64_t processAvailableCommitBytes = 0;
 +    double presentMaxMs = 0.0;
 +    double gapMaxMs = 0.0;
 +    std::array<double, static_cast<unsigned>(WaitStage::Count)> waitMaxMs {};
@@ -3997,13 +5916,22 @@ index 00000000..b1fbd5e3
 +            sample.processValid = _getProcessMemoryInfo(GetCurrentProcess(),
 +                reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&memory), sizeof(memory)) != FALSE;
 +            if (sample.processValid)
++            {
 +                sample.processPrivateBytes = static_cast<std::uint64_t>(memory.PrivateUsage);
++                sample.processWorkingSetBytes = static_cast<std::uint64_t>(memory.WorkingSetSize);
++            }
 +        }
 +        MEMORYSTATUSEX physical {};
 +        physical.dwLength = sizeof(physical);
 +        sample.physicalValid = GlobalMemoryStatusEx(&physical) != FALSE;
 +        if (sample.physicalValid)
++        {
 +            sample.availablePhysicalBytes = physical.ullAvailPhys;
++            // MEMORYSTATUSEX reports the smaller system/process commit limit
++            // and the amount THIS process may commit; neither is free VRAM.
++            sample.processCommitLimitBytes = physical.ullTotalPageFile;
++            sample.processAvailableCommitBytes = physical.ullAvailPageFile;
++        }
 +
 +        const auto oldPressure = _pressure.Value();
 +        sample.pressure = _pressure.Update(sample.localUsage, sample.localValid ? sample.localBudget : 0);
@@ -4124,15 +6052,21 @@ index 00000000..b1fbd5e3
 +        // Do not retry COM discovery on every frame or add a second DXGI factory path.
 +    }
 +
-+    void Log(const Sample& sample, bool changed)
++    bool BeginLogEntry()
 +    {
 +        if (!_logBudget.Take())
-+            return;
++            return false;
 +        if (_logBudget.IsFinalEntry())
 +        {
 +            LOG_WARN("[LongSession] Log entry limit reached; bounded in-memory sampling continues.");
-+            return;
++            return false;
 +        }
++        return true;
++    }
++
++    void Log(const Sample& sample, bool changed)
++    {
++        if (!BeginLogEntry()) return;
 +        constexpr double mib = 1024.0 * 1024.0;
 +        const auto ownedCopies = XeFGDiagnostics::GlobalSnapshot();
 +        const auto observers = XeFGDiagnostics::ReadObserverSnapshot();
@@ -4154,9 +6088,12 @@ index 00000000..b1fbd5e3
 +        LOG_WARN("[LongSession] t={}s changed={} pressure={} hitch={} "
 +                 "local_valid={} local_MiB={:.1f}/{:.1f} nonlocal_valid={} nonlocal_MiB={:.1f}/{:.1f} "
 +                 "private_valid={} private_MiB={:.1f} ram_valid={} available_ram_MiB={:.1f} "
++                 "process_working_set_MiB={:.1f} process_commit_limit_available_MiB={:.1f}/{:.1f} "
++                 "local_headroom_MiB={:.1f} timing_scope=since_previous_log "
 +                 "present_max_ms={:.2f} gap_max_ms={:.2f} "
 +                 "pacing_max_ms={:.2f} fence_max_ms={:.2f} tracking_max_ms={:.2f} fg_call_max_ms={:.2f} "
 +                 "lifecycle_cpu_max_ms={:.2f} native_present_cpu_max_ms={:.2f} "
++                 "provider_status_cpu_max_ms={:.2f} provider_status_calls={} "
 +                 "timing_calls_pacing_fence_tracking_fg_lifecycle_native={}/{}/{}/{}/{}/{} "
 +                 "xefg_scope=owned_resourceCopy_global xefg_live_peak_copies={}/{} "
 +                 "xefg_live_peak_alloc_est_MiB={:.2f}/{:.2f} xefg_unknown_size_copies={} "
@@ -4174,9 +6111,13 @@ index 00000000..b1fbd5e3
 +                 sample.nonlocalValid, sample.nonlocalUsage / mib, sample.nonlocalBudget / mib,
 +                 sample.processValid, sample.processPrivateBytes / mib,
 +                 sample.physicalValid, sample.availablePhysicalBytes / mib,
++                 sample.processWorkingSetBytes / mib, sample.processCommitLimitBytes / mib,
++                 sample.processAvailableCommitBytes / mib,
++                 (static_cast<double>(sample.localBudget) - static_cast<double>(sample.localUsage)) / mib,
 +                 sample.presentMaxMs, sample.gapMaxMs,
 +                 sample.waitMaxMs[0], sample.waitMaxMs[1], sample.waitMaxMs[2], sample.waitMaxMs[3],
 +                 sample.waitMaxMs[4], sample.waitMaxMs[5],
++                 sample.waitMaxMs[6], sample.waitCalls[6],
 +                 sample.waitCalls[0], sample.waitCalls[1], sample.waitCalls[2], sample.waitCalls[3],
 +                 sample.waitCalls[4], sample.waitCalls[5],
 +                 ownedCopies.liveCopies, ownedCopies.peakCopies,
@@ -4194,6 +6135,105 @@ index 00000000..b1fbd5e3
 +                 ageKnown, pendingAgeMs, XeFGDiagnostics::CleanupStateName(work.state),
 +                 XeFGDiagnostics::CleanupReasonName(work.reason),
 +                 work.cleanupAttempts, work.cleanupDeferred, work.cleanupCompleted, work.cleanupRecovered);
++        LogProvider(sample.elapsedMs);
++        LogAllocations(sample.elapsedMs);
++    }
++
++    void LogProvider(std::uint64_t elapsedMs)
++    {
++        if (!BeginLogEntry()) return;
++        const auto p = XeFGDiagnostics::ReadPresentSnapshot();
++        constexpr double mib = 1024.0 * 1024.0;
++        // framesPresented means queued for presentation, not GPU completion or
++        // measured display FPS. TEST/overlapping/failed status samples are excluded.
++        LOG_WARN("[XeFGPresent] t={}s scope=process_cumulative sdk_version_valid={} sdk_version={}.{}.{} "
++                 "native_calls_test_fail_nonzero={}/{}/{}/{} query_unavailable_success_warning_error={}/{}/{}/{} "
++                 "ambiguous={} valid_samples={} enabled_disabled={}/{} frame_result_success_warning_error={}/{}/{} "
++                 "sdk_queued_frames_total={} sdk_queued_frames_hist_0_1_2_3_4_5_6_more={}/{}/{}/{}/{}/{}/{}/{} "
++                 "last_native_query_frame={}/{}/{} last_nonzero_query_frame={}/{} last_queued_enabled={}/{} "
++                 "activation_enable_disable_warn_error={}/{}/{}/{} activation_reason_normal_recoveryoff_recoveryon_lifecycleoff_restore_xell={}/{}/{}/{}/{}/{} "
++                 "activation_last_reason_result={}/{} activation_known_requested_accepted={}/{}/{} "
++                 "interpolation_units=extra_frames interpolation_known_max_config_explicit_active={}/{}/{}/{}/{} "
++                 "sdk_required_heaps_valid={} sdk_required_buffer_texture_constant_MiB={:.2f}/{:.2f}/{:.2f}",
++                 elapsedMs / 1000, p.versionKnown, p.versionMajor, p.versionMinor, p.versionPatch,
++                 p.calls, p.testCalls, p.nativeFailures, p.nativeNonzeroSuccess,
++                 p.apiUnavailable, p.querySuccess, p.queryWarnings, p.queryErrors,
++                 p.ambiguous, p.validSamples, p.enabledSamples, p.disabledSamples,
++                 p.frameSuccess, p.frameWarnings, p.frameErrors, p.queuedFrames,
++                 p.queuedHistogram[0], p.queuedHistogram[1], p.queuedHistogram[2], p.queuedHistogram[3],
++                 p.queuedHistogram[4], p.queuedHistogram[5], p.queuedHistogram[6], p.queuedHistogram[7],
++                 p.lastNative, p.lastQuery, p.lastFrameResult, p.lastNonzeroQuery, p.lastNonzeroFrameResult,
++                 p.lastQueuedFrames, p.lastEnabled,
++                 p.enableRequests, p.disableRequests, p.activationWarnings, p.activationErrors,
++                 p.activationReasons[0], p.activationReasons[1], p.activationReasons[2],
++                 p.activationReasons[3], p.activationReasons[4], p.activationReasons[5],
++                 static_cast<unsigned>(p.lastActivationReason), p.lastActivationResult,
++                 p.activationKnown, p.lastRequestedEnabled, p.lastAcceptedEnabled,
++                 p.interpolationKnown, p.maxInitializedInterpolations, p.configuredInterpolations, p.configuredExplicit, p.activeInterpolations,
++                 p.heapRequirementsKnown, p.requiredBufferBytes / mib, p.requiredTextureBytes / mib,
++                 p.requiredConstantBytes / mib);
++        if (!BeginLogEntry()) return;
++        LOG_WARN("[XeFGInputs] t={}s scope=process_cumulative order=depth_velocity_hudless_ui_distortion_other "
++                 "accepted={}/{}/{}/{}/{}/{} rejected={}/{}/{}/{}/{}/{} "
++                 "sdk_tag_accepted={}/{}/{}/{}/{}/{} sdk_tag_rejected={}/{}/{}/{}/{}/{} "
++                 "sdk_tag_warning={} sdk_tag_last_nonzero={}/{} "
++                 "reasons_order=accepted_admission_context_inactive_invalid_index_duplicate_unsupported_observer_copy_cmdlist_provider_backoff_stale_other "
++                 "reasons={}/{}/{}/{}/{}/{}/{}/{}/{}/{}/{}/{}/{}/{}/{}",
++                 elapsedMs / 1000,
++                 p.inputAccepted[0], p.inputAccepted[1], p.inputAccepted[2], p.inputAccepted[3], p.inputAccepted[4], p.inputAccepted[5],
++                 p.inputRejected[0], p.inputRejected[1], p.inputRejected[2], p.inputRejected[3], p.inputRejected[4], p.inputRejected[5],
++                 p.tagsAccepted[0], p.tagsAccepted[1], p.tagsAccepted[2], p.tagsAccepted[3], p.tagsAccepted[4], p.tagsAccepted[5],
++                 p.tagsRejected[0], p.tagsRejected[1], p.tagsRejected[2], p.tagsRejected[3], p.tagsRejected[4], p.tagsRejected[5],
++                 p.tagWarnings, p.lastTagResult, p.lastNonzeroTagResult,
++                 p.inputReasons[0], p.inputReasons[1], p.inputReasons[2], p.inputReasons[3], p.inputReasons[4],
++                 p.inputReasons[5], p.inputReasons[6], p.inputReasons[7], p.inputReasons[8], p.inputReasons[9],
++                 p.inputReasons[10], p.inputReasons[11], p.inputReasons[12], p.inputReasons[13], p.inputReasons[14]);
++    }
++
++    void LogAllocations(std::uint64_t elapsedMs)
++    {
++        if (!BeginLogEntry()) return;
++        GpuAllocationDiagnostics::Snapshot a;
++        const bool valid = GpuAllocationDiagnostics::TryReadSnapshot(a);
++        ResidencyDiagnostics::Snapshot r;
++        const bool residencyValid = ResidencyDiagnostics::TryReadSnapshot(r);
++        constexpr double mib = 1024.0 * 1024.0;
++        const auto& c = a.callers;
++        // Partial observed creation provenance only, not all allocations or residency.
++        // Default/CPU-visible/unclassified partition committed+heap, not extra bytes.
++        LOG_WARN("[GpuAlloc] t={}s valid={} scope=partial_created_ge1MiB_not_residency "
++                 "caller_order=game_xefg_xess_ffx_optiscaler_streamline_other_unknown "
++                 "api_supported_ever_installed_now_failed_ever={:X}/{:X}/{:X} "
++                 "skip_small_full_notifier_registration_alloc_size_pin_counter={}/{}/{}/{}/{}/{}/{}/{} "
++                 "committed_live_MiB={:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f} "
++                 "heap_live_MiB={:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f} "
++                 "default_live_MiB={:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f} "
++                 "cpu_visible_live_MiB={:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f} "
++                 "unclassified_live_MiB={:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f} "
++                 "live_counts={}/{}/{}/{}/{}/{}/{}/{} "
++                 "peak_MiB={:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f} "
++                 "cum_alloc_count={}/{}/{}/{}/{}/{}/{}/{} "
++                 "cum_release_count={}/{}/{}/{}/{}/{}/{}/{} "
++                 "cum_alloc_MiB={:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f} "
++                 "cum_release_MiB={:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f} "
++                 "residency_valid={} residency_calls_fail_masked={}/{}/{} residency_last_original_hr={:08X} "
++                 "residency_last_caller_objects_masked={}/{}/{}",
++                 elapsedMs / 1000, valid, a.supportedApiMask, a.installedApiMask, a.failedApiMask,
++                 a.smallSkipped, a.poolExhausted, a.notifierUnsupported, a.registrationFailed,
++                 a.allocationFailed, a.sizeUnknown, a.pinFailed, a.counterUnavailable,
++                 c[0].liveCommittedBytes / mib, c[1].liveCommittedBytes / mib, c[2].liveCommittedBytes / mib, c[3].liveCommittedBytes / mib, c[4].liveCommittedBytes / mib, c[5].liveCommittedBytes / mib, c[6].liveCommittedBytes / mib, c[7].liveCommittedBytes / mib,
++                 c[0].liveHeapBytes / mib, c[1].liveHeapBytes / mib, c[2].liveHeapBytes / mib, c[3].liveHeapBytes / mib, c[4].liveHeapBytes / mib, c[5].liveHeapBytes / mib, c[6].liveHeapBytes / mib, c[7].liveHeapBytes / mib,
++                 c[0].liveDefaultBytes / mib, c[1].liveDefaultBytes / mib, c[2].liveDefaultBytes / mib, c[3].liveDefaultBytes / mib, c[4].liveDefaultBytes / mib, c[5].liveDefaultBytes / mib, c[6].liveDefaultBytes / mib, c[7].liveDefaultBytes / mib,
++                 c[0].liveCpuVisibleBytes / mib, c[1].liveCpuVisibleBytes / mib, c[2].liveCpuVisibleBytes / mib, c[3].liveCpuVisibleBytes / mib, c[4].liveCpuVisibleBytes / mib, c[5].liveCpuVisibleBytes / mib, c[6].liveCpuVisibleBytes / mib, c[7].liveCpuVisibleBytes / mib,
++                 c[0].liveUnclassifiedBytes / mib, c[1].liveUnclassifiedBytes / mib, c[2].liveUnclassifiedBytes / mib, c[3].liveUnclassifiedBytes / mib, c[4].liveUnclassifiedBytes / mib, c[5].liveUnclassifiedBytes / mib, c[6].liveUnclassifiedBytes / mib, c[7].liveUnclassifiedBytes / mib,
++                 c[0].liveCount, c[1].liveCount, c[2].liveCount, c[3].liveCount, c[4].liveCount, c[5].liveCount, c[6].liveCount, c[7].liveCount,
++                 c[0].peakBytes / mib, c[1].peakBytes / mib, c[2].peakBytes / mib, c[3].peakBytes / mib, c[4].peakBytes / mib, c[5].peakBytes / mib, c[6].peakBytes / mib, c[7].peakBytes / mib,
++                 c[0].allocations, c[1].allocations, c[2].allocations, c[3].allocations, c[4].allocations, c[5].allocations, c[6].allocations, c[7].allocations,
++                 c[0].releases, c[1].releases, c[2].releases, c[3].releases, c[4].releases, c[5].releases, c[6].releases, c[7].releases,
++                 c[0].allocatedBytes / mib, c[1].allocatedBytes / mib, c[2].allocatedBytes / mib, c[3].allocatedBytes / mib, c[4].allocatedBytes / mib, c[5].allocatedBytes / mib, c[6].allocatedBytes / mib, c[7].allocatedBytes / mib,
++                 c[0].releasedBytes / mib, c[1].releasedBytes / mib, c[2].releasedBytes / mib, c[3].releasedBytes / mib, c[4].releasedBytes / mib, c[5].releasedBytes / mib, c[6].releasedBytes / mib, c[7].releasedBytes / mib,
++                 residencyValid, r.calls, r.failures, r.compatibilityMasks, static_cast<std::uint32_t>(r.lastFailure),
++                 ResidencyDiagnostics::CallerName(r.lastCaller), r.lastObjects, r.lastMasked);
 +    }
 +
 +    SRWLOCK _lock = SRWLOCK_INIT;
@@ -4368,10 +6408,10 @@ index 00000000..7c79aa8d
 +} // namespace LongSession
 diff --git a/OptiScaler/misc/LongSessionTiming.h b/OptiScaler/misc/LongSessionTiming.h
 new file mode 100644
-index 00000000..35022c67
+index 00000000..8a482949
 --- /dev/null
 +++ b/OptiScaler/misc/LongSessionTiming.h
-@@ -0,0 +1,72 @@
+@@ -0,0 +1,73 @@
 +#pragma once
 +
 +#include <array>
@@ -4393,6 +6433,7 @@ index 00000000..35022c67
 +    FrameGeneration,
 +    Lifecycle,
 +    NativePresent,
++    ProviderStatus,
 +    Count
 +};
 +
@@ -4444,6 +6485,408 @@ index 00000000..35022c67
 +};
 +
 +} // namespace LongSession
+diff --git a/OptiScaler/misc/ResidencyDiagnostics.h b/OptiScaler/misc/ResidencyDiagnostics.h
+new file mode 100644
+index 00000000..f5d61d52
+--- /dev/null
++++ b/OptiScaler/misc/ResidencyDiagnostics.h
+@@ -0,0 +1,87 @@
++#pragma once
++#include <array>
++#include <atomic>
++#include <cstdint>
++#include <cstddef>
++#include <mutex>
++
++namespace ResidencyDiagnostics
++{
++enum class Caller : uint8_t { XeFG, XeSS, Other, Unknown };
++struct Snapshot
++{
++    uint64_t calls = 0, failures = 0, compatibilityMasks = 0;
++    int32_t lastFailure = 0;
++    uint32_t lastObjects = 0;
++    Caller lastCaller = Caller::Unknown;
++    bool lastMasked = false;
++};
++inline std::atomic<uint64_t> calls { 0 }, failures { 0 }, compatibilityMasks { 0 };
++inline std::array<std::atomic<uint32_t>, 8> logCounts {};
++inline std::mutex detailMutex;
++inline Snapshot lastDetail;
++inline bool ShouldApplyCompatibility(int32_t result, Caller caller, bool knownAmd)
++{
++    return result == static_cast<int32_t>(0x80070057u) && knownAmd &&
++           (caller == Caller::XeFG || caller == Caller::XeSS);
++}
++inline size_t FailureClass(int32_t result, bool masked)
++{
++    if (masked) return 0;
++    switch (static_cast<uint32_t>(result))
++    {
++    case 0x80070057u: return 1; // E_INVALIDARG
++    case 0x8007000Eu: return 2; // E_OUTOFMEMORY
++    case 0x887A0005u: return 3; // DXGI_ERROR_DEVICE_REMOVED
++    case 0x887A0006u: return 4; // DXGI_ERROR_DEVICE_HUNG
++    case 0x887A0007u: return 5; // DXGI_ERROR_DEVICE_RESET
++    case 0x887A0001u: return 6; // DXGI_ERROR_INVALID_CALL
++    default: return 7;
++    }
++}
++// No COM calls or input-array reads. Four logs per error class, 32 total, so
++// repeated compatibility failures cannot hide a later device-removed error.
++inline bool Record(int32_t originalResult, Caller caller, uint32_t objects, bool masked)
++{
++    calls.fetch_add(1, std::memory_order_relaxed);
++    if (originalResult >= 0)
++        return false;
++    failures.fetch_add(1, std::memory_order_relaxed);
++    if (masked)
++        compatibilityMasks.fetch_add(1, std::memory_order_relaxed);
++    {
++        std::lock_guard lock(detailMutex);
++        lastDetail.lastFailure = originalResult;
++        lastDetail.lastObjects = objects;
++        lastDetail.lastCaller = caller;
++        lastDetail.lastMasked = masked;
++    }
++    auto& logs = logCounts[FailureClass(originalResult, masked)];
++    auto count = logs.load(std::memory_order_relaxed);
++    while (count < 4)
++        if (logs.compare_exchange_weak(count, count + 1, std::memory_order_relaxed))
++            return true;
++    return false;
++}
++inline const char* CallerName(Caller caller)
++{
++    switch (caller)
++    {
++    case Caller::XeFG: return "xefg";
++    case Caller::XeSS: return "xess";
++    case Caller::Other: return "other";
++    default: return "unknown";
++    }
++}
++inline bool TryReadSnapshot(Snapshot& snapshot)
++{
++    std::unique_lock lock(detailMutex, std::try_to_lock);
++    if (!lock.owns_lock())
++        return false;
++    snapshot = lastDetail;
++    snapshot.calls = calls.load(std::memory_order_relaxed);
++    snapshot.failures = failures.load(std::memory_order_relaxed);
++    snapshot.compatibilityMasks = compatibilityMasks.load(std::memory_order_relaxed);
++    return true;
++}
++}
+diff --git a/OptiScaler/misc/XeFGPresentDiagnostics.h b/OptiScaler/misc/XeFGPresentDiagnostics.h
+new file mode 100644
+index 00000000..f0378625
+--- /dev/null
++++ b/OptiScaler/misc/XeFGPresentDiagnostics.h
+@@ -0,0 +1,303 @@
++#pragma once
++
++#include <array>
++#include <atomic>
++#include <cstdint>
++
++// Observations only. No SDK calls, locks, resource references or recovery policy.
++// Totals are process-cumulative; a concurrent snapshot is approximate.
++namespace XeFGDiagnostics
++{
++enum class InputKind : unsigned char { Depth, Velocity, Hudless, UI, Distortion, Other, Count };
++enum class InputReason : unsigned char
++{
++    Accepted, AdmissionClosed, ContextUnavailable, Inactive, InvalidInput, InvalidIndex,
++    DuplicateOrPolicy, Unsupported, ObserverUnavailable, CopyFailure, MissingCommandList,
++    ProviderRejected, RecoveryBackoff, StaleFrame, Other, Count
++};
++enum class ActivationReason : unsigned char
++{
++    Normal, RecoveryDisable, RecoveryEnable, LifecycleDisable, LifecycleRestore, ForceXeLL, Count
++};
++
++struct PresentSnapshot
++{
++    std::uint64_t calls = 0, testCalls = 0, nativeFailures = 0, nativeNonzeroSuccess = 0;
++    std::uint64_t apiUnavailable = 0, querySuccess = 0, queryWarnings = 0, queryErrors = 0;
++    std::uint64_t ambiguous = 0, validSamples = 0, enabledSamples = 0, disabledSamples = 0;
++    std::uint64_t frameSuccess = 0, frameWarnings = 0, frameErrors = 0;
++    std::uint64_t queuedFrames = 0;
++    // Number of provider-reported queued frames: 0,1,2,3,4,5,6,greater than 6.
++    std::array<std::uint64_t, 8> queuedHistogram {};
++    std::int32_t lastNative = 0, lastQuery = 0, lastFrameResult = 0;
++    std::int32_t lastNonzeroQuery = 0, lastNonzeroFrameResult = 0;
++    std::uint32_t lastQueuedFrames = 0;
++    bool lastEnabled = false;
++    std::array<std::uint64_t, static_cast<unsigned>(InputKind::Count)> inputAccepted {}, inputRejected {};
++    std::array<std::uint64_t, static_cast<unsigned>(InputReason::Count)> inputReasons {};
++    std::array<std::uint64_t, static_cast<unsigned>(InputKind::Count)> tagsAccepted {}, tagsRejected {};
++    std::uint64_t tagWarnings = 0;
++    std::int32_t lastTagResult = 0, lastNonzeroTagResult = 0;
++    std::array<std::uint64_t, static_cast<unsigned>(ActivationReason::Count)> activationReasons {};
++    std::uint64_t enableRequests = 0, disableRequests = 0, activationWarnings = 0, activationErrors = 0;
++    std::int32_t lastActivationResult = 0;
++    ActivationReason lastActivationReason = ActivationReason::Normal;
++    bool activationKnown = false, lastRequestedEnabled = false, lastAcceptedEnabled = false;
++    bool versionKnown = false, heapRequirementsKnown = false;
++    std::uint16_t versionMajor = 0, versionMinor = 0, versionPatch = 0;
++    std::uint64_t requiredBufferBytes = 0, requiredTextureBytes = 0, requiredConstantBytes = 0;
++    bool interpolationKnown = false, configuredExplicit = false;
++    std::uint32_t maxInitializedInterpolations = 0, activeInterpolations = 0;
++    std::int32_t configuredInterpolations = 0;
++};
++
++namespace PresentDetail
++{
++struct Counters
++{
++    std::atomic<std::uint64_t> inFlight { 0 }, overlapGeneration { 0 };
++    std::atomic<std::uint64_t> calls { 0 }, testCalls { 0 }, nativeFailures { 0 }, nativeNonzeroSuccess { 0 };
++    std::atomic<std::uint64_t> apiUnavailable { 0 }, querySuccess { 0 }, queryWarnings { 0 }, queryErrors { 0 };
++    std::atomic<std::uint64_t> ambiguous { 0 }, validSamples { 0 }, enabledSamples { 0 }, disabledSamples { 0 };
++    std::atomic<std::uint64_t> frameSuccess { 0 }, frameWarnings { 0 }, frameErrors { 0 }, queuedFrames { 0 };
++    std::array<std::atomic<std::uint64_t>, 8> queuedHistogram {};
++    std::atomic<std::int32_t> lastNative { 0 }, lastQuery { 0 }, lastFrameResult { 0 };
++    std::atomic<std::int32_t> lastNonzeroQuery { 0 }, lastNonzeroFrameResult { 0 };
++    std::atomic<std::uint32_t> lastQueuedFrames { 0 };
++    std::atomic<bool> lastEnabled { false };
++    std::array<std::atomic<std::uint64_t>, static_cast<unsigned>(InputKind::Count)> inputAccepted {}, inputRejected {};
++    std::array<std::atomic<std::uint64_t>, static_cast<unsigned>(InputReason::Count)> inputReasons {};
++    std::array<std::atomic<std::uint64_t>, static_cast<unsigned>(InputKind::Count)> tagsAccepted {}, tagsRejected {};
++    std::atomic<std::uint64_t> tagWarnings { 0 };
++    std::atomic<std::int32_t> lastTagResult { 0 }, lastNonzeroTagResult { 0 };
++    std::array<std::atomic<std::uint64_t>, static_cast<unsigned>(ActivationReason::Count)> activationReasons {};
++    std::atomic<std::uint64_t> enableRequests { 0 }, disableRequests { 0 }, activationWarnings { 0 }, activationErrors { 0 };
++    std::atomic<std::int32_t> lastActivationResult { 0 };
++    std::atomic<ActivationReason> lastActivationReason { ActivationReason::Normal };
++    std::atomic<bool> activationKnown { false }, lastRequestedEnabled { false }, lastAcceptedEnabled { false };
++    std::atomic<bool> versionKnown { false }, heapRequirementsKnown { false };
++    std::atomic<std::uint16_t> versionMajor { 0 }, versionMinor { 0 }, versionPatch { 0 };
++    std::atomic<std::uint64_t> requiredBufferBytes { 0 }, requiredTextureBytes { 0 }, requiredConstantBytes { 0 };
++    std::atomic<bool> interpolationKnown { false }, configuredExplicit { false };
++    std::atomic<std::uint32_t> maxInitializedInterpolations { 0 }, activeInterpolations { 0 };
++    std::atomic<std::int32_t> configuredInterpolations { 0 };
++};
++inline Counters& State() { static Counters counters; return counters; }
++inline unsigned KindIndex(InputKind kind)
++{
++    const auto value = static_cast<unsigned>(kind);
++    return value < static_cast<unsigned>(InputKind::Count) ? value : static_cast<unsigned>(InputKind::Other);
++}
++} // namespace PresentDetail
++
++// Scope the real native Present AND its immediate last-status query. TEST calls
++// also participate: the SDK documents that TEST overwrites last-present status.
++// Overlap is marked conservatively, never serialized just for diagnostics.
++class PresentObservation
++{
++  public:
++    explicit PresentObservation(bool test = false) : _test(test)
++    {
++        auto& state = PresentDetail::State();
++        _generation = state.overlapGeneration.load(std::memory_order_seq_cst);
++        _enteredOverlapping = state.inFlight.fetch_add(1, std::memory_order_seq_cst) != 0;
++        if (_enteredOverlapping)
++            state.overlapGeneration.fetch_add(1, std::memory_order_seq_cst);
++    }
++    ~PresentObservation() { PresentDetail::State().inFlight.fetch_sub(1, std::memory_order_seq_cst); }
++    PresentObservation(const PresentObservation&) = delete;
++    PresentObservation& operator=(const PresentObservation&) = delete;
++
++    // True means this sample can be associated with this successful non-TEST
++    // native Present. A positive SDK warning is not an error, but does not prove
++    // the output structure is valid (warning 5 means missing present status).
++    bool Record(std::int32_t nativeResult, bool apiAvailable, std::int32_t queryResult,
++                std::uint32_t framesPresented, std::int32_t frameGenResult, bool enabled)
++    {
++        if (_recorded)
++            return _trustworthy;
++        _recorded = true;
++        auto& state = PresentDetail::State();
++        _ambiguous = _enteredOverlapping ||
++            state.overlapGeneration.load(std::memory_order_seq_cst) != _generation ||
++            state.inFlight.load(std::memory_order_seq_cst) != 1;
++        if (_ambiguous)
++            state.ambiguous.fetch_add(1, std::memory_order_relaxed);
++        if (_test)
++        {
++            state.testCalls.fetch_add(1, std::memory_order_relaxed);
++            return false;
++        }
++        state.calls.fetch_add(1, std::memory_order_relaxed);
++        state.lastNative.store(nativeResult, std::memory_order_relaxed);
++        if (nativeResult < 0)
++            state.nativeFailures.fetch_add(1, std::memory_order_relaxed);
++        else if (nativeResult > 0)
++            state.nativeNonzeroSuccess.fetch_add(1, std::memory_order_relaxed);
++        if (!apiAvailable)
++        {
++            state.apiUnavailable.fetch_add(1, std::memory_order_relaxed);
++            return false;
++        }
++        state.lastQuery.store(queryResult, std::memory_order_relaxed);
++        if (queryResult != 0)
++            state.lastNonzeroQuery.store(queryResult, std::memory_order_relaxed);
++        if (queryResult == 0)
++            state.querySuccess.fetch_add(1, std::memory_order_relaxed);
++        else if (queryResult > 0)
++            state.queryWarnings.fetch_add(1, std::memory_order_relaxed);
++        else
++            state.queryErrors.fetch_add(1, std::memory_order_relaxed);
++        _trustworthy = nativeResult == 0 && queryResult == 0 && !_ambiguous;
++        if (!_trustworthy)
++            return false;
++        state.validSamples.fetch_add(1, std::memory_order_relaxed);
++        (enabled ? state.enabledSamples : state.disabledSamples).fetch_add(1, std::memory_order_relaxed);
++        state.lastEnabled.store(enabled, std::memory_order_relaxed);
++        state.lastQueuedFrames.store(framesPresented, std::memory_order_relaxed);
++        state.queuedFrames.fetch_add(framesPresented, std::memory_order_relaxed);
++        state.queuedHistogram[framesPresented <= 6 ? framesPresented : 7].fetch_add(1, std::memory_order_relaxed);
++        state.lastFrameResult.store(frameGenResult, std::memory_order_relaxed);
++        if (frameGenResult != 0)
++            state.lastNonzeroFrameResult.store(frameGenResult, std::memory_order_relaxed);
++        if (frameGenResult == 0)
++            state.frameSuccess.fetch_add(1, std::memory_order_relaxed);
++        else if (frameGenResult > 0)
++            state.frameWarnings.fetch_add(1, std::memory_order_relaxed);
++        else
++            state.frameErrors.fetch_add(1, std::memory_order_relaxed);
++        return true;
++    }
++    bool IsAmbiguous() const { return _ambiguous; }
++
++  private:
++    std::uint64_t _generation = 0;
++    bool _test = false, _enteredOverlapping = false, _recorded = false, _ambiguous = false, _trustworthy = false;
++};
++
++class InputObservation
++{
++  public:
++    explicit InputObservation(InputKind kind) : _kind(kind) {}
++    ~InputObservation()
++    {
++        auto& state = PresentDetail::State();
++        const auto kind = PresentDetail::KindIndex(_kind);
++        auto reason = static_cast<unsigned>(_reason);
++        if (reason >= static_cast<unsigned>(InputReason::Count))
++            reason = static_cast<unsigned>(InputReason::Other);
++        (_reason == InputReason::Accepted ? state.inputAccepted[kind] : state.inputRejected[kind])
++            .fetch_add(1, std::memory_order_relaxed);
++        state.inputReasons[reason].fetch_add(1, std::memory_order_relaxed);
++    }
++    InputObservation(const InputObservation&) = delete;
++    InputObservation& operator=(const InputObservation&) = delete;
++    void Accept() { _reason = InputReason::Accepted; }
++    void Reject(InputReason reason) { _reason = reason == InputReason::Accepted ? InputReason::Other : reason; }
++  private:
++    InputKind _kind;
++    InputReason _reason = InputReason::Other;
++};
++
++inline void RecordTagResult(InputKind kind, std::int32_t result)
++{
++    auto& state = PresentDetail::State();
++    const auto index = PresentDetail::KindIndex(kind);
++    (result >= 0 ? state.tagsAccepted[index] : state.tagsRejected[index]).fetch_add(1, std::memory_order_relaxed);
++    if (result > 0) state.tagWarnings.fetch_add(1, std::memory_order_relaxed);
++    state.lastTagResult.store(result, std::memory_order_relaxed);
++    if (result != 0) state.lastNonzeroTagResult.store(result, std::memory_order_relaxed);
++}
++
++inline void RecordActivation(bool requestedEnabled, std::int32_t providerResult, ActivationReason reason)
++{
++    auto& state = PresentDetail::State();
++    const auto index = static_cast<unsigned>(reason);
++    if (index < state.activationReasons.size()) state.activationReasons[index].fetch_add(1, std::memory_order_relaxed);
++    (requestedEnabled ? state.enableRequests : state.disableRequests).fetch_add(1, std::memory_order_relaxed);
++    if (providerResult > 0) state.activationWarnings.fetch_add(1, std::memory_order_relaxed);
++    if (providerResult < 0) state.activationErrors.fetch_add(1, std::memory_order_relaxed);
++    state.lastActivationReason.store(reason, std::memory_order_relaxed);
++    state.lastActivationResult.store(providerResult, std::memory_order_relaxed);
++    state.lastRequestedEnabled.store(requestedEnabled, std::memory_order_relaxed);
++    // A warning is not an API error, but does not prove the enable state changed.
++    if (providerResult == 0)
++    {
++        state.lastAcceptedEnabled.store(requestedEnabled, std::memory_order_relaxed);
++        state.activationKnown.store(true, std::memory_order_relaxed);
++    }
++}
++
++inline void RecordProviderVersion(std::uint16_t major, std::uint16_t minor, std::uint16_t patch, bool valid = true)
++{
++    auto& state = PresentDetail::State();
++    state.versionMajor.store(major, std::memory_order_relaxed);
++    state.versionMinor.store(minor, std::memory_order_relaxed);
++    state.versionPatch.store(patch, std::memory_order_relaxed);
++    state.versionKnown.store(valid, std::memory_order_relaxed);
++}
++
++inline void RecordHeapRequirements(std::uint64_t bufferBytes, std::uint64_t textureBytes, std::uint64_t constantBytes)
++{
++    auto& state = PresentDetail::State();
++    state.requiredBufferBytes.store(bufferBytes, std::memory_order_relaxed);
++    state.requiredTextureBytes.store(textureBytes, std::memory_order_relaxed);
++    state.requiredConstantBytes.store(constantBytes, std::memory_order_relaxed);
++    state.heapRequirementsKnown.store(true, std::memory_order_relaxed);
++}
++
++inline void RecordInterpolationCapacity(std::uint32_t maximum, std::int32_t configured, bool explicitValue)
++{
++    auto& state = PresentDetail::State();
++    state.maxInitializedInterpolations.store(maximum, std::memory_order_relaxed);
++    state.configuredInterpolations.store(configured, std::memory_order_relaxed);
++    state.configuredExplicit.store(explicitValue, std::memory_order_relaxed);
++}
++
++inline void RecordInterpolationActive(std::uint32_t acceptedInterpolatedFrames)
++{
++    auto& state = PresentDetail::State();
++    state.activeInterpolations.store(acceptedInterpolatedFrames, std::memory_order_relaxed);
++    state.interpolationKnown.store(true, std::memory_order_relaxed);
++}
++
++inline PresentSnapshot ReadPresentSnapshot()
++{
++    auto& state = PresentDetail::State();
++    PresentSnapshot result;
++#define XEFG_PRESENT_LOAD(field) result.field = state.field.load(std::memory_order_relaxed)
++    XEFG_PRESENT_LOAD(calls); XEFG_PRESENT_LOAD(testCalls); XEFG_PRESENT_LOAD(nativeFailures);
++    XEFG_PRESENT_LOAD(nativeNonzeroSuccess); XEFG_PRESENT_LOAD(apiUnavailable);
++    XEFG_PRESENT_LOAD(querySuccess); XEFG_PRESENT_LOAD(queryWarnings); XEFG_PRESENT_LOAD(queryErrors);
++    XEFG_PRESENT_LOAD(ambiguous); XEFG_PRESENT_LOAD(validSamples); XEFG_PRESENT_LOAD(enabledSamples);
++    XEFG_PRESENT_LOAD(disabledSamples); XEFG_PRESENT_LOAD(frameSuccess); XEFG_PRESENT_LOAD(frameWarnings);
++    XEFG_PRESENT_LOAD(frameErrors); XEFG_PRESENT_LOAD(queuedFrames); XEFG_PRESENT_LOAD(lastNative);
++    XEFG_PRESENT_LOAD(lastQuery); XEFG_PRESENT_LOAD(lastFrameResult); XEFG_PRESENT_LOAD(lastNonzeroQuery);
++    XEFG_PRESENT_LOAD(lastNonzeroFrameResult); XEFG_PRESENT_LOAD(lastQueuedFrames); XEFG_PRESENT_LOAD(lastEnabled);
++    XEFG_PRESENT_LOAD(tagWarnings); XEFG_PRESENT_LOAD(lastTagResult); XEFG_PRESENT_LOAD(lastNonzeroTagResult);
++    XEFG_PRESENT_LOAD(enableRequests); XEFG_PRESENT_LOAD(disableRequests); XEFG_PRESENT_LOAD(activationWarnings);
++    XEFG_PRESENT_LOAD(activationErrors); XEFG_PRESENT_LOAD(lastActivationResult);
++    XEFG_PRESENT_LOAD(lastActivationReason); XEFG_PRESENT_LOAD(activationKnown);
++    XEFG_PRESENT_LOAD(lastRequestedEnabled); XEFG_PRESENT_LOAD(lastAcceptedEnabled);
++    XEFG_PRESENT_LOAD(versionKnown); XEFG_PRESENT_LOAD(versionMajor); XEFG_PRESENT_LOAD(versionMinor);
++    XEFG_PRESENT_LOAD(versionPatch); XEFG_PRESENT_LOAD(heapRequirementsKnown);
++    XEFG_PRESENT_LOAD(requiredBufferBytes); XEFG_PRESENT_LOAD(requiredTextureBytes); XEFG_PRESENT_LOAD(requiredConstantBytes);
++    XEFG_PRESENT_LOAD(interpolationKnown); XEFG_PRESENT_LOAD(configuredExplicit);
++    XEFG_PRESENT_LOAD(maxInitializedInterpolations); XEFG_PRESENT_LOAD(configuredInterpolations); XEFG_PRESENT_LOAD(activeInterpolations);
++#undef XEFG_PRESENT_LOAD
++    for (unsigned i = 0; i < result.queuedHistogram.size(); ++i)
++        result.queuedHistogram[i] = state.queuedHistogram[i].load(std::memory_order_relaxed);
++    for (unsigned i = 0; i < result.inputAccepted.size(); ++i)
++    {
++        result.inputAccepted[i] = state.inputAccepted[i].load(std::memory_order_relaxed);
++        result.inputRejected[i] = state.inputRejected[i].load(std::memory_order_relaxed);
++        result.tagsAccepted[i] = state.tagsAccepted[i].load(std::memory_order_relaxed);
++        result.tagsRejected[i] = state.tagsRejected[i].load(std::memory_order_relaxed);
++    }
++    for (unsigned i = 0; i < result.inputReasons.size(); ++i)
++        result.inputReasons[i] = state.inputReasons[i].load(std::memory_order_relaxed);
++    for (unsigned i = 0; i < result.activationReasons.size(); ++i)
++        result.activationReasons[i] = state.activationReasons[i].load(std::memory_order_relaxed);
++    return result;
++}
++} // namespace XeFGDiagnostics
 diff --git a/OptiScaler/misc/XeFGResourceDiagnostics.h b/OptiScaler/misc/XeFGResourceDiagnostics.h
 new file mode 100644
 index 00000000..db2479ae
@@ -5098,6 +7541,136 @@ index 00000000..8df886a7
 +    std::atomic<CleanupReason> _reason { CleanupReason::None };
 +};
 +} // namespace XeFGDiagnostics
+diff --git a/OptiScaler/proxies/FfxApi_Proxy.h b/OptiScaler/proxies/FfxApi_Proxy.h
+index e217f102..65028ddb 100644
+--- a/OptiScaler/proxies/FfxApi_Proxy.h
++++ b/OptiScaler/proxies/FfxApi_Proxy.h
+@@ -7,6 +7,7 @@
+ 
+ #include <proxies/Ntdll_Proxy.h>
+ #include <proxies/KernelBase_Proxy.h>
++#include <proxies/FfxContextRegistry.h>
+ 
+ #include <inputs/FfxApi_Dx12.h>
+ #include <inputs/FfxApi_Vk.h>
+@@ -88,7 +89,7 @@ class FfxApiProxy
+     inline static FfxModule radiance_dx12_hooked;
+     inline static FfxModule main_vk_hooked;
+ 
+-    inline static ankerl::unordered_dense::map<ffxContext, FFXStructType> contextToType;
++    inline static FfxContextRegistry<ankerl::unordered_dense::map<ffxContext, FFXStructType>> contextToType;
+ 
+     inline static bool _skipDestroyCalls = false;
+ 
+@@ -1191,7 +1192,7 @@ class FfxApiProxy
+         {
+             LOG_DEBUG("Creating with fg_dx12");
+             result = fg_dx12.CreateContext(context, desc, memCb);
+-            contextToType[*context] = type;
++            contextToType.Set(*context, type);
+             LOG_DEBUG("Created with fg_dx12: {:X}", (size_t) *context);
+             return result;
+         }
+@@ -1199,7 +1200,7 @@ class FfxApiProxy
+         {
+             LOG_DEBUG("Creating with upscaling_dx12");
+             result = upscaling_dx12.CreateContext(context, desc, memCb);
+-            contextToType[*context] = type;
++            contextToType.Set(*context, type);
+             LOG_DEBUG("Created with upscaling_dx12: {:X}", (size_t) *context);
+             return result;
+         }
+@@ -1207,7 +1208,7 @@ class FfxApiProxy
+         {
+             LOG_DEBUG("Creating with denoiser_dx12");
+             result = denoiser_dx12.CreateContext(context, desc, memCb);
+-            contextToType[*context] = type;
++            contextToType.Set(*context, type);
+             LOG_DEBUG("Created with denoiser_dx12: {:X}", (size_t) *context);
+             return result;
+         }
+@@ -1215,7 +1216,7 @@ class FfxApiProxy
+         {
+             LOG_DEBUG("Creating with radiance_dx12");
+             result = radiance_dx12.CreateContext(context, desc, memCb);
+-            contextToType[*context] = type;
++            contextToType.Set(*context, type);
+             LOG_DEBUG("Created with radiance_dx12: {:X}", (size_t) *context);
+             return result;
+         }
+@@ -1250,11 +1251,9 @@ class FfxApiProxy
+         ffxReturnCode_t result = FFX_API_RETURN_ERROR;
+         auto type = FFXStructType::Unknown;
+ 
+-        if (contextToType.contains(*context))
++        if (contextToType.Take(*context, type))
+         {
+-            type = contextToType[*context];
+             LOG_DEBUG("Found context type mapping: {}", magic_enum::enum_name(type));
+-            contextToType.erase(*context);
+         }
+         else
+         {
+@@ -1350,8 +1349,8 @@ class FfxApiProxy
+     {
+         auto type = GetType(desc->type);
+ 
+-        if (type == FFXStructType::General && contextToType.contains(*context))
+-            type = contextToType[*context];
++        if (type == FFXStructType::General)
++            contextToType.Find(*context, type);
+ 
+         auto isFg = type == FFXStructType::FG || type == FFXStructType::SwapchainDX12;
+ 
+diff --git a/OptiScaler/proxies/FfxContextRegistry.h b/OptiScaler/proxies/FfxContextRegistry.h
+new file mode 100644
+index 00000000..371f4d34
+--- /dev/null
++++ b/OptiScaler/proxies/FfxContextRegistry.h
+@@ -0,0 +1,43 @@
++#pragma once
++
++#include <mutex>
++
++// Old upscaler contexts are destroyed on detached workers while new contexts
++// can be created on the render thread. Copy routing metadata under a short lock;
++// callers must invoke the external provider only after these methods return.
++template <typename Map> class FfxContextRegistry
++{
++    Map _types;
++    mutable std::mutex _mutex;
++
++  public:
++    using Key = typename Map::key_type;
++    using Type = typename Map::mapped_type;
++
++    void Set(const Key& context, Type type)
++    {
++        std::lock_guard lock(_mutex);
++        _types[context] = type;
++    }
++
++    bool Find(const Key& context, Type& type) const
++    {
++        std::lock_guard lock(_mutex);
++        const auto found = _types.find(context);
++        if (found == _types.end())
++            return false;
++        type = found->second;
++        return true;
++    }
++
++    bool Take(const Key& context, Type& type)
++    {
++        std::lock_guard lock(_mutex);
++        const auto found = _types.find(context);
++        if (found == _types.end())
++            return false;
++        type = found->second;
++        _types.erase(context);
++        return true;
++    }
++};
 diff --git a/OptiScaler/proxies/XeFGPacing.h b/OptiScaler/proxies/XeFGPacing.h
 index 1a2761e5..35899f1c 100644
 --- a/OptiScaler/proxies/XeFGPacing.h
